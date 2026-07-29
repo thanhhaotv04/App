@@ -5,13 +5,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
 class BackendConfig {
-  static const defaultUrl = 'http://127.0.0.1:3000';
+  static const defaultUrl = 'http://192.168.1.141:3002';
+  static const legacyDefaultUrl = 'http://127.0.0.1:3000';
   static const key = 'money-manager-backend-url';
 
   static Future<String> loadUrl() async {
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getString(key)?.trim();
-    return value == null || value.isEmpty ? defaultUrl : value;
+    if (value == null || value.isEmpty || value == legacyDefaultUrl) {
+      await prefs.setString(key, defaultUrl);
+      return defaultUrl;
+    }
+    return value;
   }
 
   static Future<void> saveUrl(String value) async {

@@ -80,6 +80,10 @@ SharedPreferences values are JSON strings unless noted otherwise.
 
 Trailing `/` characters are removed from the backend URL.
 
+The maintained reconstruction now overrides the recovered localhost default
+with `http://192.168.1.141:3002`. It migrates only the exact legacy value
+`http://127.0.0.1:3000`; other user-configured backend URLs remain unchanged.
+
 ### Transaction JSON
 
 ```json
