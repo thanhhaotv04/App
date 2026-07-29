@@ -27,8 +27,22 @@ flutter run
 ```
 
 Android emulator reaches a backend on the host with
-`http://10.0.2.2:3000`. A physical phone must use the computer's LAN address,
-for example `http://192.168.1.10:3000`.
+`http://10.0.2.2:3002`. The recovered app defaults to the computer's current
+LAN endpoint: `http://192.168.1.141:3002`.
+
+## Preview in a web browser
+
+Start the backend first, then run:
+
+```bash
+flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080
+```
+
+Open `http://192.168.1.141:8080` from this computer or another device on the
+same network. The preview keeps the same branded header, cards, keypad, and
+bottom navigation as Android so the phone interface can be reviewed directly
+in the browser. The LAN update section remains visible for visual parity, while
+actual APK installation is available only on Android.
 
 ## Run the sync backend
 
@@ -40,6 +54,10 @@ npm start
 
 Runtime account and money data are written under `backend/server-data/`, which
 is intentionally ignored by Git. Back that directory up separately.
+
+The backend listens on port `3002` by default. Keep the phone and computer on
+the same network; if the computer's LAN IP changes, update the Backend URL in
+the app's sign-in or Account screen.
 
 To publish an update, place the APK in `backend/releases/` and update
 `backend/releases/latest.json`. The next version must have a `versionCode`
