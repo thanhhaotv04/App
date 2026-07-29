@@ -15,7 +15,7 @@ class SyncScreen extends StatefulWidget {
 class _SyncScreenState extends State<SyncScreen> {
   final _repo = CheckInRepository();
   late SyncService _sync = const SyncService();
-  final _urlCtrl = TextEditingController(text: 'http://127.0.0.1:3000');
+  final _urlCtrl = TextEditingController(text: BackendConfig.defaultUrl);
   bool _syncing = false;
   String _status = 'Not synced yet';
 
@@ -71,18 +71,30 @@ class _SyncScreenState extends State<SyncScreen> {
         ),
       ),
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          MediaQuery.sizeOf(context).width > 960
+              ? (MediaQuery.sizeOf(context).width - 900) / 2
+              : 18,
+          24,
+          MediaQuery.sizeOf(context).width > 960
+              ? (MediaQuery.sizeOf(context).width - 900) / 2
+              : 18,
+          32,
+        ),
         children: [
-          Text('Sync & backend', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
+          Text(
+            'Sync & backend',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 18),
           Container(
             decoration: BoxDecoration(
               color: colors.panel,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(22),
               border: Border.all(color: colors.line),
             ),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -96,21 +108,36 @@ class _SyncScreenState extends State<SyncScreen> {
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      Icon(_syncing ? Icons.sync : Icons.cloud_outlined, color: colors.accent),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(_status, style: Theme.of(context).textTheme.titleMedium)),
+                      Icon(
+                        _syncing ? Icons.sync : Icons.cloud_outlined,
+                        color: colors.accent,
+                        size: 30,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _status,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Text(
                     'Two-way sync pulls backend data, pushes local-only check-ins, and merges by check-in id.',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: colors.muted),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 20),
                   FilledButton.icon(
                     onPressed: _syncing ? null : _syncTwoWay,
                     icon: _syncing
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Icon(Icons.sync_alt_outlined),
                     label: const Text('Sync now'),
                   ),

@@ -1,7 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class BackendConfig {
-  static const defaultUrl = 'http://127.0.0.1:3000';
+  static const defaultUrl = 'http://192.168.1.141:3000';
   static const _key = 'vmc-backend-url';
 
   static Future<String> loadUrl() async {

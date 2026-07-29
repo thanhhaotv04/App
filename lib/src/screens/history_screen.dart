@@ -191,13 +191,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       ),
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          MediaQuery.sizeOf(context).width > 960
+              ? (MediaQuery.sizeOf(context).width - 900) / 2
+              : 18,
+          24,
+          MediaQuery.sizeOf(context).width > 960
+              ? (MediaQuery.sizeOf(context).width - 900) / 2
+              : 18,
+          32,
+        ),
         children: [
           _SectionHeader(
             title: 'Check-in history',
             action: TextButton(onPressed: _load, child: const Text('Reload')),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 18),
           if (cities.isEmpty)
             _EmptyHistoryCard(
               text:
@@ -206,15 +215,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           for (final city in cities)
             Container(
-              margin: const EdgeInsets.only(bottom: 10),
+              margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
                 color: colors.panel,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: colors.line),
               ),
               child: ExpansionTile(
                 iconColor: colors.accent,
                 collapsedIconColor: colors.muted,
+                tilePadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                minTileHeight: 76,
                 title: Text(
                   '$city (${grouped[city]!.length})',
                   style: Theme.of(context).textTheme.titleMedium,

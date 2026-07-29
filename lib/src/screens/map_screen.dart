@@ -587,10 +587,10 @@ class _MapScreenState extends State<MapScreen> {
     return Container(
       decoration: BoxDecoration(
         color: colors.panel,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: colors.line),
       ),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -638,10 +638,10 @@ class _MapScreenState extends State<MapScreen> {
     return Container(
       decoration: BoxDecoration(
         color: colors.panel,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: colors.line),
       ),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -737,14 +737,14 @@ class _MapScreenState extends State<MapScreen> {
         border: Border.all(color: colors.line),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x1A3A2B19),
-            blurRadius: 24,
-            offset: Offset(0, 12),
+            color: Color(0x103A2B19),
+            blurRadius: 18,
+            offset: Offset(0, 8),
           ),
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -878,14 +878,24 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _buildStats(int total, int provinces, int remaining) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: [
-        _StatCard(label: 'Total check-ins', value: '$total'),
-        _StatCard(label: 'Visited provinces', value: '$provinces'),
-        _StatCard(label: 'Remaining', value: '$remaining'),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 760 ? 3 : 2;
+        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _StatCard(width: width, label: 'Total check-ins', value: '$total'),
+            _StatCard(
+              width: width,
+              label: 'Visited provinces',
+              value: '$provinces',
+            ),
+            _StatCard(width: width, label: 'Remaining', value: '$remaining'),
+          ],
+        );
+      },
     );
   }
 
@@ -1140,7 +1150,9 @@ class _MapScreenState extends State<MapScreen> {
     final total = _items.length;
     final provinces = _items.map((e) => e.city).toSet().length;
     final remaining = (63 - provinces).clamp(0, 63);
-    final isWide = MediaQuery.of(context).size.width >= 1100;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isWide = screenWidth >= 1100;
+    final horizontal = screenWidth > 1280 ? (screenWidth - 1220) / 2 : 18.0;
 
     final content = Column(
       children: [
@@ -1188,7 +1200,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.fromLTRB(horizontal, 24, horizontal, 16),
             children: [content, const SizedBox(height: 96)],
           ),
         ),
@@ -1360,7 +1372,13 @@ class _VietnamMapPainter extends CustomPainter {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value});
+  const _StatCard({
+    required this.width,
+    required this.label,
+    required this.value,
+  });
+
+  final double width;
   final String label;
   final String value;
 
@@ -1368,14 +1386,15 @@ class _StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return SizedBox(
-      width: 150,
+      width: width,
+      height: 116,
       child: Container(
         decoration: BoxDecoration(
           color: colors.panel,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(22),
           border: Border.all(color: colors.line),
         ),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

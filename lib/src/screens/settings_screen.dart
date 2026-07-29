@@ -1,17 +1,12 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/checkin.dart';
-import '../repositories/app_data_reset.dart';
-import '../repositories/backend_config.dart';
-import '../repositories/app_update_service.dart';
-import '../repositories/checkin_repository.dart';
-import '../repositories/local_image_storage.dart';
-import '../repositories/sync_service.dart';
 import '../app_version.dart';
+import '../repositories/app_data_reset.dart';
+import '../repositories/app_update_service.dart';
+import '../repositories/backend_config.dart';
+import '../repositories/checkin_repository.dart';
+import '../repositories/sync_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 
@@ -23,142 +18,122 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  static const _userKey = 'vmc-auth-user';
+  static const _passwordKey = 'vmc-auth-password';
+
   final _repo = CheckInRepository();
   final _backendCtrl = TextEditingController(text: BackendConfig.defaultUrl);
-  String _status = 'Local settings are ready.';
-  String _exportText = '';
-  String _localImageFolder = '';
+  final _userCtrl = TextEditingController();
+  final _currentPasswordCtrl = TextEditingController();
+  final _newPasswordCtrl = TextEditingController();
+  final _confirmPasswordCtrl = TextEditingController();
+
+  bool _savingAccount = false;
+  bool _syncing = false;
   bool _updating = false;
+  bool _obscureCurrent = true;
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
 
   @override
   void initState() {
     super.initState();
-    _loadBackendUrl();
-    _loadLocalImageFolder();
+    _loadSettings();
   }
 
   @override
   void dispose() {
     _backendCtrl.dispose();
+    _userCtrl.dispose();
+    _currentPasswordCtrl.dispose();
+    _newPasswordCtrl.dispose();
+    _confirmPasswordCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadBackendUrl() async {
-    final url = await BackendConfig.loadUrl();
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final backendUrl = await BackendConfig.loadUrl();
     if (!mounted) return;
-    setState(() => _backendCtrl.text = url);
+    setState(() {
+      _backendCtrl.text = backendUrl;
+      _userCtrl.text = prefs.getString(_userKey) ?? '';
+    });
   }
 
-  Future<void> _loadLocalImageFolder() async {
-    final folder = await LocalImageStorage.folderPath();
+  void _showMessage(String message) {
     if (!mounted) return;
-    setState(() => _localImageFolder = folder);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _saveAccount() async {
+    final name = _userCtrl.text.trim();
+    final currentPassword = _currentPasswordCtrl.text;
+    final newPassword = _newPasswordCtrl.text;
+    final confirmation = _confirmPasswordCtrl.text;
+    final prefs = await SharedPreferences.getInstance();
+    final storedPassword = prefs.getString(_passwordKey) ?? '';
+
+    if (name.isEmpty) {
+      _showMessage('User name cannot be empty.');
+      return;
+    }
+    if (storedPassword.isNotEmpty && currentPassword != storedPassword) {
+      _showMessage('Current password is incorrect.');
+      return;
+    }
+    if (newPassword.isNotEmpty && newPassword != confirmation) {
+      _showMessage('New passwords do not match.');
+      return;
+    }
+
+    setState(() => _savingAccount = true);
+    await prefs.setString(_userKey, name);
+    if (newPassword.isNotEmpty) {
+      await prefs.setString(_passwordKey, newPassword);
+    }
+    if (!mounted) return;
+    setState(() {
+      _savingAccount = false;
+      _currentPasswordCtrl.clear();
+      _newPasswordCtrl.clear();
+      _confirmPasswordCtrl.clear();
+    });
+    _showMessage('Local account saved.');
   }
 
   Future<void> _saveBackendUrl() async {
     await BackendConfig.saveUrl(_backendCtrl.text);
-    if (!mounted) return;
-    setState(() => _status = 'Backend URL saved.');
-  }
-
-  Future<void> _loadSample() async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    const hcm = 'TP.H\u1ed3 Ch\u00ed Minh';
-    const binhDinh = 'B\u00ecnh \u0110\u1ecbnh';
-    await _repo.save([
-      CheckIn(
-        id: 'sample-hcm',
-        city: hcm,
-        place: hcm,
-        notes: 'Sample check-in',
-        source: 'manual',
-        synced: false,
-        createdAt: now,
-        lat: 10.8231,
-        lng: 106.6297,
-        photo:
-            'user/Picture/thanhhao/$hcm/1780386908045-Screenshot 2025-12-01 182729.png',
-      ),
-      CheckIn(
-        id: 'sample-binh-dinh',
-        city: binhDinh,
-        place: binhDinh,
-        notes: 'Sample check-in',
-        source: 'manual',
-        synced: false,
-        createdAt: now - 86400000,
-        lat: 13.782,
-        lng: 109.219,
-        photo:
-            'user/Picture/thanhhao/$binhDinh/1780299398898-Screenshot 2025-12-01 134518.png',
-      ),
-    ]);
-    setState(() => _status = 'Sample data loaded.');
-  }
-
-  Future<void> _exportJson() async {
-    final items = await _repo.load();
-    setState(() {
-      _exportText = const JsonEncoder.withIndent(
-        '  ',
-      ).convert(items.map((e) => e.toJson()).toList());
-      _status = 'Export JSON generated below.';
-    });
-  }
-
-  Future<void> _importJson() async {
-    const jsonGroup = XTypeGroup(
-      label: 'JSON',
-      extensions: ['json'],
-      mimeTypes: ['application/json'],
-    );
-    final file = await openFile(acceptedTypeGroups: const [jsonGroup]);
-    if (file == null) return;
-    try {
-      final raw = await file.readAsString();
-      final decoded = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
-      final items = decoded.map(CheckIn.fromJson).toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      await _repo.save(items);
-      if (!mounted) return;
-      setState(() {
-        _exportText = '';
-        _status = 'Imported ${items.length} check-in(s) from ${file.name}.';
-      });
-    } catch (err) {
-      if (!mounted) return;
-      setState(() => _status = 'Import failed: $err');
-    }
+    _showMessage('Backend URL saved.');
   }
 
   Future<void> _syncNow() async {
+    setState(() => _syncing = true);
     try {
       await BackendConfig.saveUrl(_backendCtrl.text);
       final sync = SyncService(baseUrl: await BackendConfig.loadUrl());
       final merged = await sync.syncTwoWay(await _repo.load());
       await _repo.save(merged);
-      if (!mounted) return;
-      setState(() => _status = 'Synced ${merged.length} check-in(s).');
+      _showMessage('Synced ${merged.length} check-in(s).');
     } catch (err) {
-      if (!mounted) return;
-      setState(() => _status = 'Sync failed: $err');
+      _showMessage('Sync failed: $err');
+    } finally {
+      if (mounted) setState(() => _syncing = false);
     }
   }
 
   Future<void> _checkAndInstallUpdate() async {
-    setState(() {
-      _updating = true;
-      _status = 'Checking for updates...';
-    });
+    setState(() => _updating = true);
     try {
       await BackendConfig.saveUrl(_backendCtrl.text);
       final service = AppUpdateService(baseUrl: await BackendConfig.loadUrl());
       final info = await service.checkLatest();
       if (!info.available) {
-        if (!mounted) return;
-        setState(
-          () => _status =
-              'Already up to date: ${AppVersion.versionName}+${AppVersion.versionCode}.',
+        _showMessage(
+          'Already up to date: '
+          '${AppVersion.versionName}+${AppVersion.versionCode}.',
         );
         return;
       }
@@ -186,17 +161,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       );
-      if (confirmed != true) {
-        setState(() => _status = 'Update cancelled.');
-        return;
-      }
-      setState(() => _status = 'Downloading APK...');
+      if (confirmed != true) return;
       final path = await service.downloadApk(info);
-      setState(() => _status = 'Opening Android installer...');
       await service.installApk(path);
     } catch (err) {
-      if (!mounted) return;
-      setState(() => _status = 'Update failed: $err');
+      _showMessage('Update failed: $err');
     } finally {
       if (mounted) setState(() => _updating = false);
     }
@@ -208,7 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Delete all check-ins?'),
         content: const Text(
-          'This clears local check-ins stored on this device.',
+          'This clears local check-ins and photos stored on this device.',
         ),
         actions: [
           TextButton(
@@ -225,18 +194,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed != true) return;
     await AppDataReset.clearCheckInsAndPhotos();
     await _repo.save([]);
-    setState(() {
-      _exportText = '';
-      _status = 'Local check-ins deleted.';
-    });
-  }
-
-  Future<String> _accountSummary() async {
-    final prefs = await SharedPreferences.getInstance();
-    final user = prefs.getString('vmc-auth-user');
-    return user == null || user.isEmpty
-        ? 'No local account stored.'
-        : 'Signed in as $user. Account data is stored locally on this device.';
+    _showMessage('Local check-ins deleted.');
   }
 
   @override
@@ -250,149 +208,187 @@ class _SettingsScreenState extends State<SettingsScreen> {
           colors: [colors.bg, colors.bg2],
         ),
       ),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text('Settings', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'Account',
-            subtitle: 'Local sign-in state',
-            icon: Icons.person_outline,
-            child: FutureBuilder<String>(
-              future: _accountSummary(),
-              builder: (context, snapshot) => Text(
-                snapshot.data ?? 'Loading...',
-                style: Theme.of(context).textTheme.bodyMedium,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final horizontal = constraints.maxWidth > 960
+              ? (constraints.maxWidth - 900) / 2
+              : 18.0;
+          return ListView(
+            padding: EdgeInsets.fromLTRB(horizontal, 24, horizontal, 32),
+            children: [
+              Text(
+                'Settings',
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'Theme and data',
-            subtitle: 'Mirror the controls from the original web app',
-            icon: Icons.tune_outlined,
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilledButton.icon(
-                  onPressed: AppTheme.toggleTheme,
-                  icon: const Icon(Icons.brightness_6_outlined),
-                  label: const Text('Toggle theme'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _exportJson,
-                  icon: const Icon(Icons.download_outlined),
-                  label: const Text('Export JSON'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _importJson,
-                  icon: const Icon(Icons.upload_file_outlined),
-                  label: const Text('Import JSON'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _loadSample,
-                  icon: const Icon(Icons.dataset_outlined),
-                  label: const Text('Load sample'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _resetData,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Delete all data'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'Backend',
-            subtitle: 'Used by uploads, photo previews, and two-way sync',
-            icon: Icons.cloud_outlined,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: _backendCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Backend URL',
-                    hintText: BackendConfig.defaultUrl,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+              const SizedBox(height: 18),
+              _SettingsCard(
+                title: 'Account',
+                subtitle: 'Change local sign-in name and password',
+                icon: Icons.person_outline,
+                child: Column(
                   children: [
-                    FilledButton.icon(
-                      onPressed: _saveBackendUrl,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Save URL'),
+                    TextField(
+                      controller: _userCtrl,
+                      decoration: const InputDecoration(labelText: 'User name'),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _syncNow,
-                      icon: const Icon(Icons.sync_alt_outlined),
-                      label: const Text('Sync now'),
+                    const SizedBox(height: 12),
+                    _PasswordField(
+                      controller: _currentPasswordCtrl,
+                      label: 'Current password',
+                      obscureText: _obscureCurrent,
+                      onToggle: () =>
+                          setState(() => _obscureCurrent = !_obscureCurrent),
+                    ),
+                    const SizedBox(height: 12),
+                    _PasswordField(
+                      controller: _newPasswordCtrl,
+                      label: 'New password',
+                      obscureText: _obscureNew,
+                      onToggle: () =>
+                          setState(() => _obscureNew = !_obscureNew),
+                    ),
+                    const SizedBox(height: 12),
+                    _PasswordField(
+                      controller: _confirmPasswordCtrl,
+                      label: 'Confirm new password',
+                      obscureText: _obscureConfirm,
+                      onToggle: () =>
+                          setState(() => _obscureConfirm = !_obscureConfirm),
+                    ),
+                    const SizedBox(height: 18),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _savingAccount ? null : _saveAccount,
+                        icon: _savingAccount
+                            ? const _ButtonSpinner()
+                            : const Icon(Icons.save_outlined),
+                        label: const Text('Save account'),
+                      ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'LAN app update',
-            subtitle:
-                'Current version ${AppVersion.versionName}+${AppVersion.versionCode}',
-            icon: Icons.system_update_alt_outlined,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'The phone downloads a newer APK from the backend over the same Wi-Fi, then Android asks you to confirm installation.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _updating ? null : _checkAndInstallUpdate,
-                  icon: _updating
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.system_update_alt_outlined),
-                  label: const Text('Check for update'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'Private image storage',
-            subtitle: 'Images selected in the app are copied here first',
-            icon: Icons.folder_copy_outlined,
-            child: SelectableText(
-              _localImageFolder.isEmpty ? 'Loading...' : _localImageFolder,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _SettingsCard(
-            title: 'Status',
-            subtitle: _status,
-            icon: Icons.info_outline,
-            child: _exportText.isEmpty
-                ? Text(
-                    'JSON import/export, backend URL persistence, and two-way sync are available here.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  )
-                : SelectableText(
-                    _exportText,
-                    style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              _SettingsCard(
+                title: 'Theme',
+                subtitle: 'Switch light or dark mode',
+                icon: Icons.brightness_6_outlined,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: AppTheme.toggleTheme,
+                    icon: const Icon(Icons.brightness_6_outlined),
+                    label: const Text('Toggle theme'),
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _SettingsCard(
+                title: 'Backend and sync',
+                subtitle: 'Used by uploads, photo previews, and two-way sync',
+                icon: Icons.cloud_outlined,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _backendCtrl,
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                        labelText: 'Backend URL',
+                        hintText: BackendConfig.defaultUrl,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: _saveBackendUrl,
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Save URL'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _syncing ? null : _syncNow,
+                          icon: _syncing
+                              ? const _ButtonSpinner()
+                              : const Icon(Icons.sync_alt_outlined),
+                          label: const Text('Sync now'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _SettingsCard(
+                title: 'App update',
+                subtitle:
+                    'Current version ${AppVersion.versionName}+${AppVersion.versionCode}',
+                icon: Icons.system_update_alt_outlined,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: _updating ? null : _checkAndInstallUpdate,
+                    icon: _updating
+                        ? const _ButtonSpinner()
+                        : const Icon(Icons.system_update_alt_outlined),
+                    label: const Text('Check for update'),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _SettingsCard(
+                title: 'Data',
+                subtitle: 'Clear check-ins stored on this device',
+                icon: Icons.delete_outline,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _resetData,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Delete all check-ins'),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _PasswordField extends StatelessWidget {
+  const _PasswordField({
+    required this.controller,
+    required this.label,
+    required this.obscureText,
+    required this.onToggle,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final bool obscureText;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      obscureText: obscureText,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: IconButton(
+          onPressed: onToggle,
+          tooltip: obscureText ? 'Show password' : 'Hide password',
+          icon: Icon(
+            obscureText
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
           ),
-        ],
+        ),
       ),
     );
   }
@@ -415,24 +411,29 @@ class _SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: colors.panel,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: colors.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: colors.accent),
-              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(icon, color: colors.accent, size: 30),
+              ),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 3),
                     Text(
                       subtitle,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -442,10 +443,23 @@ class _SettingsCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           child,
         ],
       ),
+    );
+  }
+}
+
+class _ButtonSpinner extends StatelessWidget {
+  const _ButtonSpinner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 18,
+      height: 18,
+      child: CircularProgressIndicator(strokeWidth: 2),
     );
   }
 }

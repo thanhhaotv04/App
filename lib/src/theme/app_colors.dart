@@ -32,15 +32,15 @@ class AppColors {
   }
 
   static const light = AppColors(
-    bg: Color(0xFFF4EFE2),
-    bg2: Color(0xFFEFE5D2),
-    panel: Color(0xFFFFF9F0),
-    panel2: Color(0xFFF8F1E4),
-    line: Color(0xFFE3D7C3),
-    text: Color(0xFF2E2922),
-    muted: Color(0xFF786C5D),
-    accent: Color(0xFFC47731),
-    accent2: Color(0xFFAD6829),
+    bg: Color(0xFFF8F3E7),
+    bg2: Color(0xFFF3E9D7),
+    panel: Color(0xFFFFFBF3),
+    panel2: Color(0xFFFCF2E8),
+    line: Color(0xFFE3D6BF),
+    text: Color(0xFF29251F),
+    muted: Color(0xFF7C7163),
+    accent: Color(0xFFCB7B2B),
+    accent2: Color(0xFFA95F21),
     good: Color(0xFF86C95A),
     warning: Color(0xFFF1D46D),
   );
