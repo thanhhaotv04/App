@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs/promises";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,6 +12,7 @@ const preferredPort = Number(process.env.PORT || 3000);
 
 const DATA_DIR = path.join(__dirname, "server-data");
 const CHECKINS_FILE = path.join(DATA_DIR, "checkins.json");
+const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const PHOTO_ROOT = path.join(__dirname, "user", "Picture", "thanhhao");
 const RELEASES_DIR = path.join(__dirname, "releases");
 const UPDATE_MANIFEST = path.join(RELEASES_DIR, "latest.json");
@@ -50,10 +51,48 @@ async function saveCheckins(items) {
   await fs.rename(tempFile, CHECKINS_FILE);
 }
 
+async function loadAccounts() {
+  try {
+    const raw = await fs.readFile(ACCOUNTS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveAccounts(items) {
+  await ensureDir(DATA_DIR);
+  const tempFile = `${ACCOUNTS_FILE}.tmp`;
+  await fs.writeFile(tempFile, JSON.stringify(items, null, 2), "utf8");
+  await fs.rename(tempFile, ACCOUNTS_FILE);
+}
+
+function hashPassword(password, salt = randomBytes(16).toString("hex")) {
+  return `${salt}:${scryptSync(String(password), salt, 32).toString("hex")}`;
+}
+
+function passwordMatches(password, stored) {
+  const [salt, expectedHex] = String(stored || "").split(":");
+  if (!salt || !expectedHex) return false;
+  const actual = scryptSync(String(password), salt, 32);
+  const expected = Buffer.from(expectedHex, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function normalizedName(value) {
+  return String(value || "").normalize("NFC").trim();
+}
+
+function findAccount(accounts, name) {
+  const key = normalizedName(name).toLocaleLowerCase("vi");
+  return accounts.find((item) => normalizedName(item.name).toLocaleLowerCase("vi") === key);
+}
+
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Password");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -66,6 +105,68 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/checkins", async (_req, res) => {
   res.json(await loadCheckins());
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const name = normalizedName(req.body.name || req.body.userName || req.body.username);
+  const password = String(req.body.password || "");
+  if (!name || password.length < 4) {
+    return res.status(400).json({ error: "invalid_account", message: "Enter a name and a password with at least 4 characters." });
+  }
+  const accounts = await loadAccounts();
+  if (findAccount(accounts, name)) {
+    return res.status(409).json({ error: "account_exists", message: "This device already has an account. Sign in or reset password." });
+  }
+  accounts.push({ id: randomUUID(), name, passwordHash: hashPassword(password), updatedAt: Date.now() });
+  await saveAccounts(accounts);
+  res.status(201).json({ ok: true, name });
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const name = normalizedName(req.body.name || req.body.userName || req.body.username);
+  const account = findAccount(await loadAccounts(), name);
+  if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found. Please register first." });
+  if (!passwordMatches(req.body.password, account.passwordHash)) {
+    return res.status(401).json({ error: "incorrect_password", message: "Incorrect password for this user name." });
+  }
+  res.json({ ok: true, name: account.name });
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  const accounts = await loadAccounts();
+  const account = findAccount(accounts, req.body.name || req.body.userName || req.body.username);
+  const newPassword = String(req.body.newPassword || req.body.password || "");
+  if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found." });
+  if (newPassword.length < 4) {
+    return res.status(400).json({ error: "weak_password", message: "New password must have at least 4 characters." });
+  }
+  account.passwordHash = hashPassword(newPassword);
+  account.updatedAt = Date.now();
+  await saveAccounts(accounts);
+  res.json({ ok: true, name: account.name });
+});
+
+app.post("/api/auth/update", async (req, res) => {
+  const accounts = await loadAccounts();
+  const account = findAccount(accounts, req.body.name || req.body.userName || req.body.username);
+  const currentPassword = String(req.get("X-Password") || req.body.currentPassword || "");
+  if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found." });
+  if (!passwordMatches(currentPassword, account.passwordHash)) {
+    return res.status(401).json({ error: "incorrect_password", message: "Current password is incorrect." });
+  }
+  const newName = normalizedName(req.body.newName);
+  const newPassword = String(req.body.newPassword || "");
+  if (newName && findAccount(accounts.filter((item) => item.id !== account.id), newName)) {
+    return res.status(409).json({ error: "account_exists", message: "An account with that name already exists." });
+  }
+  if (newPassword && newPassword.length < 4) {
+    return res.status(400).json({ error: "weak_password", message: "New password must have at least 4 characters." });
+  }
+  if (newName) account.name = newName;
+  if (newPassword) account.passwordHash = hashPassword(newPassword);
+  account.updatedAt = Date.now();
+  await saveAccounts(accounts);
+  res.json({ ok: true, name: account.name });
 });
 
 app.get("/api/update/latest", async (req, res) => {
@@ -144,6 +245,24 @@ app.delete("/api/checkins/:id", async (req, res) => {
   const next = checkins.filter((item) => item.id !== req.params.id);
   await saveCheckins(next);
   res.json({ ok: true });
+});
+
+app.delete("/api/checkins/:id/photo", async (req, res) => {
+  const checkins = await loadCheckins();
+  const item = checkins.find((entry) => entry.id === req.params.id);
+  if (!item) return res.status(404).json({ error: "not_found" });
+  const previousPhoto = item.photo;
+  item.photo = "";
+  item.synced = true;
+  await saveCheckins(checkins);
+  if (previousPhoto) {
+    const absolutePhoto = path.resolve(__dirname, previousPhoto);
+    const absoluteRoot = path.resolve(PHOTO_ROOT);
+    if (absolutePhoto.startsWith(`${absoluteRoot}${path.sep}`)) {
+      await fs.unlink(absolutePhoto).catch(() => {});
+    }
+  }
+  res.json(item);
 });
 
 app.delete("/api/checkins", async (_req, res) => {

@@ -45,7 +45,10 @@ class CheckInRepository {
   Future<void> save(List<CheckIn> items) async {
     _cache = List.of(items);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageKey, jsonEncode(items.map((e) => e.toJson()).toList()));
+    await prefs.setString(
+      _storageKey,
+      jsonEncode(items.map((e) => e.toJson()).toList()),
+    );
   }
 
   Future<void> add(CheckIn item) async {
@@ -60,6 +63,27 @@ class CheckInRepository {
     await save(items);
   }
 
+  Future<void> update(CheckIn item) async {
+    final items = await load();
+    final index = items.indexWhere((entry) => entry.id == item.id);
+    if (index < 0) {
+      items.insert(0, item);
+    } else {
+      items[index] = item;
+    }
+    await save(items);
+  }
+
+  Future<void> updateAll(List<CheckIn> items) => save(items);
+
+  Future<void> deletePhoto(String id) async {
+    final items = await load();
+    final index = items.indexWhere((entry) => entry.id == id);
+    if (index < 0) return;
+    items[index] = items[index].withoutPhoto();
+    await save(items);
+  }
+
   Future<void> markSynced(String id) async {
     final items = await load();
     final index = items.indexWhere((e) => e.id == id);
@@ -68,5 +92,4 @@ class CheckInRepository {
       await save(items);
     }
   }
-
 }

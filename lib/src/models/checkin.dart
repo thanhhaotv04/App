@@ -54,6 +54,20 @@ class CheckIn {
 
   bool get hasPhoto => localPhoto.isNotEmpty || photo.isNotEmpty;
 
+  CheckIn withoutPhoto() => CheckIn(
+    id: id,
+    city: city,
+    place: place,
+    notes: notes,
+    source: source,
+    synced: false,
+    createdAt: createdAt,
+    lat: lat,
+    lng: lng,
+    photo: '',
+    localPhoto: '',
+  );
+
   factory CheckIn.fromJson(Map<String, dynamic> json) {
     return CheckIn(
       id: json['id']?.toString() ?? '',
@@ -62,7 +76,9 @@ class CheckIn {
       notes: json['notes']?.toString() ?? '',
       source: json['source']?.toString() ?? 'manual',
       synced: json['synced'] == true,
-      createdAt: (json['createdAt'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+      createdAt:
+          (json['createdAt'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
       lat: (json['lat'] as num?)?.toDouble() ?? 0,
       lng: (json['lng'] as num?)?.toDouble() ?? 0,
       photo: json['photo']?.toString() ?? '',
@@ -71,16 +87,16 @@ class CheckIn {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'city': city,
-        'place': place,
-        'notes': notes,
-        'source': source,
-        'synced': synced,
-        'createdAt': createdAt,
-        'lat': lat,
-        'lng': lng,
-        'photo': photo,
-        'localPhoto': localPhoto,
-      };
+    'id': id,
+    'city': city,
+    'place': place,
+    'notes': notes,
+    'source': source,
+    'synced': synced,
+    'createdAt': createdAt,
+    'lat': lat,
+    'lng': lng,
+    'photo': photo,
+    'localPhoto': localPhoto,
+  };
 }

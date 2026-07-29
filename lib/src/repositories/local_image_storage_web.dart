@@ -18,6 +18,8 @@ class LocalImageStorage {
 
   static Future<void> deleteImage(String ref) async {}
 
+  static Future<void> deleteAllImages() async {}
+
   static Future<String> folderPath() async {
     return 'Local image folder is only available on Android and Windows builds.';
   }

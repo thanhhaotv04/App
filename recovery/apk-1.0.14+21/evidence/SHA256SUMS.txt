@@ -1,0 +1,11 @@
+APK
+f1699ed89ae335a9c9d172483e68395bdb804db4df121b030ab363d39dcc06e4  /home/thanhhao/thanhhao/Github/VietNam Map Checkin_1.apk
+
+SIGNING CERTIFICATE SHA-256
+8ce797953a677208a402556bc65aba74cf3b8db9f685fcb8d8153d18c44b5dbf
+
+RECOVERED ASSETS
+e6335644bbd224ee2102fb756e724b116ebfa1c675ef31fc452f9e79f7a24e86  /tmp/vmc-apk.m0NKMF/assets/flutter_assets/App_VietNamMap_Logo_no_background.png
+7bbcda18c38bc16318dc723f17a78e14bb76ba28653659c3c197720f0ea14a7b  /tmp/vmc-apk.m0NKMF/assets/flutter_assets/assets/vietnam-provinces.geojson
+20294e1a812bed2304392908930e5d385cf3c1a4c4ac31bbf8c58c73719a19bc  /tmp/vmc-apk.m0NKMF/assets/flutter_assets/assets/vn.svg
+37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570  /tmp/vmc-apk.m0NKMF/assets/flutter_assets/assets/seeds/checkins_seed.json

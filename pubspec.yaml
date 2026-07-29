@@ -2,7 +2,7 @@ name: vietnam_map_01
 description: "VietNam Map Checkin Flutter app"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.14+21
 
 environment:
   sdk: ^3.12.1
@@ -16,6 +16,8 @@ dependencies:
   shared_preferences: ^2.3.3
   uuid: ^4.5.1
   file_selector: ^1.1.0
+  image_picker: ^1.1.2
+  path: ^1.9.1
   cupertino_icons: ^1.0.9
 dev_dependencies:
   flutter_test:
@@ -25,6 +27,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/App_VietNamMap_Logo_no_background.png
     - assets/vn.svg
     - assets/vietnam-provinces.geojson
     - assets/seeds/checkins_seed.json

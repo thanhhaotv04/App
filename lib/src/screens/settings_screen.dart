@@ -1,10 +1,11 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/checkin.dart';
+import '../repositories/app_data_reset.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/app_update_service.dart';
 import '../repositories/checkin_repository.dart';
@@ -75,7 +76,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         createdAt: now,
         lat: 10.8231,
         lng: 106.6297,
-        photo: 'user/Picture/thanhhao/$hcm/1780386908045-Screenshot 2025-12-01 182729.png',
+        photo:
+            'user/Picture/thanhhao/$hcm/1780386908045-Screenshot 2025-12-01 182729.png',
       ),
       CheckIn(
         id: 'sample-binh-dinh',
@@ -87,27 +89,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         createdAt: now - 86400000,
         lat: 13.782,
         lng: 109.219,
-        photo: 'user/Picture/thanhhao/$binhDinh/1780299398898-Screenshot 2025-12-01 134518.png',
+        photo:
+            'user/Picture/thanhhao/$binhDinh/1780299398898-Screenshot 2025-12-01 134518.png',
       ),
     ]);
     setState(() => _status = 'Sample data loaded.');
   }
+
   Future<void> _exportJson() async {
     final items = await _repo.load();
     setState(() {
-      _exportText = const JsonEncoder.withIndent('  ').convert(items.map((e) => e.toJson()).toList());
+      _exportText = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(items.map((e) => e.toJson()).toList());
       _status = 'Export JSON generated below.';
     });
   }
 
   Future<void> _importJson() async {
-    const jsonGroup = XTypeGroup(label: 'JSON', extensions: ['json'], mimeTypes: ['application/json']);
+    const jsonGroup = XTypeGroup(
+      label: 'JSON',
+      extensions: ['json'],
+      mimeTypes: ['application/json'],
+    );
     final file = await openFile(acceptedTypeGroups: const [jsonGroup]);
     if (file == null) return;
     try {
       final raw = await file.readAsString();
       final decoded = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
-      final items = decoded.map(CheckIn.fromJson).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final items = decoded.map(CheckIn.fromJson).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       await _repo.save(items);
       if (!mounted) return;
       setState(() {
@@ -145,18 +156,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final info = await service.checkLatest();
       if (!info.available) {
         if (!mounted) return;
-        setState(() => _status = 'Already up to date: ${AppVersion.versionName}+${AppVersion.versionCode}.');
+        setState(
+          () => _status =
+              'Already up to date: ${AppVersion.versionName}+${AppVersion.versionCode}.',
+        );
         return;
       }
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Install update ${info.versionName}+${info.versionCode}?'),
-          content: Text(info.notes.isEmpty ? 'A newer APK is available on the backend.' : info.notes),
+          title: Text(
+            'Install update ${info.versionName}+${info.versionCode}?',
+          ),
+          content: Text(
+            info.notes.isEmpty
+                ? 'A newer APK is available on the backend.'
+                : info.notes,
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Download')),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Download'),
+            ),
           ],
         ),
       );
@@ -180,26 +206,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete all data?'),
-        content: const Text('This clears local check-ins stored on this device.'),
+        title: const Text('Delete all check-ins?'),
+        content: const Text(
+          'This clears local check-ins stored on this device.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
         ],
       ),
     );
     if (confirmed != true) return;
+    await AppDataReset.clearCheckInsAndPhotos();
     await _repo.save([]);
     setState(() {
       _exportText = '';
-      _status = 'Local data deleted.';
+      _status = 'Local check-ins deleted.';
     });
   }
 
   Future<String> _accountSummary() async {
     final prefs = await SharedPreferences.getInstance();
     final user = prefs.getString('vmc-auth-user');
-    return user == null || user.isEmpty ? 'No local account stored.' : 'Signed in as $user. Account data is stored locally on this device.';
+    return user == null || user.isEmpty
+        ? 'No local account stored.'
+        : 'Signed in as $user. Account data is stored locally on this device.';
   }
 
   @override
@@ -207,7 +244,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final colors = AppColors.of(context);
     return Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [colors.bg, colors.bg2]),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [colors.bg, colors.bg2],
+        ),
       ),
       child: ListView(
         padding: const EdgeInsets.all(16),
@@ -220,7 +261,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.person_outline,
             child: FutureBuilder<String>(
               future: _accountSummary(),
-              builder: (context, snapshot) => Text(snapshot.data ?? 'Loading...', style: Theme.of(context).textTheme.bodyMedium),
+              builder: (context, snapshot) => Text(
+                snapshot.data ?? 'Loading...',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -232,11 +276,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                FilledButton.icon(onPressed: AppTheme.toggleTheme, icon: const Icon(Icons.brightness_6_outlined), label: const Text('Toggle theme')),
-                OutlinedButton.icon(onPressed: _exportJson, icon: const Icon(Icons.download_outlined), label: const Text('Export JSON')),
-                OutlinedButton.icon(onPressed: _importJson, icon: const Icon(Icons.upload_file_outlined), label: const Text('Import JSON')),
-                OutlinedButton.icon(onPressed: _loadSample, icon: const Icon(Icons.dataset_outlined), label: const Text('Load sample')),
-                OutlinedButton.icon(onPressed: _resetData, icon: const Icon(Icons.delete_outline), label: const Text('Delete all data')),
+                FilledButton.icon(
+                  onPressed: AppTheme.toggleTheme,
+                  icon: const Icon(Icons.brightness_6_outlined),
+                  label: const Text('Toggle theme'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _exportJson,
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Export JSON'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _importJson,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: const Text('Import JSON'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _loadSample,
+                  icon: const Icon(Icons.dataset_outlined),
+                  label: const Text('Load sample'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _resetData,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete all data'),
+                ),
               ],
             ),
           ),
@@ -250,15 +314,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 TextField(
                   controller: _backendCtrl,
-                  decoration: const InputDecoration(labelText: 'Backend URL', hintText: BackendConfig.defaultUrl),
+                  decoration: const InputDecoration(
+                    labelText: 'Backend URL',
+                    hintText: BackendConfig.defaultUrl,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    FilledButton.icon(onPressed: _saveBackendUrl, icon: const Icon(Icons.save_outlined), label: const Text('Save URL')),
-                    OutlinedButton.icon(onPressed: _syncNow, icon: const Icon(Icons.sync_alt_outlined), label: const Text('Sync now')),
+                    FilledButton.icon(
+                      onPressed: _saveBackendUrl,
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('Save URL'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _syncNow,
+                      icon: const Icon(Icons.sync_alt_outlined),
+                      label: const Text('Sync now'),
+                    ),
                   ],
                 ),
               ],
@@ -267,7 +342,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           _SettingsCard(
             title: 'LAN app update',
-            subtitle: 'Current version ${AppVersion.versionName}+${AppVersion.versionCode}',
+            subtitle:
+                'Current version ${AppVersion.versionName}+${AppVersion.versionCode}',
             icon: Icons.system_update_alt_outlined,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +356,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 FilledButton.icon(
                   onPressed: _updating ? null : _checkAndInstallUpdate,
                   icon: _updating
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.system_update_alt_outlined),
                   label: const Text('Check for update'),
                 ),
@@ -303,8 +383,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: _status,
             icon: Icons.info_outline,
             child: _exportText.isEmpty
-                ? Text('JSON import/export, backend URL persistence, and two-way sync are available here.', style: Theme.of(context).textTheme.bodySmall)
-                : SelectableText(_exportText, style: Theme.of(context).textTheme.bodySmall),
+                ? Text(
+                    'JSON import/export, backend URL persistence, and two-way sync are available here.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                : SelectableText(
+                    _exportText,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
           ),
         ],
       ),
@@ -313,7 +399,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 class _SettingsCard extends StatelessWidget {
-  const _SettingsCard({required this.title, required this.subtitle, required this.icon, required this.child});
+  const _SettingsCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.child,
+  });
 
   final String title;
   final String subtitle;
@@ -325,7 +416,11 @@ class _SettingsCard extends StatelessWidget {
     final colors = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: colors.panel, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.line)),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -338,7 +433,10 @@ class _SettingsCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleMedium),
-                    Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 ),
               ),
@@ -351,4 +449,3 @@ class _SettingsCard extends StatelessWidget {
     );
   }
 }
-

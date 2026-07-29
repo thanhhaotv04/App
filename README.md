@@ -1,5 +1,11 @@
 # VietNam Map Checkin
 
+> APK recovery: the repository has been reconciled with recovered release
+> `1.0.14+21`. See
+> [`recovery/apk-1.0.14+21/README.md`](recovery/apk-1.0.14+21/README.md) for
+> persistent storage keys, sync/API contracts, map flow, signing constraints,
+> hashes, and recovery limitations.
+
 Flutter app for saving travel check-ins on a Vietnam province map. The app was migrated from the original web app at `D:\thanhhao_ws\App\App_VietNam_Map` and keeps the same core idea: map-first check-in, photos, history, sync, and local-first usage.
 
 ## What The App Does

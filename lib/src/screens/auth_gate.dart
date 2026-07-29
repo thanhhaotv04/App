@@ -4,7 +4,11 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.hasAccount, required this.onSubmit});
+  const AuthScreen({
+    super.key,
+    required this.hasAccount,
+    required this.onSubmit,
+  });
 
   final bool hasAccount;
   final Future<String?> Function(String name, String password) onSubmit;
@@ -31,7 +35,10 @@ class _AuthScreenState extends State<AuthScreen> {
     final name = _nameCtrl.text.trim();
     final password = _passwordCtrl.text;
     if (name.isEmpty || password.length < 4) {
-      setState(() => _error = 'Enter a name and a password with at least 4 characters.');
+      setState(
+        () =>
+            _error = 'Enter a name and a password with at least 4 characters.',
+      );
       return;
     }
     setState(() {
@@ -71,20 +78,28 @@ class _AuthScreenState extends State<AuthScreen> {
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(color: colors.accent, borderRadius: BorderRadius.circular(16)),
-                          child: const Icon(Icons.explore, color: Color(0xFF1E1B16)),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.asset(
+                            'assets/App_VietNamMap_Logo_no_background.png',
+                            width: 48,
+                            height: 48,
+                            fit: BoxFit.contain,
+                          ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('VietNam Map Checkin', style: Theme.of(context).textTheme.titleLarge),
                               Text(
-                                widget.hasAccount ? 'Sign in to continue' : 'Create a local account',
+                                'VietNam Map Checkin',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              Text(
+                                widget.hasAccount
+                                    ? 'Sign in to continue'
+                                    : 'Create a local account',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ],
@@ -95,7 +110,11 @@ class _AuthScreenState extends State<AuthScreen> {
                           icon: ValueListenableBuilder<ThemeMode>(
                             valueListenable: AppTheme.themeMode,
                             builder: (context, mode, _) {
-                              return Icon(mode == ThemeMode.dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined);
+                              return Icon(
+                                mode == ThemeMode.dark
+                                    ? Icons.light_mode_outlined
+                                    : Icons.dark_mode_outlined,
+                              );
                             },
                           ),
                           tooltip: 'Toggle theme',
@@ -117,22 +136,38 @@ class _AuthScreenState extends State<AuthScreen> {
                         labelText: 'Password',
                         suffixIcon: IconButton(
                           onPressed: () => setState(() => _obscure = !_obscure),
-                          icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          icon: Icon(
+                            _obscure
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
                           tooltip: _obscure ? 'Show password' : 'Hide password',
                         ),
                       ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
-                      Text(_error!, style: const TextStyle(color: Color(0xFFE85D5D), fontWeight: FontWeight.w600)),
+                      Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: Color(0xFFE85D5D),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                     const SizedBox(height: 22),
                     FilledButton.icon(
                       onPressed: _loading ? null : _submit,
                       icon: _loading
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Icon(Icons.login_outlined),
-                      label: Text(widget.hasAccount ? 'Sign in' : 'Create and sign in'),
+                      label: Text(
+                        widget.hasAccount ? 'Sign in' : 'Create and sign in',
+                      ),
                     ),
                   ],
                 ),
@@ -146,7 +181,12 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 class AppPickerScreen extends StatelessWidget {
-  const AppPickerScreen({super.key, required this.userName, required this.onOpenApp, required this.onLogout});
+  const AppPickerScreen({
+    super.key,
+    required this.userName,
+    required this.onOpenApp,
+    required this.onLogout,
+  });
 
   final String userName;
   final VoidCallback onOpenApp;
@@ -179,13 +219,26 @@ class AppPickerScreen extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Choose an app', style: Theme.of(context).textTheme.headlineMedium),
-                            Text('Hello $userName, choose a workspace to continue.', style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              'Choose an app',
+                              style: Theme.of(context).textTheme.headlineMedium,
+                            ),
+                            Text(
+                              'Hello $userName, choose a workspace to continue.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ],
                         ),
                       ),
-                      IconButton(onPressed: AppTheme.toggleTheme, icon: const Icon(Icons.brightness_6_outlined), tooltip: 'Toggle theme'),
-                      TextButton(onPressed: onLogout, child: const Text('Sign out')),
+                      IconButton(
+                        onPressed: AppTheme.toggleTheme,
+                        icon: const Icon(Icons.brightness_6_outlined),
+                        tooltip: 'Toggle theme',
+                      ),
+                      TextButton(
+                        onPressed: onLogout,
+                        child: const Text('Sign out'),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -198,27 +251,45 @@ class AppPickerScreen extends StatelessWidget {
                         color: colors.panel,
                         borderRadius: BorderRadius.circular(24),
                         border: Border.all(color: colors.line),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 24, offset: const Offset(0, 12))],
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 24,
+                            offset: const Offset(0, 12),
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
-                          Container(
-                            width: 58,
-                            height: 58,
-                            decoration: BoxDecoration(color: colors.accent, borderRadius: BorderRadius.circular(18)),
-                            child: const Icon(Icons.map_outlined, color: Color(0xFF1E1B16), size: 30),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Image.asset(
+                              'assets/App_VietNamMap_Logo_no_background.png',
+                              width: 58,
+                              height: 58,
+                              fit: BoxFit.contain,
+                            ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('VietNam Map Checkin', style: Theme.of(context).textTheme.titleLarge),
-                                Text('Province map, check-in history, and backend sync.', style: Theme.of(context).textTheme.bodySmall),
+                                Text(
+                                  'VietNam Map Checkin',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                                Text(
+                                  'Province map, check-in history, and backend sync.',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
                               ],
                             ),
                           ),
-                          Icon(Icons.arrow_forward_rounded, color: colors.accent),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            color: colors.accent,
+                          ),
                         ],
                       ),
                     ),

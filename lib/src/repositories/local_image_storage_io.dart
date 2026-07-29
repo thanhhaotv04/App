@@ -39,6 +39,13 @@ class LocalImageStorage {
     }
   }
 
+  static Future<void> deleteAllImages() async {
+    final root = await _rootDirectory();
+    if (await root.exists()) {
+      await root.delete(recursive: true);
+    }
+  }
+
   static Future<String> folderPath() async {
     return (await _rootDirectory()).path;
   }

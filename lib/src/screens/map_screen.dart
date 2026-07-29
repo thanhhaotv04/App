@@ -1,9 +1,10 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource;
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
@@ -84,7 +85,9 @@ class _MapScreenState extends State<MapScreen> {
       final geometry = feature['geometry'] as Map<String, dynamic>;
       final type = geometry['type']?.toString();
       final coordinates = geometry['coordinates'];
-      final name = _provinceName(feature['properties'] as Map<String, dynamic>? ?? const {});
+      final name = _provinceName(
+        feature['properties'] as Map<String, dynamic>? ?? const {},
+      );
       final rings = <List<dynamic>>[];
       if (type == 'Polygon') {
         rings.addAll((coordinates as List).cast<List<dynamic>>());
@@ -118,7 +121,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String _provinceName(Map<String, dynamic> props) {
-    return (props['ten_tinh'] ?? props['Name'] ?? props['name'] ?? '').toString();
+    return (props['ten_tinh'] ?? props['Name'] ?? props['name'] ?? '')
+        .toString();
   }
 
   Future<void> _load() async {
@@ -132,30 +136,104 @@ class _MapScreenState extends State<MapScreen> {
   List<CheckIn> get _filteredItems {
     final q = _searchCtrl.text.trim().toLowerCase();
     return _items.where((item) {
-      final matchesQuery = q.isEmpty ||
+      final matchesQuery =
+          q.isEmpty ||
           item.city.toLowerCase().contains(q) ||
           item.place.toLowerCase().contains(q) ||
           item.notes.toLowerCase().contains(q);
-      final matchesSource = _sourceFilter == 'all' || item.source == _sourceFilter;
+      final matchesSource =
+          _sourceFilter == 'all' || item.source == _sourceFilter;
       return matchesQuery && matchesSource;
     }).toList();
   }
 
-  Future<void> _pickPhoto() async {
-    const imageGroup = XTypeGroup(
-      label: 'Images',
-      extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-      mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-    );
-    final file = await openFile(acceptedTypeGroups: const [imageGroup]);
+  Future<void> _pickPhoto([ImageSource? source]) async {
+    final file = source == null
+        ? await openFile(
+            acceptedTypeGroups: const [
+              XTypeGroup(
+                label: 'Images',
+                extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+                mimeTypes: [
+                  'image/jpeg',
+                  'image/png',
+                  'image/webp',
+                  'image/gif',
+                ],
+              ),
+            ],
+          )
+        : await ImagePicker().pickImage(source: source, imageQuality: 92);
     if (file == null) return;
     final bytes = await file.readAsBytes();
     setState(() {
       _pickedPhoto = file;
       _pickedPhotoBytes = bytes;
-      _photoInfo = '${file.name} · ${(bytes.length / 1024).toStringAsFixed(1)} KB';
+      _photoInfo =
+          '${file.name} · ${(bytes.length / 1024).toStringAsFixed(1)} KB';
       _takenAt = DateTime.now();
     });
+  }
+
+  Future<void> _saveEditedCheckin(CheckIn original) async {
+    final city = _cityCtrl.text.trim();
+    if (city.isEmpty) return;
+    var localPhoto = original.localPhoto;
+    if (_pickedPhotoBytes != null) {
+      localPhoto = await LocalImageStorage.saveImage(
+        bytes: _pickedPhotoBytes!,
+        originalName: _pickedPhoto?.name ?? 'checkin-photo.jpg',
+        city: city,
+        createdAt: original.createdAt,
+      );
+      await LocalImageStorage.deleteImage(original.localPhoto);
+    }
+    var updated = CheckIn(
+      id: original.id,
+      city: city,
+      place: _placeCtrl.text.trim().isEmpty ? city : _placeCtrl.text.trim(),
+      notes: _notesCtrl.text.trim(),
+      source: original.source,
+      synced: false,
+      createdAt: original.createdAt,
+      lat: original.lat,
+      lng: original.lng,
+      photo: original.photo,
+      localPhoto: localPhoto,
+    );
+    try {
+      final sync = SyncService(baseUrl: await BackendConfig.loadUrl());
+      final remote = await sync.push(
+        updated,
+        photoBytes: _pickedPhotoBytes,
+        photoFileName: _pickedPhoto?.name,
+      );
+      updated = remote.copyWith(localPhoto: localPhoto, synced: true);
+    } catch (_) {
+      // Keep the edit locally and let two-way sync retry later.
+    }
+    await _repo.update(updated);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    await _load();
+    if (!mounted) return;
+    _clearCheckInForm();
+    _openDetail(updated);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Check-in updated.')));
+  }
+
+  void _clearCheckInForm() {
+    _cityCtrl.clear();
+    _placeCtrl.clear();
+    _notesCtrl.clear();
+    _photoInfo = 'No metadata read yet';
+    _pickedPhoto = null;
+    _pickedPhotoBytes = null;
+    _lat = null;
+    _lng = null;
+    _takenAt = null;
   }
 
   Future<void> _saveCheckin() async {
@@ -185,22 +263,18 @@ class _MapScreenState extends State<MapScreen> {
     final sync = SyncService(baseUrl: backendUrl);
     var savedItem = item;
     try {
-      savedItem = await sync.push(item, photoBytes: _pickedPhotoBytes, photoFileName: _pickedPhoto?.name);
+      savedItem = await sync.push(
+        item,
+        photoBytes: _pickedPhotoBytes,
+        photoFileName: _pickedPhoto?.name,
+      );
       savedItem = savedItem.copyWith(synced: true, localPhoto: localPhoto);
     } catch (_) {
       savedItem = item.copyWith(synced: false);
     }
     await _repo.add(savedItem);
-    _cityCtrl.clear();
-    _placeCtrl.clear();
-    _notesCtrl.clear();
+    _clearCheckInForm();
     setState(() {
-      _photoInfo = 'No metadata read yet';
-      _pickedPhoto = null;
-      _pickedPhotoBytes = null;
-      _lat = null;
-      _lng = null;
-      _takenAt = null;
       _selected = savedItem;
       _selectedProvince = null;
     });
@@ -210,9 +284,15 @@ class _MapScreenState extends State<MapScreen> {
     _openDetail(savedItem);
   }
 
-  void _openForm([String? city]) {
+  void _openForm([String? city, CheckIn? editing]) {
     final colors = AppColors.of(context);
-    if (city != null && city.isNotEmpty) {
+    _clearCheckInForm();
+    if (editing != null) {
+      _cityCtrl.text = editing.city;
+      _placeCtrl.text = editing.place;
+      _notesCtrl.text = editing.notes;
+      _photoInfo = editing.hasPhoto ? 'Current photo attached' : 'No photo';
+    } else if (city != null && city.isNotEmpty) {
       _cityCtrl.text = city;
       _placeCtrl.text = city;
     }
@@ -225,7 +305,9 @@ class _MapScreenState extends State<MapScreen> {
       ),
       builder: (context) {
         return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
           child: StatefulBuilder(
             builder: (context, setModalState) {
               return SingleChildScrollView(
@@ -234,28 +316,64 @@ class _MapScreenState extends State<MapScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('New check-in', style: Theme.of(context).textTheme.titleLarge),
+                    Text(
+                      editing == null ? 'New check-in' : 'Edit check-in',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                     const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await _pickPhoto();
-                        setModalState(() {});
-                      },
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('Choose photo'),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await _pickPhoto();
+                            setModalState(() {});
+                          },
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: Text(
+                            editing == null ? 'Choose photo' : 'Change photo',
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await _pickPhoto(ImageSource.camera);
+                            setModalState(() {});
+                          },
+                          icon: const Icon(Icons.photo_camera_outlined),
+                          label: const Text('Take photo'),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
-                    Text(_photoInfo, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      _photoInfo,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     const SizedBox(height: 12),
-                    TextField(controller: _cityCtrl, decoration: const InputDecoration(labelText: 'Province / City')),
+                    TextField(
+                      controller: _cityCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Province / City',
+                      ),
+                    ),
                     const SizedBox(height: 12),
-                    TextField(controller: _placeCtrl, decoration: const InputDecoration(labelText: 'Place')),
+                    TextField(
+                      controller: _placeCtrl,
+                      decoration: const InputDecoration(labelText: 'Place'),
+                    ),
                     const SizedBox(height: 12),
-                    TextField(controller: _notesCtrl, maxLines: 3, decoration: const InputDecoration(labelText: 'Notes')),
+                    TextField(
+                      controller: _notesCtrl,
+                      maxLines: 3,
+                      decoration: const InputDecoration(labelText: 'Notes'),
+                    ),
                     const SizedBox(height: 16),
                     FilledButton(
-                      onPressed: _saveCheckin,
-                      child: const Text('Save check-in'),
+                      onPressed: editing == null
+                          ? _saveCheckin
+                          : () => _saveEditedCheckin(editing),
+                      child: Text(editing == null ? 'Save check-in' : 'Update'),
                     ),
                   ],
                 ),
@@ -310,7 +428,12 @@ class _MapScreenState extends State<MapScreen> {
     _projectedSize = size;
     _projectedProvinces = _provinces
         .where((province) => province.ring.length >= 3)
-        .map((province) => _ProjectedProvince(source: province, path: _provincePath(province.ring, size)))
+        .map(
+          (province) => _ProjectedProvince(
+            source: province,
+            path: _provincePath(province.ring, size),
+          ),
+        )
         .toList();
     return _projectedProvinces;
   }
@@ -335,9 +458,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String _stripVietnameseMarks(String value) {
-    const from = 'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ'
+    const from =
+        'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ'
         'ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ';
-    const to = 'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd'
+    const to =
+        'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd'
         'AAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD';
     var result = value;
     for (var i = 0; i < from.length; i += 1) {
@@ -350,9 +475,9 @@ class _MapScreenState extends State<MapScreen> {
     final clean = _cleanName(provinceName);
     final photos = _items.where((item) {
       final city = _cleanName(item.city);
-      return item.hasPhoto && (city == clean || city.contains(clean) || clean.contains(city));
-    }).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return item.hasPhoto &&
+          (city == clean || city.contains(clean) || clean.contains(city));
+    }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return photos.take(3).toList();
   }
 
@@ -377,9 +502,53 @@ class _MapScreenState extends State<MapScreen> {
     final item = _selected;
     if (item == null) return;
     await LocalImageStorage.deleteImage(item.localPhoto);
+    try {
+      await SyncService(
+        baseUrl: await BackendConfig.loadUrl(),
+      ).deleteCheckIn(item.id);
+    } catch (_) {
+      // The local delete still succeeds while offline.
+    }
     await _repo.remove(item.id);
     await _load();
     setState(() => _selected = null);
+  }
+
+  void _openEditCheckin(CheckIn item) => _openForm(null, item);
+
+  Future<void> _deletePhoto() async {
+    final item = _selected;
+    if (item == null || !item.hasPhoto) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete photo?'),
+        content: Text('Remove the photo from ${item.place}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete photo'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await LocalImageStorage.deleteImage(item.localPhoto);
+    try {
+      await SyncService(
+        baseUrl: await BackendConfig.loadUrl(),
+      ).deletePhoto(item.id);
+    } catch (_) {
+      // Preserve the local deletion and retry on a later sync.
+    }
+    await _repo.deletePhoto(item.id);
+    final updated = item.withoutPhoto();
+    await _load();
+    if (mounted) setState(() => _selected = updated);
   }
 
   void _openProvinceDetail(String provinceName) {
@@ -399,8 +568,7 @@ class _MapScreenState extends State<MapScreen> {
     final items = _items.where((item) {
       final city = _cleanName(item.city);
       return city == clean || city.contains(clean) || clean.contains(city);
-    }).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return items;
   }
 
@@ -446,7 +614,8 @@ class _MapScreenState extends State<MapScreen> {
               DropdownMenuItem(value: 'manual', child: Text('Manual')),
               DropdownMenuItem(value: 'ai', child: Text('AI')),
             ],
-            onChanged: (value) => setState(() => _sourceFilter = value ?? 'all'),
+            onChanged: (value) =>
+                setState(() => _sourceFilter = value ?? 'all'),
             decoration: const InputDecoration(labelText: 'Source'),
           ),
           const SizedBox(height: 12),
@@ -479,8 +648,14 @@ class _MapScreenState extends State<MapScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Recent check-ins', style: Theme.of(context).textTheme.titleMedium),
-              Text('${items.length} items', style: TextStyle(color: colors.muted, fontSize: 12)),
+              Text(
+                'Recent check-ins',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              Text(
+                '${items.length} items',
+                style: TextStyle(color: colors.muted, fontSize: 12),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -509,9 +684,20 @@ class _MapScreenState extends State<MapScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(item.city, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            Text(
+                              item.city,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                             const SizedBox(height: 2),
-                            Text(item.place, style: TextStyle(color: colors.muted, fontSize: 12)),
+                            Text(
+                              item.place,
+                              style: TextStyle(
+                                color: colors.muted,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -522,7 +708,11 @@ class _MapScreenState extends State<MapScreen> {
                           _StatusChip(text: item.source.toUpperCase()),
                           const SizedBox(height: 6),
                           Text(
-                            DateFormat('dd/MM/yyyy').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt)),
+                            DateFormat('dd/MM/yyyy').format(
+                              DateTime.fromMillisecondsSinceEpoch(
+                                item.createdAt,
+                              ),
+                            ),
                             style: TextStyle(color: colors.muted, fontSize: 11),
                           ),
                         ],
@@ -546,7 +736,11 @@ class _MapScreenState extends State<MapScreen> {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: colors.line),
         boxShadow: const [
-          BoxShadow(color: Color(0x1A3A2B19), blurRadius: 24, offset: Offset(0, 12)),
+          BoxShadow(
+            color: Color(0x1A3A2B19),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
         ],
       ),
       child: Padding(
@@ -556,7 +750,10 @@ class _MapScreenState extends State<MapScreen> {
           children: [
             Text('Vietnam map', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            Text('Click a province to check in. Hover a province to see recent check-in photos.', style: Theme.of(context).textTheme.bodyMedium),
+            Text(
+              'Click a province to check in. Hover a province to see recent check-in photos.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
             const SizedBox(height: 12),
             AspectRatio(
               aspectRatio: 0.78,
@@ -570,33 +767,48 @@ class _MapScreenState extends State<MapScreen> {
                     ? const Center(child: CircularProgressIndicator())
                     : LayoutBuilder(
                         builder: (context, constraints) {
-                          final size = Size(constraints.maxWidth, constraints.maxHeight);
+                          final size = Size(
+                            constraints.maxWidth,
+                            constraints.maxHeight,
+                          );
                           final stats = _provinceStats();
                           final projected = _projectedFor(size);
                           return Stack(
                             children: [
                               Positioned.fill(
                                 child: MouseRegion(
-                                  cursor: _hoverProvince == null ? MouseCursor.defer : SystemMouseCursors.click,
+                                  cursor: _hoverProvince == null
+                                      ? MouseCursor.defer
+                                      : SystemMouseCursors.click,
                                   onExit: (_) => setState(() {
                                     _hoverProvince = null;
                                     _hoverPosition = null;
                                   }),
                                   onHover: (event) {
-                                    final hit = _provinceAt(event.localPosition, size);
+                                    final hit = _provinceAt(
+                                      event.localPosition,
+                                      size,
+                                    );
                                     final nextName = hit?.name;
                                     if (nextName != _hoverProvince) {
                                       setState(() {
                                         _hoverProvince = nextName;
-                                        _hoverPosition = hit == null ? null : event.localPosition;
+                                        _hoverPosition = hit == null
+                                            ? null
+                                            : event.localPosition;
                                       });
                                     }
                                   },
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.translucent,
                                     onTapUp: (details) {
-                                      final hit = _provinceAt(details.localPosition, size);
-                                      if (hit != null) _openProvinceDetail(hit.name);
+                                      final hit = _provinceAt(
+                                        details.localPosition,
+                                        size,
+                                      );
+                                      if (hit != null) {
+                                        _openProvinceDetail(hit.name);
+                                      }
                                     },
                                     child: CustomPaint(
                                       size: size,
@@ -623,13 +835,21 @@ class _MapScreenState extends State<MapScreen> {
                                 right: 12,
                                 child: _MapLegend(dark: dark),
                               ),
-                              if (_hoverProvince != null && _hoverPosition != null)
+                              if (_hoverProvince != null &&
+                                  _hoverPosition != null)
                                 Positioned(
-                                  left: (_hoverPosition!.dx + 14).clamp(8, size.width - 270),
-                                  top: (_hoverPosition!.dy - 36).clamp(8, size.height - 176),
+                                  left: (_hoverPosition!.dx + 14).clamp(
+                                    8,
+                                    size.width - 270,
+                                  ),
+                                  top: (_hoverPosition!.dy - 36).clamp(
+                                    8,
+                                    size.height - 176,
+                                  ),
                                   child: _ProvinceTip(
                                     name: _hoverProvince!,
-                                    count: stats[_cleanName(_hoverProvince!)] ?? 0,
+                                    count:
+                                        stats[_cleanName(_hoverProvince!)] ?? 0,
                                     photos: _provincePhotos(_hoverProvince!),
                                     photoUrl: _photoUrl,
                                   ),
@@ -682,14 +902,20 @@ class _MapScreenState extends State<MapScreen> {
         if (item == null && province == null) {
           return const SizedBox.shrink();
         }
-        final provinceItems = province == null ? <CheckIn>[] : _provinceItems(province);
+        final provinceItems = province == null
+            ? <CheckIn>[]
+            : _provinceItems(province);
         return Container(
           decoration: BoxDecoration(
             color: colors.panel,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
             border: Border.all(color: colors.line),
             boxShadow: const [
-              BoxShadow(color: Color(0x2D3A2B19), blurRadius: 24, offset: Offset(0, -8)),
+              BoxShadow(
+                color: Color(0x2D3A2B19),
+                blurRadius: 24,
+                offset: Offset(0, -8),
+              ),
             ],
           ),
           child: ListView(
@@ -714,9 +940,15 @@ class _MapScreenState extends State<MapScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(province, style: Theme.of(context).textTheme.titleMedium),
+                          Text(
+                            province,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
                           const SizedBox(height: 4),
-                          Text('${provinceItems.length} check-in${provinceItems.length == 1 ? '' : 's'} in this province', style: TextStyle(color: colors.muted, fontSize: 12)),
+                          Text(
+                            '${provinceItems.length} check-in${provinceItems.length == 1 ? '' : 's'} in this province',
+                            style: TextStyle(color: colors.muted, fontSize: 12),
+                          ),
                         ],
                       ),
                     ),
@@ -734,7 +966,11 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 const SizedBox(height: 12),
                 if (provinceItems.isEmpty)
-                  _InfoCard(label: 'No check-ins yet', value: 'Use the button above to add the first check-in for this province.')
+                  _InfoCard(
+                    label: 'No check-ins yet',
+                    value:
+                        'Use the button above to add the first check-in for this province.',
+                  )
                 else
                   ...provinceItems.map(
                     (entry) => Padding(
@@ -757,9 +993,27 @@ class _MapScreenState extends State<MapScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(entry.place, style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700)),
+                                    Text(
+                                      entry.place,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
                                     const SizedBox(height: 2),
-                                    Text(DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(entry.createdAt)), style: TextStyle(color: colors.muted, fontSize: 12)),
+                                    Text(
+                                      DateFormat('dd/MM/yyyy HH:mm').format(
+                                        DateTime.fromMillisecondsSinceEpoch(
+                                          entry.createdAt,
+                                        ),
+                                      ),
+                                      style: TextStyle(
+                                        color: colors.muted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -772,78 +1026,106 @@ class _MapScreenState extends State<MapScreen> {
                   ),
               ],
               if (item != null) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${item.city} · ${item.place}', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${item.source.toUpperCase()} · ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))}',
-                          style: TextStyle(color: colors.muted, fontSize: 12),
-                        ),
-                      ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${item.city} · ${item.place}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${item.source.toUpperCase()} · ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))}',
+                            style: TextStyle(color: colors.muted, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() => _selected = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (item.hasPhoto)
+                  Container(
+                    height: 220,
+                    decoration: BoxDecoration(
+                      color: colors.panel2,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: colors.line),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: CheckInPhoto(
+                      item: item,
+                      remoteUrl: _photoUrl,
+                      fit: BoxFit.cover,
+                      errorText: 'Photo not found locally or on the backend.',
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => setState(() => _selected = null),
-                    icon: const Icon(Icons.close),
+                if (item.hasPhoto)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _deletePhoto,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete photo'),
+                    ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (item.hasPhoto)
-                Container(
-                  height: 220,
-                  decoration: BoxDecoration(
-                    color: colors.panel2,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colors.line),
+                if (!item.hasPhoto)
+                  Container(
+                    height: 160,
+                    decoration: BoxDecoration(
+                      color: colors.panel2,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: colors.line),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.image_not_supported_outlined,
+                      size: 56,
+                    ),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: CheckInPhoto(
-                    item: item,
-                    remoteUrl: _photoUrl,
-                    fit: BoxFit.cover,
-                    errorText: 'Photo not found locally or on the backend.',
-                  ),
+                const SizedBox(height: 12),
+                _InfoCard(label: 'Place', value: item.place),
+                const SizedBox(height: 8),
+                _InfoCard(
+                  label: 'Note',
+                  value: item.notes.isEmpty ? 'No note yet.' : item.notes,
                 ),
-              if (!item.hasPhoto)
-                Container(
-                  height: 160,
-                  decoration: BoxDecoration(
-                    color: colors.panel2,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colors.line),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.image_not_supported_outlined, size: 56),
+                const SizedBox(height: 8),
+                _InfoCard(
+                  label: 'Status',
+                  value: item.synced ? 'Synced' : 'Waiting to sync',
                 ),
-              const SizedBox(height: 12),
-              _InfoCard(label: 'Place', value: item.place),
-              const SizedBox(height: 8),
-              _InfoCard(label: 'Note', value: item.notes.isEmpty ? 'No note yet.' : item.notes),
-              const SizedBox(height: 8),
-              _InfoCard(label: 'Status', value: item.synced ? 'Synced' : 'Waiting to sync'),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton(
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => _openEditCheckin(item),
+                        child: const Text('Edit'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
                       onPressed: _markSynced,
-                      child: const Text('Mark as synced'),
+                      child: const Text('Sync status'),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: _deleteSelected,
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('Delete'),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: _deleteSelected,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                      ),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
               ],
             ],
           ),
@@ -910,7 +1192,10 @@ class _MapScreenState extends State<MapScreen> {
             children: [content, const SizedBox(height: 96)],
           ),
         ),
-        Align(alignment: Alignment.bottomCenter, child: _buildDetailDrawer(context)),
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: _buildDetailDrawer(context),
+        ),
       ],
     );
   }
@@ -969,19 +1254,19 @@ class _VietnamMapPainter extends CustomPainter {
       final base = count == 0
           ? const Color(0xFF596357)
           : count <= 2
-              ? const Color(0xFFB7833A)
-              : count <= 5
-                  ? const Color(0xFFD66A2A)
-                  : const Color(0xFFE93F1D);
+          ? const Color(0xFFB7833A)
+          : count <= 5
+          ? const Color(0xFFD66A2A)
+          : const Color(0xFFE93F1D);
       return hovered ? _lighten(base, 0.16) : base;
     }
     final base = count == 0
         ? const Color(0xFFD8D1C2)
         : count <= 2
-            ? const Color(0xFFD8B85F)
-            : count <= 5
-                ? const Color(0xFFD98935)
-                : const Color(0xFFC84A24);
+        ? const Color(0xFFD8B85F)
+        : count <= 5
+        ? const Color(0xFFD98935)
+        : const Color(0xFFC84A24);
     return hovered ? _lighten(base, 0.12) : base;
   }
 
@@ -1094,11 +1379,19 @@ class _StatCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colors.muted)),
+            Text(
+              label,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: colors.muted),
+            ),
             const SizedBox(height: 8),
             Text(
               value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800, color: colors.accent),
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: colors.accent,
+              ),
             ),
           ],
         ),
@@ -1155,7 +1448,13 @@ class _MapLegend extends StatelessWidget {
         color: colors.panel.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: colors.line),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 16, offset: const Offset(0, 8))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1174,11 +1473,20 @@ class _MapLegend extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: entry.$2,
                           borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: colors.text.withValues(alpha: 0.18)),
+                          border: Border.all(
+                            color: colors.text.withValues(alpha: 0.18),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 4),
-                      Text(entry.$1, style: TextStyle(color: colors.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+                      Text(
+                        entry.$1,
+                        style: TextStyle(
+                          color: colors.muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1239,17 +1547,28 @@ class _ProvinceTip extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: colors.line),
           boxShadow: const [
-            BoxShadow(color: Color(0x1F392B19), blurRadius: 18, offset: Offset(0, 8)),
+            BoxShadow(
+              color: Color(0x1F392B19),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(name, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontSize: 13)),
+            Text(
+              name,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontSize: 13),
+            ),
             const SizedBox(height: 4),
             Text(
-              photos.isEmpty ? 'No photos yet' : '${photos.length} recent photo${photos.length == 1 ? '' : 's'}',
+              photos.isEmpty
+                  ? 'No photos yet'
+                  : '${photos.length} recent photo${photos.length == 1 ? '' : 's'}',
               style: TextStyle(color: colors.muted, fontSize: 12),
             ),
             if (photos.isNotEmpty) ...[
@@ -1264,7 +1583,11 @@ class _ProvinceTip extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                             child: AspectRatio(
                               aspectRatio: 1,
-                              child: CheckInPhoto(item: item, remoteUrl: photoUrl, emptyIconSize: 18),
+                              child: CheckInPhoto(
+                                item: item,
+                                remoteUrl: photoUrl,
+                                emptyIconSize: 18,
+                              ),
                             ),
                           ),
                         ),
@@ -1274,12 +1597,17 @@ class _ProvinceTip extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                DateFormat('dd/MM/yyyy').format(DateTime.fromMillisecondsSinceEpoch(photos.first.createdAt)),
+                DateFormat('dd/MM/yyyy').format(
+                  DateTime.fromMillisecondsSinceEpoch(photos.first.createdAt),
+                ),
                 style: TextStyle(color: colors.muted, fontSize: 11),
               ),
             ] else if (count > 0) ...[
               const SizedBox(height: 6),
-              Text('$count check-in', style: TextStyle(color: colors.muted, fontSize: 11)),
+              Text(
+                '$count check-in',
+                style: TextStyle(color: colors.muted, fontSize: 11),
+              ),
             ],
           ],
         ),
