@@ -40,6 +40,9 @@ class SyncService {
             'createdAt': item.createdAt.toString(),
             'lat': item.lat.toString(),
             'lng': item.lng.toString(),
+            'favorite': item.favorite.toString(),
+            'rating': item.rating.toString(),
+            'tags': jsonEncode(item.tags),
             if (item.photo.isNotEmpty) 'photoPath': item.photo,
           });
     if (photoBytes != null && photoBytes.isNotEmpty) {

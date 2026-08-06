@@ -12,15 +12,17 @@ class HomeShell extends StatelessWidget {
   int _indexForLocation(BuildContext context) {
     final path = GoRouterState.of(context).uri.path;
     if (path.startsWith('/history')) return 1;
-    if (path.startsWith('/sync')) return 2;
-    if (path.startsWith('/settings')) return 3;
+    if (path.startsWith('/insights')) return 2;
+    if (path.startsWith('/sync')) return 3;
+    if (path.startsWith('/settings')) return 4;
     return 0;
   }
 
   void _navigate(BuildContext context, int index) {
     if (index == 1) return context.go('/history');
-    if (index == 2) return context.go('/sync');
-    if (index == 3) return context.go('/settings');
+    if (index == 2) return context.go('/insights');
+    if (index == 3) return context.go('/sync');
+    if (index == 4) return context.go('/settings');
     context.go('/map');
   }
 
@@ -105,6 +107,10 @@ class HomeShell extends StatelessWidget {
           NavigationDestination(
             icon: Icon(Icons.timeline_outlined),
             label: 'History',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.insights_outlined),
+            label: 'Insights',
           ),
           NavigationDestination(
             icon: Icon(Icons.sync_alt_outlined),

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/auth_gate.dart';
 import 'screens/home_shell.dart';
 import 'screens/history_screen.dart';
+import 'screens/insights_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/sync_screen.dart';
@@ -13,7 +14,8 @@ import 'theme/app_theme.dart';
 class VietNamMapApp extends StatefulWidget {
   const VietNamMapApp({super.key});
 
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   State<VietNamMapApp> createState() => _VietNamMapAppState();
@@ -30,13 +32,14 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
       ShellRoute(
         builder: (context, state, child) => HomeShell(child: child),
         routes: [
-          GoRoute(
-            path: '/map',
-            builder: (context, state) => const MapScreen(),
-          ),
+          GoRoute(path: '/map', builder: (context, state) => const MapScreen()),
           GoRoute(
             path: '/history',
             builder: (context, state) => const HistoryScreen(),
+          ),
+          GoRoute(
+            path: '/insights',
+            builder: (context, state) => const InsightsScreen(),
           ),
           GoRoute(
             path: '/sync',
@@ -69,7 +72,8 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
     if (!mounted) return;
     setState(() {
       _userName = user;
-      _hasAccount = user.isNotEmpty && (prefs.getString(_passwordKey) ?? '').isNotEmpty;
+      _hasAccount =
+          user.isNotEmpty && (prefs.getString(_passwordKey) ?? '').isNotEmpty;
       _showPicker = _hasAccount;
       _loading = false;
     });
@@ -121,7 +125,9 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
             theme: AppTheme.light(),
             darkTheme: AppTheme.dark(),
             themeMode: mode,
-            home: const Scaffold(body: Center(child: CircularProgressIndicator())),
+            home: const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            ),
           );
         }
         if (!_showPicker) {

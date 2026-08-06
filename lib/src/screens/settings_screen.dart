@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_version.dart';
+import '../models/checkin.dart';
 import '../repositories/app_data_reset.dart';
 import '../repositories/app_update_service.dart';
+import '../repositories/backup_service.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
 import '../repositories/sync_service.dart';
@@ -22,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _passwordKey = 'vmc-auth-password';
 
   final _repo = CheckInRepository();
+  final _backup = const BackupService();
   final _backendCtrl = TextEditingController(text: BackendConfig.defaultUrl);
   final _userCtrl = TextEditingController();
   final _currentPasswordCtrl = TextEditingController();
@@ -197,6 +201,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _showMessage('Local check-ins deleted.');
   }
 
+  Future<void> _restoreFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final raw = data?.text?.trim() ?? '';
+    if (raw.isEmpty) {
+      _showMessage('Clipboard does not contain a backup.');
+      return;
+    }
+    List<CheckIn> imported;
+    try {
+      imported = _backup.decode(raw);
+    } catch (err) {
+      _showMessage('Backup import failed: $err');
+      return;
+    }
+    if (imported.isEmpty) {
+      _showMessage('Backup has no valid check-ins.');
+      return;
+    }
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore backup?'),
+        content: Text(
+          'Merge ${imported.length} check-in(s) from clipboard with local data. Existing newer items are kept.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final merged = _backup.merge(await _repo.load(), imported);
+    await _repo.save(merged);
+    _showMessage('Restored ${imported.length} check-in(s).');
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
@@ -341,15 +389,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               _SettingsCard(
                 title: 'Data',
-                subtitle: 'Clear check-ins stored on this device',
+                subtitle: 'Restore backups or clear local check-ins',
                 icon: Icons.delete_outline,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _resetData,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete all check-ins'),
-                  ),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _restoreFromClipboard,
+                      icon: const Icon(Icons.restore_page_outlined),
+                      label: const Text('Restore JSON'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _resetData,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete all check-ins'),
+                    ),
+                  ],
                 ),
               ),
             ],

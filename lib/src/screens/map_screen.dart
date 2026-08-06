@@ -29,6 +29,7 @@ class _MapScreenState extends State<MapScreen> {
   final _cityCtrl = TextEditingController();
   final _placeCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
+  final _tagsCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   final _drawerCtrl = DraggableScrollableController();
 
@@ -42,6 +43,8 @@ class _MapScreenState extends State<MapScreen> {
   List<int>? _pickedPhotoBytes;
   double? _lat;
   double? _lng;
+  int _rating = 0;
+  bool _favorite = false;
   DateTime? _takenAt;
   CheckIn? _selected;
   String? _selectedProvince;
@@ -69,6 +72,7 @@ class _MapScreenState extends State<MapScreen> {
     _cityCtrl.dispose();
     _placeCtrl.dispose();
     _notesCtrl.dispose();
+    _tagsCtrl.dispose();
     _searchCtrl.dispose();
     _drawerCtrl.dispose();
     super.dispose();
@@ -140,7 +144,8 @@ class _MapScreenState extends State<MapScreen> {
           q.isEmpty ||
           item.city.toLowerCase().contains(q) ||
           item.place.toLowerCase().contains(q) ||
-          item.notes.toLowerCase().contains(q);
+          item.notes.toLowerCase().contains(q) ||
+          item.tags.any((tag) => tag.toLowerCase().contains(q));
       final matchesSource =
           _sourceFilter == 'all' || item.source == _sourceFilter;
       return matchesQuery && matchesSource;
@@ -200,6 +205,9 @@ class _MapScreenState extends State<MapScreen> {
       lng: original.lng,
       photo: original.photo,
       localPhoto: localPhoto,
+      favorite: _favorite,
+      rating: _rating,
+      tags: _tagsFromInput(),
     );
     try {
       final sync = SyncService(baseUrl: await BackendConfig.loadUrl());
@@ -228,12 +236,24 @@ class _MapScreenState extends State<MapScreen> {
     _cityCtrl.clear();
     _placeCtrl.clear();
     _notesCtrl.clear();
+    _tagsCtrl.clear();
     _photoInfo = 'No metadata read yet';
     _pickedPhoto = null;
     _pickedPhotoBytes = null;
     _lat = null;
     _lng = null;
+    _rating = 0;
+    _favorite = false;
     _takenAt = null;
+  }
+
+  List<String> _tagsFromInput() {
+    return _tagsCtrl.text
+        .split(',')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
   }
 
   Future<void> _saveCheckin() async {
@@ -258,6 +278,9 @@ class _MapScreenState extends State<MapScreen> {
       lng: _lng ?? 105.8542,
       photo: '',
       localPhoto: localPhoto,
+      favorite: _favorite,
+      rating: _rating,
+      tags: _tagsFromInput(),
     );
     final backendUrl = await BackendConfig.loadUrl();
     final sync = SyncService(baseUrl: backendUrl);
@@ -291,6 +314,9 @@ class _MapScreenState extends State<MapScreen> {
       _cityCtrl.text = editing.city;
       _placeCtrl.text = editing.place;
       _notesCtrl.text = editing.notes;
+      _tagsCtrl.text = editing.tagLine;
+      _rating = editing.rating;
+      _favorite = editing.favorite;
       _photoInfo = editing.hasPhoto ? 'Current photo attached' : 'No photo';
     } else if (city != null && city.isNotEmpty) {
       _cityCtrl.text = city;
@@ -367,6 +393,33 @@ class _MapScreenState extends State<MapScreen> {
                       controller: _notesCtrl,
                       maxLines: 3,
                       decoration: const InputDecoration(labelText: 'Notes'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _tagsCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Tags',
+                        hintText: 'food, family, beach',
+                        prefixIcon: Icon(Icons.sell_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _favorite,
+                      onChanged: (value) {
+                        setState(() => _favorite = value);
+                        setModalState(() {});
+                      },
+                      title: const Text('Favorite place'),
+                      secondary: const Icon(Icons.favorite_outline),
+                    ),
+                    _RatingPicker(
+                      value: _rating,
+                      onChanged: (value) {
+                        setState(() => _rating = value);
+                        setModalState(() {});
+                      },
                     ),
                     const SizedBox(height: 16),
                     FilledButton(
@@ -582,6 +635,13 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  Future<void> _toggleFavorite(CheckIn item) async {
+    final updated = item.copyWith(favorite: !item.favorite, synced: false);
+    await _repo.update(updated);
+    await _load();
+    if (mounted) setState(() => _selected = updated);
+  }
+
   Widget _buildFilters() {
     final colors = AppColors.of(context);
     return Container(
@@ -698,6 +758,11 @@ class _MapScreenState extends State<MapScreen> {
                                 fontSize: 12,
                               ),
                             ),
+                            if (item.rating > 0 || item.tags.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: _MiniMeta(item: item),
+                              ),
                           ],
                         ),
                       ),
@@ -706,6 +771,14 @@ class _MapScreenState extends State<MapScreen> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           _StatusChip(text: item.source.toUpperCase()),
+                          if (item.favorite) ...[
+                            const SizedBox(height: 6),
+                            Icon(
+                              Icons.favorite,
+                              color: colors.accent2,
+                              size: 18,
+                            ),
+                          ],
                           const SizedBox(height: 6),
                           Text(
                             DateFormat('dd/MM/yyyy').format(
@@ -1055,6 +1128,16 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                     IconButton(
+                      onPressed: () => _toggleFavorite(item),
+                      tooltip: item.favorite
+                          ? 'Remove favorite'
+                          : 'Mark as favorite',
+                      icon: Icon(
+                        item.favorite ? Icons.favorite : Icons.favorite_border,
+                        color: item.favorite ? colors.accent2 : colors.muted,
+                      ),
+                    ),
+                    IconButton(
                       onPressed: () => setState(() => _selected = null),
                       icon: const Icon(Icons.close),
                     ),
@@ -1106,6 +1189,18 @@ class _MapScreenState extends State<MapScreen> {
                 _InfoCard(
                   label: 'Note',
                   value: item.notes.isEmpty ? 'No note yet.' : item.notes,
+                ),
+                const SizedBox(height: 8),
+                _InfoCard(
+                  label: 'Memory score',
+                  value: item.rating == 0
+                      ? 'Not rated yet'
+                      : '${item.rating}/5 stars',
+                ),
+                const SizedBox(height: 8),
+                _InfoCard(
+                  label: 'Tags',
+                  value: item.tags.isEmpty ? 'No tags yet.' : item.tagLine,
                 ),
                 const SizedBox(height: 8),
                 _InfoCard(
@@ -1537,6 +1632,68 @@ class _CheckInThumb extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: CheckInPhoto(item: item, remoteUrl: photoUrl, emptyIconSize: 20),
     );
+  }
+}
+
+class _RatingPicker extends StatelessWidget {
+  const _RatingPicker({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return Row(
+      children: [
+        Text('Memory score', style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(width: 10),
+        for (var i = 1; i <= 5; i += 1)
+          IconButton(
+            tooltip: '$i star',
+            onPressed: () => onChanged(i == value ? 0 : i),
+            icon: Icon(
+              i <= value ? Icons.star : Icons.star_border,
+              color: i <= value ? colors.accent2 : colors.muted,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MiniMeta extends StatelessWidget {
+  const _MiniMeta({required this.item});
+
+  final CheckIn item;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final pieces = <Widget>[];
+    if (item.rating > 0) {
+      pieces.add(Icon(Icons.star, size: 14, color: colors.accent2));
+      pieces.add(
+        Text(
+          '${item.rating}/5',
+          style: TextStyle(color: colors.muted, fontSize: 11),
+        ),
+      );
+    }
+    if (item.tags.isNotEmpty) {
+      if (pieces.isNotEmpty) pieces.add(const SizedBox(width: 8));
+      pieces.add(Icon(Icons.sell_outlined, size: 14, color: colors.muted));
+      pieces.add(
+        Flexible(
+          child: Text(
+            item.tags.take(2).join(', '),
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.muted, fontSize: 11),
+          ),
+        ),
+      );
+    }
+    return Row(children: pieces);
   }
 }
 

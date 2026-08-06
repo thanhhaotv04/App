@@ -1,4 +1,4 @@
 class AppVersion {
-  static const versionName = '1.0.14';
-  static const versionCode = 21;
+  static const versionName = '1.1.2';
+  static const versionCode = 24;
 }

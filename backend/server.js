@@ -34,6 +34,18 @@ const safeFileName = (name) =>
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .trim() || `photo-${Date.now()}`;
 
+function parseTags(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+  } catch {
+    // Fall through to comma-separated tags.
+  }
+  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 async function loadCheckins() {
   try {
     const raw = await fs.readFile(CHECKINS_FILE, "utf8");
@@ -195,7 +207,7 @@ app.get("/releases/:file", async (req, res) => {
 
 app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
   try {
-    const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath } = req.body;
+    const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath, favorite, rating, tags } = req.body;
     if (!city) return res.status(400).json({ error: "city_required" });
 
     const checkins = await loadCheckins();
@@ -225,6 +237,9 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
       lat: Number(lat) || 0,
       lng: Number(lng) || 0,
       photo: savedPhotoPath,
+      favorite: favorite === "true" || favorite === true,
+      rating: Math.max(0, Math.min(5, Number(rating) || 0)),
+      tags: parseTags(tags),
     };
 
     const existingIndex = checkins.findIndex((x) => x.id === id);

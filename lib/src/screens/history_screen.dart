@@ -21,6 +21,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final _repo = CheckInRepository();
   List<CheckIn> _items = [];
   String _backendUrl = BackendConfig.defaultUrl;
+  String _query = '';
+  String _filter = 'all';
+  String _sort = 'newest';
 
   String _photoUrl(String path) {
     if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -173,11 +176,41 @@ class _HistoryScreenState extends State<HistoryScreen> {
     setState(() => _items = items);
   }
 
+  List<CheckIn> get _visibleItems {
+    final q = _query.trim().toLowerCase();
+    final items = _items.where((item) {
+      final matchesQuery =
+          q.isEmpty ||
+          item.city.toLowerCase().contains(q) ||
+          item.place.toLowerCase().contains(q) ||
+          item.notes.toLowerCase().contains(q) ||
+          item.tags.any((tag) => tag.toLowerCase().contains(q));
+      final matchesFilter = switch (_filter) {
+        'favorites' => item.favorite,
+        'unsynced' => !item.synced,
+        'photos' => item.hasPhoto,
+        'rated' => item.rating > 0,
+        _ => true,
+      };
+      return matchesQuery && matchesFilter;
+    }).toList();
+    items.sort((a, b) {
+      return switch (_sort) {
+        'oldest' => a.createdAt.compareTo(b.createdAt),
+        'rating' => b.rating.compareTo(a.rating),
+        'city' => a.city.compareTo(b.city),
+        _ => b.createdAt.compareTo(a.createdAt),
+      };
+    });
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     final grouped = <String, List<CheckIn>>{};
-    for (final item in _items) {
+    final visible = _visibleItems;
+    for (final item in visible) {
       grouped.putIfAbsent(item.city, () => []).add(item);
     }
     final cities = grouped.keys.toList()..sort();
@@ -207,10 +240,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
             action: TextButton(onPressed: _load, child: const Text('Reload')),
           ),
           const SizedBox(height: 18),
+          _HistoryTools(
+            query: _query,
+            filter: _filter,
+            sort: _sort,
+            total: visible.length,
+            onQueryChanged: (value) => setState(() => _query = value),
+            onFilterChanged: (value) =>
+                setState(() => _filter = value ?? 'all'),
+            onSortChanged: (value) => setState(() => _sort = value ?? 'newest'),
+          ),
+          const SizedBox(height: 14),
           if (cities.isEmpty)
             _EmptyHistoryCard(
-              text:
-                  'No check-ins yet. Go back to the map to create the first one.',
+              text: _items.isEmpty
+                  ? 'No check-ins yet. Go back to the map to create the first one.'
+                  : 'No check-ins match these filters.',
               colors: colors,
             ),
           for (final city in cities)
@@ -255,12 +300,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 ?.copyWith(fontWeight: FontWeight.w700),
                           ),
                           subtitle: Text(
-                            '${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))} · ${item.source.toUpperCase()}',
+                            '${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))} · ${item.source.toUpperCase()}${item.rating > 0 ? ' · ${item.rating}/5' : ''}${item.tags.isNotEmpty ? ' · ${item.tagLine}' : ''}',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           trailing: Icon(
-                            Icons.chevron_right,
-                            color: colors.muted,
+                            item.favorite
+                                ? Icons.favorite
+                                : Icons.chevron_right,
+                            color: item.favorite
+                                ? colors.accent2
+                                : colors.muted,
                           ),
                         ),
                       ),
@@ -290,6 +339,103 @@ class _EmptyHistoryCard extends StatelessWidget {
         border: Border.all(color: colors.line),
       ),
       child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
+    );
+  }
+}
+
+class _HistoryTools extends StatelessWidget {
+  const _HistoryTools({
+    required this.query,
+    required this.filter,
+    required this.sort,
+    required this.total,
+    required this.onQueryChanged,
+    required this.onFilterChanged,
+    required this.onSortChanged,
+  });
+
+  final String query;
+  final String filter;
+  final String sort;
+  final int total;
+  final ValueChanged<String> onQueryChanged;
+  final ValueChanged<String?> onFilterChanged;
+  final ValueChanged<String?> onSortChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colors.line),
+      ),
+      child: Column(
+        children: [
+          TextField(
+            onChanged: onQueryChanged,
+            decoration: InputDecoration(
+              labelText: 'Search memories',
+              hintText: 'place, note, tag...',
+              prefixIcon: const Icon(Icons.search),
+              suffixText: '$total',
+            ),
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 620;
+              final filterField = DropdownButtonFormField<String>(
+                initialValue: filter,
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('All')),
+                  DropdownMenuItem(
+                    value: 'favorites',
+                    child: Text('Favorites'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'unsynced',
+                    child: Text('Waiting sync'),
+                  ),
+                  DropdownMenuItem(value: 'photos', child: Text('Has photo')),
+                  DropdownMenuItem(value: 'rated', child: Text('Rated')),
+                ],
+                onChanged: onFilterChanged,
+                decoration: const InputDecoration(labelText: 'Filter'),
+              );
+              final sortField = DropdownButtonFormField<String>(
+                initialValue: sort,
+                items: const [
+                  DropdownMenuItem(value: 'newest', child: Text('Newest')),
+                  DropdownMenuItem(value: 'oldest', child: Text('Oldest')),
+                  DropdownMenuItem(value: 'rating', child: Text('Top rated')),
+                  DropdownMenuItem(value: 'city', child: Text('Province A-Z')),
+                ],
+                onChanged: onSortChanged,
+                decoration: const InputDecoration(labelText: 'Sort'),
+              );
+              if (narrow) {
+                return Column(
+                  children: [
+                    filterField,
+                    const SizedBox(height: 12),
+                    sortField,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: filterField),
+                  const SizedBox(width: 12),
+                  Expanded(child: sortField),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

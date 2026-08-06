@@ -1,6 +1,6 @@
 {
-  "versionName": "1.0.0",
-  "versionCode": 1,
+  "versionName": "1.1.2",
+  "versionCode": 24,
   "apkFile": "app-release.apk",
-  "notes": "Initial LAN update package."
+  "notes": "Fixes the default LAN backend URL for the current machine at 192.168.1.157, and includes backup restore, travel coverage progress, achievements, top province insights, favorite check-ins, memory scores, tags, advanced history filters, JSON export, and a clearer sync queue."
 }
