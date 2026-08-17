@@ -228,7 +228,7 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
     String confirmation,
   ) async {
     if (_password != currentPassword) return 'Mật khẩu hiện tại không đúng.';
-    if (newPassword.length < 4) return 'Mật khẩu mới cần ít nhất 4 ký tự.';
+    if (newPassword.length < 8) return 'Mật khẩu mới cần ít nhất 8 ký tự.';
     if (newPassword != confirmation) return 'Xác nhận mật khẩu chưa khớp.';
     try {
       final baseUrl = await BackendConfig.loadUrl();
@@ -446,8 +446,8 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
-    if (_user.text.trim().isEmpty || _password.text.length < 4) {
-      setState(() => _error = 'Nhập username và mật khẩu ít nhất 4 ký tự.');
+    if (_user.text.trim().isEmpty || _password.text.length < 8) {
+      setState(() => _error = 'Nhập username và mật khẩu ít nhất 8 ký tự.');
       return;
     }
     setState(() {
@@ -463,29 +463,6 @@ class _AuthScreenState extends State<AuthScreen> {
       _busy = false;
       _error = error;
     });
-  }
-
-  Future<void> _resetPassword() async {
-    if (_user.text.trim().isEmpty || _password.text.length < 4) {
-      setState(() => _error = 'Nhập username và mật khẩu mới để reset.');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await BackendConfig.saveUrl(_backend.text);
-      final baseUrl = await BackendConfig.loadUrl();
-      await AuthService(
-        baseUrl: baseUrl,
-      ).resetPassword(_user.text.trim(), _password.text);
-      if (mounted) setState(() => _error = 'Đã reset. Đăng nhập lại nhé.');
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   @override
@@ -574,10 +551,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           child: Text(
                             _registering ? 'Đã có tài khoản' : 'Tạo tài khoản',
                           ),
-                        ),
-                        TextButton(
-                          onPressed: _busy ? null : _resetPassword,
-                          child: const Text('Reset mật khẩu'),
                         ),
                       ],
                     ),

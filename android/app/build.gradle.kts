@@ -24,6 +24,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
     }
 
     buildTypes {
@@ -31,6 +32,7 @@ android {
             // Intentionally left unsigned. Do not substitute the debug key:
             // Android can update the recovered app only with its original key.
             signingConfig = null
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
         }
     }
 }

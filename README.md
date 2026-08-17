@@ -5,7 +5,7 @@ flow of `../money-manager`.
 
 ## Features
 
-- Login, register, reset password, and password update through the local backend.
+- Login, register, and password update through the local backend.
 - Two-way sync through `/api/task-reminder/data`.
 - APK update check through `/api/update/latest`.
 - Local notification permission and scheduled reminders for pending tasks.
@@ -50,11 +50,36 @@ flutter run
 ```bash
 cd backend
 npm install
-npm start
+ALLOWED_ORIGINS=http://192.168.1.137:8080 npm start
 ```
 
 The backend listens on port `3002` by default and writes runtime data under
 `backend/server-data/`, which should be backed up separately.
+
+Useful release environment variables:
+
+- `PORT`: backend port, default `3002`.
+- `DATA_DIR`: runtime data directory, default `backend/server-data/`.
+- `ALLOWED_ORIGINS`: comma-separated web origins allowed by CORS.
+- `ALLOW_INSECURE_PASSWORD_RESET`: set to `1` only for temporary local recovery;
+  leave unset for release. Users should change passwords after signing in.
+
+Security hardening included for release:
+
+- Passwords must be at least 8 characters.
+- Public password reset is disabled by default.
+- Auth endpoints are rate-limited in memory.
+- CORS only echoes origins listed in `ALLOWED_ORIGINS`.
+- Security headers are set on backend responses.
+- Sync payloads are size-limited and sanitized before persistence.
+- Android debug builds allow local HTTP for LAN testing; release builds block
+  cleartext traffic and should use an HTTPS backend URL.
+
+Release notes:
+
+- `flutter build apk --release` creates `build/app/outputs/flutter-apk/app-release.apk`.
+- The release build is intentionally unsigned in this checkout. Sign it with the
+  real release key before publishing or uploading to the backend update channel.
 
 ## Browser Preview
 
@@ -71,5 +96,6 @@ Open `http://192.168.1.137:8080` and use backend
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test
+cd backend && npm audit --audit-level=moderate && npm test
 flutter build apk --debug
 ```
