@@ -16,8 +16,25 @@ void main() {
     await tester.pumpWidget(const TaskReminderApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Đăng nhập'), findsWidgets);
-    expect(find.text('Tạo tài khoản'), findsWidgets);
+    expect(find.text('Sign in'), findsWidgets);
+    expect(find.text('Create account'), findsWidgets);
+    expect(find.text('Backend URL'), findsNothing);
+  });
+
+  testWidgets('can sign in offline without backend URL', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(0), 'offline-user');
+    await tester.enterText(find.byType(TextField).at(1), 'offline-pass');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(AuthCache.userKey), 'offline-user');
+    expect(find.byType(NavigationBar), findsOneWidget);
   });
 
   testWidgets('can switch to the dark doodle theme', (tester) async {
@@ -66,7 +83,7 @@ void main() {
     await tester.pumpAndSettle();
     await openTab(tester, 2);
 
-    expect(find.text('Add công việc'), findsNothing);
+    expect(find.text('Add Task'), findsNothing);
     await addTaskFromAllTasks(tester, 'Viết báo cáo');
 
     final prefs = await SharedPreferences.getInstance();
@@ -112,12 +129,12 @@ void main() {
 
     await tester.tap(find.text('Lịch tuần').last);
     await tester.pumpAndSettle();
-    expect(find.text('Set lịch'), findsOneWidget);
+    expect(find.text('Schedule'), findsOneWidget);
     expect(find.byKey(const ValueKey('edit-task-title-input')), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ActionChip, 'Thứ 2'));
+    await tester.tap(find.widgetWithText(ActionChip, 'Mon'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Lưu công việc'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -150,9 +167,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(taskText);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Du lịch'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Travel'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Lưu công việc'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -191,7 +208,7 @@ void main() {
       find.byKey(const ValueKey('edit-task-note-input')),
       'Ghi chú mới',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Lưu công việc'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -232,11 +249,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Uống nước'), findsNothing);
 
-    await tester.tap(find.byTooltip('Xổ Done'));
+    await tester.tap(find.byTooltip('Expand Done'));
     await tester.pumpAndSettle();
     expect(find.text('Uống nước'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Hoàn tác'));
+    await tester.tap(find.byTooltip('Undo'));
     await tester.pumpAndSettle();
     expect(find.text('Uống nước'), findsOneWidget);
   });
@@ -299,7 +316,7 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('Kiểm tra lịch'), findsOneWidget);
-    expect(find.byTooltip('Đánh dấu xong'), findsOneWidget);
+    expect(find.byTooltip('Mark as done'), findsOneWidget);
   });
 
   testWidgets('today view remains overflow-free at representative widths', (
@@ -342,9 +359,9 @@ Future<void> addTaskFromAllTasks(
 }) async {
   await tester.tap(find.byTooltip('Add task'));
   await tester.pumpAndSettle();
-  expect(find.widgetWithText(ActionChip, 'Hôm nay'), findsNothing);
-  expect(find.widgetWithText(ActionChip, 'Ngày mai'), findsNothing);
-  expect(find.widgetWithText(ActionChip, 'Không lịch'), findsNothing);
+  expect(find.widgetWithText(ActionChip, 'Today'), findsNothing);
+  expect(find.widgetWithText(ActionChip, 'Tomorrow'), findsNothing);
+  expect(find.widgetWithText(ActionChip, 'No schedule'), findsNothing);
   expect(
     find.byKey(const ValueKey('add-task-month-day-input')),
     findsOneWidget,
@@ -353,7 +370,7 @@ Future<void> addTaskFromAllTasks(
     find.byKey(const ValueKey('add-task-title-input')),
     title,
   );
-  await tester.tap(find.widgetWithText(FilledButton, 'Lưu công việc'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
   await tester.pumpAndSettle();
   if (scheduleToday) {
     final taskText = find.text(title).last;

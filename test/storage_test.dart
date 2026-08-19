@@ -4,10 +4,10 @@ import 'package:task_reminder/src/models.dart';
 import 'package:task_reminder/src/storage.dart';
 
 void main() {
-  test('uses the configured LAN sync endpoint by default', () async {
+  test('keeps backend URL empty until the user chooses to sync', () async {
     SharedPreferences.setMockInitialValues({});
 
-    expect(await BackendConfig.loadUrl(), 'http://192.168.1.137:3002');
+    expect(await BackendConfig.loadUrl(), isEmpty);
   });
 
   test('deduplicates repeated task titles in the work library', () async {

@@ -172,45 +172,19 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
   }
 
   Future<String?> _login(String user, String password) async {
-    try {
-      final baseUrl = await BackendConfig.loadUrl();
-      final name = await AuthService(
-        baseUrl: baseUrl,
-      ).signIn(user.trim(), password);
-      await AuthCache.save(name, password);
-      if (mounted) {
-        setState(() {
-          _userName = name;
-          _password = password;
-        });
-      }
-      return null;
-    } catch (error) {
-      return error is AuthException
-          ? error.message
-          : 'Không kết nối được backend. Kiểm tra URL rồi thử lại.';
+    final name = user.trim();
+    await AuthCache.save(name, password);
+    if (mounted) {
+      setState(() {
+        _userName = name;
+        _password = password;
+      });
     }
+    return null;
   }
 
   Future<String?> _register(String user, String password) async {
-    try {
-      final baseUrl = await BackendConfig.loadUrl();
-      final name = await AuthService(
-        baseUrl: baseUrl,
-      ).register(user.trim(), password);
-      await AuthCache.save(name, password);
-      if (mounted) {
-        setState(() {
-          _userName = name;
-          _password = password;
-        });
-      }
-      return null;
-    } catch (error) {
-      return error is AuthException
-          ? error.message
-          : 'Không kết nối được backend. Kiểm tra URL rồi thử lại.';
-    }
+    return _login(user, password);
   }
 
   Future<void> _logout() async {
@@ -227,24 +201,16 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
     String newPassword,
     String confirmation,
   ) async {
-    if (_password != currentPassword) return 'Mật khẩu hiện tại không đúng.';
-    if (newPassword.length < 8) return 'Mật khẩu mới cần ít nhất 8 ký tự.';
-    if (newPassword != confirmation) return 'Xác nhận mật khẩu chưa khớp.';
-    try {
-      final baseUrl = await BackendConfig.loadUrl();
-      await AuthService(baseUrl: baseUrl).updatePassword(
-        name: _userName!,
-        currentPassword: currentPassword,
-        newPassword: newPassword,
-      );
-      await AuthCache.save(_userName!, newPassword);
-      if (mounted) setState(() => _password = newPassword);
-      return null;
-    } catch (error) {
-      return error is AuthException
-          ? error.message
-          : 'Không cập nhật được mật khẩu trên backend.';
+    if (_password != currentPassword) return 'Current password is incorrect.';
+    if (newPassword.length < 8) {
+      return 'New password must be at least 8 characters.';
     }
+    if (newPassword != confirmation) {
+      return 'Password confirmation does not match.';
+    }
+    await AuthCache.save(_userName!, newPassword);
+    if (mounted) setState(() => _password = newPassword);
+    return null;
   }
 
   @override
@@ -424,37 +390,28 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _user = TextEditingController();
   final _password = TextEditingController();
-  final _backend = TextEditingController();
   bool _registering = false;
   bool _busy = false;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    BackendConfig.loadUrl().then((value) {
-      if (mounted) _backend.text = value;
-    });
-  }
-
-  @override
   void dispose() {
     _user.dispose();
     _password.dispose();
-    _backend.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (_user.text.trim().isEmpty || _password.text.length < 8) {
-      setState(() => _error = 'Nhập username và mật khẩu ít nhất 8 ký tự.');
+      setState(
+        () => _error = 'Enter a username and a password with at least 8 characters.',
+      );
       return;
     }
     setState(() {
       _busy = true;
       _error = null;
     });
-    await BackendConfig.saveUrl(_backend.text);
     final error = _registering
         ? await widget.onRegister(_user.text, _password.text)
         : await widget.onLogin(_user.text, _password.text);
@@ -482,13 +439,13 @@ class _AuthScreenState extends State<AuthScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      _registering ? 'Tạo tài khoản' : 'Đăng nhập',
+                      _registering ? 'Create account' : 'Sign in',
                       style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Đồng bộ công việc, cập nhật app và bật nhắc việc.',
+                      'Use offline first. Backend is only needed when syncing.',
                       style: TextStyle(color: colors.muted),
                     ),
                     const SizedBox(height: 24),
@@ -509,15 +466,6 @@ class _AuthScreenState extends State<AuthScreen> {
                         prefixIcon: Icon(Icons.lock_outline),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _backend,
-                      decoration: const InputDecoration(
-                        labelText: 'Backend URL',
-                        hintText: BackendConfig.defaultUrl,
-                        prefixIcon: Icon(Icons.link),
-                      ),
-                    ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -535,7 +483,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               dimension: 22,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : Text(_registering ? 'Tạo tài khoản' : 'Đăng nhập'),
+                          : Text(_registering ? 'Create account' : 'Sign in'),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -549,7 +497,9 @@ class _AuthScreenState extends State<AuthScreen> {
                                   _error = null;
                                 }),
                           child: Text(
-                            _registering ? 'Đã có tài khoản' : 'Tạo tài khoản',
+                            _registering
+                                ? 'Already have an account'
+                                : 'Create account',
                           ),
                         ),
                       ],
@@ -757,6 +707,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<String?> _sync() async {
     try {
       final baseUrl = await BackendConfig.loadUrl();
+      if (baseUrl.trim().isEmpty) {
+        return 'Enter a Backend URL in Account before syncing.';
+      }
       final data = await TaskSyncService(
         baseUrl: baseUrl,
         userName: widget.userName,
@@ -973,7 +926,7 @@ class _OverviewPageState extends State<OverviewPage> {
   Widget build(BuildContext context) {
     final today = dateOnly(DateTime.now());
     final slots = _calendarSlots();
-    final monthTitle = 'Tháng ${_visibleMonth.month}/${_visibleMonth.year}';
+    final monthTitle = 'Month ${_visibleMonth.month}/${_visibleMonth.year}';
 
     return PageList(
       children: [
@@ -984,7 +937,7 @@ class _OverviewPageState extends State<OverviewPage> {
               Row(
                 children: [
                   IconButton.filledTonal(
-                    tooltip: 'Tháng trước',
+                    tooltip: 'Previous month',
                     onPressed: () => _moveMonth(-1),
                     icon: const Icon(Icons.chevron_left),
                   ),
@@ -998,7 +951,7 @@ class _OverviewPageState extends State<OverviewPage> {
                     ),
                   ),
                   IconButton.filledTonal(
-                    tooltip: 'Tháng sau',
+                    tooltip: 'Next month',
                     onPressed: _isCurrentMonth ? null : () => _moveMonth(1),
                     icon: const Icon(Icons.chevron_right),
                   ),
@@ -1131,7 +1084,7 @@ class _DailyPageState extends State<DailyPage> {
                   const Expanded(child: PageTitle('My Day')),
                   PriorityPill(
                     icon: Icons.local_fire_department_outlined,
-                    label: '$streak ngày',
+                    label: '$streak days',
                     color: colors.success,
                   ),
                 ],
@@ -1148,12 +1101,12 @@ class _DailyPageState extends State<DailyPage> {
                 children: [
                   PriorityPill(
                     icon: Icons.flag_outlined,
-                    label: '${pending.length} cần làm',
+                    label: '${pending.length} pending',
                     color: colors.error,
                   ),
                   PriorityPill(
                     icon: Icons.timer_outlined,
-                    label: '$focusMinutes phút',
+                    label: '$focusMinutes min',
                     color: colors.secondary,
                   ),
                 ],
@@ -1169,7 +1122,7 @@ class _DailyPageState extends State<DailyPage> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Hôm nay gọn rồi',
+                        'All clear today',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w900,
                         ),
@@ -1230,7 +1183,7 @@ class _DailyPageState extends State<DailyPage> {
                     ),
                   ),
                   IconButton(
-                    tooltip: _showDone ? 'Thu gọn Done' : 'Xổ Done',
+                    tooltip: _showDone ? 'Collapse Done' : 'Expand Done',
                     onPressed: done.isEmpty
                         ? null
                         : () => setState(() => _showDone = !_showDone),
@@ -1246,7 +1199,7 @@ class _DailyPageState extends State<DailyPage> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Chưa có việc nào Done.',
+                      'No completed tasks yet.',
                       style: TextStyle(color: colors.muted),
                     ),
                   )
@@ -1256,7 +1209,7 @@ class _DailyPageState extends State<DailyPage> {
                       task: taskFor(widget.tasks, assignment),
                       assignment: assignment,
                       trailing: IconButton(
-                        tooltip: 'Hoàn tác',
+                        tooltip: 'Undo',
                         onPressed: () => widget.onUndoDone(assignment),
                         icon: const Icon(Icons.undo),
                       ),
@@ -1345,8 +1298,8 @@ class _WorkListPageState extends State<WorkListPage> {
     }
     if (!mounted) return;
     final message = result.dates.isEmpty
-        ? 'Đã lưu "${result.title}" vào All Tasks'
-        : 'Đã lưu "${result.title}" và thêm ${result.dates.length} lịch';
+        ? 'Saved "${result.title}" to All Tasks'
+        : 'Saved "${result.title}" and added ${result.dates.length} schedules';
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
@@ -1369,7 +1322,7 @@ class _WorkListPageState extends State<WorkListPage> {
     if (result.dates.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Đã lưu thay đổi cho "${result.title}"')),
+        SnackBar(content: Text('Saved changes for "${result.title}"')),
       );
       return;
     }
@@ -1380,7 +1333,7 @@ class _WorkListPageState extends State<WorkListPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Đã lưu "${result.title}" và thêm ${result.dates.length} lịch',
+          'Saved "${result.title}" and added ${result.dates.length} schedules',
         ),
       ),
     );
@@ -1414,7 +1367,7 @@ class _WorkListPageState extends State<WorkListPage> {
               DoodlePanel(
                 shadowColor: colors.glow,
                 child: Text(
-                  'Chưa có công việc hôm nay.',
+                  'No tasks for today.',
                   style: TextStyle(color: colors.muted),
                 ),
               )
@@ -1467,7 +1420,7 @@ class _WorkListPageState extends State<WorkListPage> {
           DoodlePanel(
             shadowColor: colors.glow,
             child: Text(
-              'Chưa có công việc.',
+              'No tasks yet.',
               style: TextStyle(color: colors.muted),
             ),
           )
@@ -1703,7 +1656,7 @@ class DayTasksDialog extends StatelessWidget {
             ? Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
                 child: Text(
-                  'Chưa có công việc ngày này.',
+                  'No tasks on this day.',
                   style: TextStyle(color: colors.muted),
                 ),
               )
@@ -1721,8 +1674,8 @@ class DayTasksDialog extends StatelessWidget {
                           children: [
                             IconButton(
                               tooltip: item.$1.done
-                                  ? 'Đánh dấu chưa xong'
-                                  : 'Đánh dấu xong',
+                                  ? 'Mark as pending'
+                                  : 'Mark as done',
                               onPressed: () {
                                 Navigator.of(context).pop();
                                 item.$1.done
@@ -1736,7 +1689,7 @@ class DayTasksDialog extends StatelessWidget {
                               ),
                             ),
                             IconButton(
-                              tooltip: 'Gỡ khỏi ngày này',
+                              tooltip: 'Remove from this day',
                               onPressed: () {
                                 Navigator.of(context).pop();
                                 onRemoveAssignment(item.$1);
@@ -1753,7 +1706,7 @@ class DayTasksDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Đóng'),
+          child: const Text('Close'),
         ),
       ],
     );
@@ -1889,12 +1842,12 @@ class DailyReminderCard extends StatelessWidget {
                 spacing: 4,
                 children: [
                   IconButton(
-                    tooltip: 'Nhắc lại 15 phút',
+                    tooltip: 'Snooze 15 minutes',
                     onPressed: onSnooze15,
                     icon: const Icon(Icons.snooze_outlined),
                   ),
                   IconButton(
-                    tooltip: 'Dời sang mai',
+                    tooltip: 'Move to tomorrow',
                     onPressed: onSnoozeTomorrow,
                     icon: const Icon(Icons.next_plan_outlined),
                   ),
@@ -2166,7 +2119,7 @@ class TodayWorkRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${priorityLabel(task.priority)} - ${task.estimateMinutes} phút - ${reminderLabel(assignment)}',
+                  '${priorityLabel(task.priority)} - ${task.estimateMinutes} min - ${reminderLabel(assignment)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: colors.muted),
@@ -2177,12 +2130,12 @@ class TodayWorkRow extends StatelessWidget {
           const SizedBox(width: 8),
           if (!assignment.done)
             IconButton(
-              tooltip: 'Nhắc lại 15 phút',
+              tooltip: 'Snooze 15 minutes',
               onPressed: onSnooze,
               icon: const Icon(Icons.snooze_outlined),
             ),
           IconButton(
-            tooltip: 'Xoá khỏi hôm nay',
+            tooltip: 'Remove from today',
             onPressed: onRemove,
             icon: const Icon(Icons.delete_outline),
           ),
@@ -2250,7 +2203,7 @@ class LibraryWorkRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${priorityLabel(task.priority)} - ${task.estimateMinutes} phút',
+                      '${priorityLabel(task.priority)} - ${task.estimateMinutes} min',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: colors.muted, fontSize: 12),
@@ -2259,18 +2212,18 @@ class LibraryWorkRow extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Cài lịch',
+                tooltip: 'Schedule',
                 onPressed: onSchedule,
                 icon: const Icon(Icons.event_repeat_outlined),
               ),
               IconButton(
                 key: ValueKey('add-today-${normalizedTaskTitle(task.title)}'),
-                tooltip: 'Thêm hôm nay',
+                tooltip: 'Add today',
                 onPressed: onAssignToday,
                 icon: const Icon(Icons.add_circle_outline),
               ),
               IconButton(
-                tooltip: 'Xoá',
+                tooltip: 'Delete',
                 onPressed: onDelete,
                 icon: const Icon(Icons.delete_outline),
               ),
@@ -2318,7 +2271,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   int _estimateMinutes = 15;
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
-  String _scheduleLabel = 'Chưa set lịch';
+  String _scheduleLabel = 'No schedule set';
   String? _error;
 
   @override
@@ -2341,7 +2294,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     final parsed = parseQuickTask(_title.text);
     final title = parsed.title;
     if (title.isEmpty) {
-      setState(() => _error = 'Nhập tên công việc trước.');
+      setState(() => _error = 'Enter a task name first.');
       return;
     }
     Navigator.of(context).pop(
@@ -2360,15 +2313,15 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   void _setMonthDaySchedule() {
     final day = int.tryParse(_monthDay.text.trim());
     if (day == null || day < 1 || day > 31) {
-      setState(() => _error = 'Nhập ngày trong tháng từ 1 đến 31.');
+      setState(() => _error = 'Enter a month day from 1 to 31.');
       return;
     }
     final dates = nextMonthDayDates(day);
     if (dates.isEmpty) {
-      setState(() => _error = 'Ngày này chưa có lịch phù hợp.');
+      setState(() => _error = 'No matching schedule is available for this day.');
       return;
     }
-    _setSchedule('Ngày $day hằng tháng, 12 lần kế tiếp', dates);
+    _setSchedule('Day $day monthly, next 12 times', dates);
   }
 
   Future<void> _pickReminderTime() async {
@@ -2383,22 +2336,22 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     const weekdays = [
-      (1, 'Thứ 2'),
-      (2, 'Thứ 3'),
-      (3, 'Thứ 4'),
-      (4, 'Thứ 5'),
-      (5, 'Thứ 6'),
-      (6, 'Thứ 7'),
-      (7, 'CN'),
+      (1, 'Mon'),
+      (2, 'Tue'),
+      (3, 'Wed'),
+      (4, 'Thu'),
+      (5, 'Fri'),
+      (6, 'Sat'),
+      (7, 'Sun'),
     ];
 
     return AlertDialog(
       titlePadding: const EdgeInsets.fromLTRB(24, 18, 14, 0),
       title: Row(
         children: [
-          const Expanded(child: Text('Add công việc')),
+          const Expanded(child: Text('Add Task')),
           IconButton(
-            tooltip: 'Đóng',
+            tooltip: 'Close',
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.close),
           ),
@@ -2417,7 +2370,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 autofocus: true,
                 decoration: const InputDecoration(
                   labelText: 'Quick Add',
-                  hintText: 'VD: Nộp báo cáo mai 9:00 !cao ~45p #laptop',
+                  hintText: 'Example: Submit report tomorrow 9:00 !high ~45m #work',
                   prefixIcon: Icon(Icons.task_alt_outlined),
                 ),
               ),
@@ -2428,7 +2381,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 minLines: 1,
                 maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: 'Ghi chú',
+                  labelText: 'Note',
                   prefixIcon: Icon(Icons.notes_outlined),
                 ),
               ),
@@ -2455,7 +2408,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               ),
               const SizedBox(height: 20),
               Text(
-                'Ưu tiên',
+                'Priority',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -2496,7 +2449,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                     icon: const Icon(Icons.schedule),
                     label: Text(
                       _reminderTime == null
-                          ? 'Giờ nhắc'
+                          ? 'Reminder time'
                           : _reminderTime!.format(context),
                     ),
                   ),
@@ -2504,7 +2457,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               ),
               const SizedBox(height: 20),
               Text(
-                'Set lịch',
+                'Schedule',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -2521,7 +2474,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       avatar: const Icon(Icons.event_repeat_outlined, size: 18),
                       label: Text(label),
                       onPressed: () => _setSchedule(
-                        '$label, 12 lần kế tiếp',
+                        '$label, next 12 times',
                         nextWeekdayDates(weekday),
                       ),
                     ),
@@ -2538,8 +2491,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       keyboardType: TextInputType.number,
                       onSubmitted: (_) => _setMonthDaySchedule(),
                       decoration: const InputDecoration(
-                        labelText: 'Ngày trong tháng',
-                        hintText: 'Ví dụ: 15',
+                        labelText: 'Month day',
+                        hintText: 'Example: 15',
                         prefixIcon: Icon(Icons.calendar_month_outlined),
                       ),
                     ),
@@ -2567,7 +2520,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
         FilledButton.icon(
           onPressed: _save,
           icon: const Icon(Icons.save_outlined),
-          label: const Text('Lưu công việc'),
+          label: const Text('Save Task'),
         ),
       ],
     );
@@ -2612,7 +2565,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   late int _estimateMinutes;
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
-  String _scheduleLabel = 'Chưa set lịch';
+  String _scheduleLabel = 'No schedule set';
   String? _error;
 
   @override
@@ -2644,21 +2597,21 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   void _setMonthDaySchedule() {
     final day = int.tryParse(_monthDay.text.trim());
     if (day == null || day < 1 || day > 31) {
-      setState(() => _error = 'Nhập ngày trong tháng từ 1 đến 31.');
+      setState(() => _error = 'Enter a month day from 1 to 31.');
       return;
     }
     final dates = nextMonthDayDates(day);
     if (dates.isEmpty) {
-      setState(() => _error = 'Ngày này chưa có lịch phù hợp.');
+      setState(() => _error = 'No matching schedule is available for this day.');
       return;
     }
-    _setSchedule('Ngày $day hằng tháng, 12 lần kế tiếp', dates);
+    _setSchedule('Day $day monthly, next 12 times', dates);
   }
 
   void _save() {
     final title = _title.text.trim();
     if (title.isEmpty) {
-      setState(() => _error = 'Nhập tên công việc trước.');
+      setState(() => _error = 'Enter a task name first.');
       return;
     }
     Navigator.of(context).pop(
@@ -2686,22 +2639,22 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     const weekdays = [
-      (1, 'Thứ 2'),
-      (2, 'Thứ 3'),
-      (3, 'Thứ 4'),
-      (4, 'Thứ 5'),
-      (5, 'Thứ 6'),
-      (6, 'Thứ 7'),
-      (7, 'CN'),
+      (1, 'Mon'),
+      (2, 'Tue'),
+      (3, 'Wed'),
+      (4, 'Thu'),
+      (5, 'Fri'),
+      (6, 'Sat'),
+      (7, 'Sun'),
     ];
 
     return AlertDialog(
       titlePadding: const EdgeInsets.fromLTRB(24, 18, 14, 0),
       title: Row(
         children: [
-          const Expanded(child: Text('Cài đặt công việc')),
+          const Expanded(child: Text('Task Settings')),
           IconButton(
-            tooltip: 'Đóng',
+            tooltip: 'Close',
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.close),
           ),
@@ -2719,7 +2672,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                 controller: _title,
                 autofocus: true,
                 decoration: const InputDecoration(
-                  labelText: 'Tên công việc',
+                  labelText: 'Task name',
                   prefixIcon: Icon(Icons.task_alt_outlined),
                 ),
               ),
@@ -2730,7 +2683,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                 minLines: 1,
                 maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: 'Ghi chú',
+                  labelText: 'Note',
                   prefixIcon: Icon(Icons.notes_outlined),
                 ),
               ),
@@ -2757,7 +2710,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
               ),
               const SizedBox(height: 20),
               Text(
-                'Ưu tiên',
+                'Priority',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -2798,7 +2751,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                     icon: const Icon(Icons.schedule),
                     label: Text(
                       _reminderTime == null
-                          ? 'Giờ nhắc'
+                          ? 'Reminder time'
                           : _reminderTime!.format(context),
                     ),
                   ),
@@ -2806,7 +2759,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
               ),
               const SizedBox(height: 22),
               Text(
-                'Set lịch',
+                'Schedule',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
@@ -2823,7 +2776,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       avatar: const Icon(Icons.event_repeat_outlined, size: 18),
                       label: Text(label),
                       onPressed: () => _setSchedule(
-                        '$label, 12 lần kế tiếp',
+                        '$label, next 12 times',
                         nextWeekdayDates(weekday),
                       ),
                     ),
@@ -2840,8 +2793,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       keyboardType: TextInputType.number,
                       onSubmitted: (_) => _setMonthDaySchedule(),
                       decoration: const InputDecoration(
-                        labelText: 'Ngày trong tháng',
-                        hintText: 'Ví dụ: 15',
+                        labelText: 'Month day',
+                        hintText: 'Example: 15',
                         prefixIcon: Icon(Icons.calendar_month_outlined),
                       ),
                     ),
@@ -2869,7 +2822,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
         FilledButton.icon(
           onPressed: _save,
           icon: const Icon(Icons.save_outlined),
-          label: const Text('Lưu công việc'),
+          label: const Text('Save Task'),
         ),
       ],
     );
@@ -2966,7 +2919,7 @@ class TaskLibraryList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (tasks.isEmpty) {
       return Text(
-        'Chưa có công việc.',
+        'No tasks yet.',
         style: TextStyle(color: context.doodle.muted),
       );
     }
@@ -3204,7 +3157,7 @@ class ProgressSummary extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Tiến độ hôm nay',
+                'Today progress',
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
@@ -3295,7 +3248,7 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _sync() async {
     await BackendConfig.saveUrl(_backend.text);
-    await _run(widget.onSync, 'Đã sync dữ liệu.');
+    await _run(widget.onSync, 'Data synced.');
   }
 
   Future<void> _notification() async {
@@ -3308,18 +3261,18 @@ class _AccountPageState extends State<AccountPage> {
         );
         return granted || kIsWeb
             ? null
-            : 'Thiết bị chưa cấp quyền notification.';
+            : 'Notification permission has not been granted.';
       },
       kIsWeb
-          ? 'Web preview không hỗ trợ notification cục bộ.'
-          : 'Đã bật nhắc việc.',
+          ? 'Web preview does not support local notifications.'
+          : 'Reminders enabled.',
     );
   }
 
   Future<void> _updatePassword() async {
     await _run(
       () => widget.onChangePassword(_current.text, _next.text, _confirm.text),
-      'Đã đổi mật khẩu.',
+      'Password updated.',
     );
     _current.clear();
     _next.clear();
@@ -3330,15 +3283,18 @@ class _AccountPageState extends State<AccountPage> {
     await BackendConfig.saveUrl(_backend.text);
     await _run(() async {
       final baseUrl = await BackendConfig.loadUrl();
+      if (baseUrl.trim().isEmpty) {
+        return 'Enter a Backend URL in Account before checking updates.';
+      }
       final service = AppUpdateService(baseUrl: baseUrl);
       final info = await service.checkLatest();
-      if (!info.available) return 'App đang ở bản mới nhất.';
+      if (!info.available) return 'App is up to date.';
       if (!kIsWeb) {
         final path = await service.downloadApk(info);
         await service.installApk(path);
       }
-      return 'Có bản ${info.versionName}+${info.versionCode}: ${info.notes}';
-    }, 'Đã kiểm tra cập nhật.');
+      return 'Version ${info.versionName}+${info.versionCode} is available: ${info.notes}';
+    }, 'Update check complete.');
   }
 
   @override
@@ -3354,6 +3310,7 @@ class _AccountPageState extends State<AccountPage> {
                 controller: _backend,
                 decoration: const InputDecoration(
                   labelText: 'Backend URL',
+                  hintText: BackendConfig.exampleUrl,
                   prefixIcon: Icon(Icons.link),
                 ),
               ),
@@ -3405,7 +3362,7 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Đổi mật khẩu',
+                'Change Password',
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
@@ -3415,28 +3372,28 @@ class _AccountPageState extends State<AccountPage> {
                 controller: _current,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'Mật khẩu hiện tại',
+                  labelText: 'Current password',
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _next,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Mật khẩu mới'),
+                decoration: const InputDecoration(labelText: 'New password'),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _confirm,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'Nhập lại mật khẩu mới',
+                  labelText: 'Confirm new password',
                 ),
               ),
               const SizedBox(height: 14),
               OutlinedButton.icon(
                 onPressed: _busy ? null : _updatePassword,
                 icon: const Icon(Icons.lock_reset),
-                label: const Text('Cập nhật'),
+                label: const Text('Update'),
               ),
             ],
           ),
@@ -3445,7 +3402,7 @@ class _AccountPageState extends State<AccountPage> {
         OutlinedButton.icon(
           onPressed: widget.onLogout,
           icon: const Icon(Icons.logout),
-          label: const Text('Đăng xuất'),
+          label: const Text('Sign out'),
         ),
       ],
     );
@@ -3655,9 +3612,9 @@ IconData priorityIcon(TaskPriority priority) => switch (priority) {
 };
 
 String priorityLabel(TaskPriority priority) => switch (priority) {
-  TaskPriority.high => 'Cao',
-  TaskPriority.normal => 'Vừa',
-  TaskPriority.low => 'Thấp',
+  TaskPriority.high => 'High',
+  TaskPriority.normal => 'Normal',
+  TaskPriority.low => 'Low',
 };
 
 int currentDoneStreak(List<TaskAssignment> assignments) {
@@ -3695,12 +3652,12 @@ IconData taskIconData(TaskIconKind iconKind) => switch (iconKind) {
 };
 
 String taskIconLabel(TaskIconKind iconKind) => switch (iconKind) {
-  TaskIconKind.study => 'Học tập',
-  TaskIconKind.fitness => 'Tập luyện',
-  TaskIconKind.health => 'Sức khỏe',
-  TaskIconKind.laptop => 'Làm việc',
-  TaskIconKind.smile => 'Vui vẻ',
-  TaskIconKind.travel => 'Du lịch',
+  TaskIconKind.study => 'Study',
+  TaskIconKind.fitness => 'Fitness',
+  TaskIconKind.health => 'Health',
+  TaskIconKind.laptop => 'Work',
+  TaskIconKind.smile => 'Joy',
+  TaskIconKind.travel => 'Travel',
 };
 
 Color taskIconColor(TaskIconKind iconKind, {BuildContext? context}) {
@@ -3732,7 +3689,7 @@ TaskItem taskFor(List<TaskItem> tasks, TaskAssignment assignment) {
     (task) => task.id == assignment.taskId,
     orElse: () => TaskItem(
       id: assignment.taskId,
-      title: 'Công việc đã xoá',
+      title: 'Deleted task',
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
     ),

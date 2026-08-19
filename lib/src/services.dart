@@ -311,7 +311,7 @@ class LocalReminderService {
       }
       await _plugin.zonedSchedule(
         assignment.id.hashCode & 0x7fffffff,
-        'Nhắc việc hôm nay',
+        'Today reminder',
         task.title,
         tz.TZDateTime.from(scheduled, tz.local),
         const NotificationDetails(

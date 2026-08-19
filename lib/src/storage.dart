@@ -5,7 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
 class BackendConfig {
-  static const defaultUrl = 'http://192.168.1.137:3002';
+  static const defaultUrl = '';
+  static const exampleUrl = 'http://192.168.1.142:3002';
   static const legacyDefaultUrl = 'http://127.0.0.1:3000';
   static const key = 'task-reminder-backend-url';
 
@@ -13,7 +14,6 @@ class BackendConfig {
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getString(key)?.trim();
     if (value == null || value.isEmpty || value == legacyDefaultUrl) {
-      await prefs.setString(key, defaultUrl);
       return defaultUrl;
     }
     return value;
@@ -22,7 +22,7 @@ class BackendConfig {
   static Future<void> saveUrl(String value) async {
     final prefs = await SharedPreferences.getInstance();
     final normalized = value.trim().replaceAll(RegExp(r'/+$'), '');
-    await prefs.setString(key, normalized.isEmpty ? defaultUrl : normalized);
+    await prefs.setString(key, normalized);
   }
 }
 
@@ -270,15 +270,15 @@ class TaskStore {
     return [
       TaskItem(
         id: 'seed-1',
-        title: 'Đọc tài liệu embedded',
-        note: 'Ôn lại ghi chú hôm qua',
+        title: 'Read embedded notes',
+        note: 'Review yesterday notes',
         createdAt: now,
         updatedAt: now,
       ),
       TaskItem(
         id: 'seed-2',
-        title: 'Tập thể dục',
-        note: 'Nhắc nhẹ để giữ nhịp',
+        title: 'Exercise',
+        note: 'Keep the routine going',
         createdAt: now,
         updatedAt: now,
       ),
