@@ -404,7 +404,8 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _submit() async {
     if (_user.text.trim().isEmpty || _password.text.length < 8) {
       setState(
-        () => _error = 'Enter a username and a password with at least 8 characters.',
+        () => _error =
+            'Enter a username and a password with at least 8 characters.',
       );
       return;
     }
@@ -1419,10 +1420,7 @@ class _WorkListPageState extends State<WorkListPage> {
         if (visibleTasks.isEmpty)
           DoodlePanel(
             shadowColor: colors.glow,
-            child: Text(
-              'No tasks yet.',
-              style: TextStyle(color: colors.muted),
-            ),
+            child: Text('No tasks yet.', style: TextStyle(color: colors.muted)),
           )
         else
           LayoutBuilder(
@@ -2318,7 +2316,9 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     }
     final dates = nextMonthDayDates(day);
     if (dates.isEmpty) {
-      setState(() => _error = 'No matching schedule is available for this day.');
+      setState(
+        () => _error = 'No matching schedule is available for this day.',
+      );
       return;
     }
     _setSchedule('Day $day monthly, next 12 times', dates);
@@ -2370,7 +2370,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 autofocus: true,
                 decoration: const InputDecoration(
                   labelText: 'Quick Add',
-                  hintText: 'Example: Submit report tomorrow 9:00 !high ~45m #work',
+                  hintText:
+                      'Example: Submit report tomorrow 9:00 !high ~45m #work',
                   prefixIcon: Icon(Icons.task_alt_outlined),
                 ),
               ),
@@ -2602,7 +2603,9 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     }
     final dates = nextMonthDayDates(day);
     if (dates.isEmpty) {
-      setState(() => _error = 'No matching schedule is available for this day.');
+      setState(
+        () => _error = 'No matching schedule is available for this day.',
+      );
       return;
     }
     _setSchedule('Day $day monthly, next 12 times', dates);
