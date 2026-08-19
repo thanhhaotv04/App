@@ -85,22 +85,26 @@ ALLOWED_ORIGINS=http://192.168.x.x:8081 npm start
 Không nên để CORS mở quá rộng khi release. Nếu app web đổi port hoặc IP, backend
 cần đổi `ALLOWED_ORIGINS` theo.
 
-## 5. Release Android phải chặn HTTP cleartext
+## 5. HTTP trong Android release phải chọn theo mục tiêu
 
-Trong Android release, nên để:
+Nếu release production thật và backend có đăng nhập/mật khẩu, nên dùng HTTPS và
+chặn HTTP cleartext:
 
 ```kotlin
 manifestPlaceholders["usesCleartextTraffic"] = "false"
 ```
 
-Debug có thể dùng HTTP local để test:
+Nếu app cần cập nhật qua backend local dạng `http://192.168.x.x:3002`, Android
+release phải cho phép HTTP:
 
 ```kotlin
 manifestPlaceholders["usesCleartextTraffic"] = "true"
 ```
 
-Kinh nghiệm: nếu release APK cần sync backend thật, hãy dùng HTTPS. HTTP local chỉ
-nên dùng cho debug/test trong mạng LAN.
+Kinh nghiệm với `task-reminder`: app cá nhân chạy backend local để sync/update
+APK trong mạng LAN thì có thể bật `usesCleartextTraffic=true` cho release. Nhưng
+nếu đưa ra môi trường production hoặc server public, phải chuyển sang HTTPS vì
+header `X-Password` có chứa mật khẩu.
 
 ## 6. APK release phải được ký
 
@@ -155,7 +159,29 @@ storeFile=/home/thanhhao/.android/debug.keystore
 Bản này chỉ phù hợp test/cài đè nếu APK cũ cũng dùng cùng debug key. Khi release
 thật, cần tạo release keystore riêng và giữ nó cố định.
 
-## 8. Khi update phiên bản phải tăng version
+## 8. Không tự update version khi chưa được yêu cầu
+
+Nguyên tắc quan trọng: chỉ tăng version, build APK release, và cập nhật
+`backend/releases/latest.json` khi người dùng yêu cầu rõ ràng như:
+
+- "cập nhật phiên bản mới"
+- "build APK mới"
+- "mở backend để cập nhật qua app"
+- "release bản mới"
+
+Nếu người dùng chỉ yêu cầu sửa UI, sửa bug, kiểm tra chức năng, hoặc push source
+code thì không tự tăng `pubspec.yaml`, không tự sửa `latest.json`, và không tự
+tạo APK release. Có thể chạy:
+
+```bash
+flutter analyze
+flutter test
+flutter build web
+```
+
+nhưng phải để version/release giữ nguyên cho tới khi có yêu cầu cập nhật.
+
+## 9. Khi update phiên bản phải tăng version
 
 Trong `pubspec.yaml`:
 
@@ -171,7 +197,47 @@ Trong đó:
 Mỗi lần phát hành APK update, `versionCode` phải tăng. Nếu không tăng, Android
 hoặc hệ thống update có thể không nhận là bản mới.
 
-## 9. Manifest update phải trỏ đúng APK
+## 10. Dùng update.sh để phát hành bản mới
+
+Trong `task-reminder` đã có script:
+
+```bash
+./update.sh
+```
+
+Script này tự động:
+
+- Tăng patch version và `versionCode`.
+- Cập nhật `backend/releases/latest.json`.
+- Chạy `flutter pub get`.
+- Chạy `dart format --set-exit-if-changed lib test`.
+- Chạy `flutter analyze`.
+- Chạy `flutter test`.
+- Chạy backend check: `node --check server.js` và `npm test`.
+- Build web.
+- Build APK release bằng `tools/build_release_apk.sh`.
+- Copy APK vào `backend/releases/app-release-task-reminder.apk`.
+- Kiểm tra manifest và APK tồn tại.
+
+Nếu muốn tự đặt version/notes:
+
+```bash
+VERSION_NAME=1.0.6 VERSION_CODE=7 RELEASE_NOTES="Bug fixes" ./update.sh
+```
+
+Nếu muốn sau khi build xong mở backend để app check update:
+
+```bash
+./update.sh --serve
+```
+
+Nếu backend đã chạy trên port `3002`, `--serve` chỉ báo lại URL update thay vì
+crash vì trùng port.
+
+Không chạy `./update.sh` khi chỉ đang sửa UI hoặc kiểm tra chức năng, vì script
+sẽ tự tăng version và tạo APK release.
+
+## 11. Manifest update phải trỏ đúng APK
 
 File:
 
@@ -198,7 +264,17 @@ Sau khi build:
 
 Tên `apkFile` trong JSON phải khớp với file thật trong `backend/releases/`.
 
-## 10. Checklist trước khi nói app đã ổn
+Kiểm tra endpoint:
+
+```bash
+curl http://192.168.x.x:3002/api/update/latest
+curl -I http://192.168.x.x:3002/releases/app-release-task-reminder.apk
+```
+
+Kết quả tốt: endpoint JSON trả `versionName`, `versionCode`, `apkUrl`; link APK
+trả `HTTP 200`.
+
+## 12. Checklist trước khi nói app đã ổn
 
 Chạy tối thiểu:
 
@@ -206,10 +282,21 @@ Chạy tối thiểu:
 flutter analyze
 flutter test
 flutter build web
+```
+
+Chỉ khi đang release/update APK mới chạy:
+
+```bash
 ./tools/build_release_apk.sh
 ```
 
-Kiểm tra APK:
+Hoặc dùng script tự động:
+
+```bash
+./update.sh
+```
+
+Kiểm tra APK khi có build release:
 
 ```bash
 /home/thanhhao/.local/share/android-sdk/build-tools/36.0.0/apksigner verify \
@@ -229,7 +316,15 @@ git status --short
 git diff --check
 ```
 
-## 11. Khi đổi icon app
+Nếu có backend:
+
+```bash
+cd backend
+node --check server.js
+npm test
+```
+
+## 13. Khi đổi icon app
 
 Icon Android launcher nằm ở:
 
@@ -257,7 +352,22 @@ assets/branding/app_icon.png
 Sau khi đổi icon, phải build lại APK release. Cài APK cũ sẽ không tự đổi icon nếu
 chưa cài bản mới thành công.
 
-## 12. Kinh nghiệm xử lý lỗi thường gặp
+## 14. Kinh nghiệm UI mobile và popup
+
+- Không gom nhiều option vào một nút nếu người dùng cần bật/tắt từng tính năng.
+  Với Add Task, các nhóm như `Icon`, `Priority`, `Schedule` nên có switch riêng.
+- Khi tắt `Priority`, lưu task dạng `No priority` và không set reminder time.
+- Khi tắt `Schedule`, xóa lịch đang chọn để tránh tạo assignment ngoài ý muốn.
+- Các chip trên mobile nên dùng chữ ngắn: ví dụ `15m` thay vì `15p`, `Reminder`
+  thay vì `Reminder time`.
+- Không ép dialog bằng `SizedBox(width: 560)` trên mobile; dùng
+  `ConstrainedBox(maxWidth: 560)` để dialog co theo màn hình.
+- Header có title + trailing button dễ overflow ở width 390px; dùng
+  `LayoutBuilder` để trailing xuống dòng khi không đủ rộng.
+- Mỗi lần chỉnh popup nên thêm widget test ở phone size, ví dụ `390x844`, mở
+  popup và bật các option chính rồi kiểm tra `tester.takeException()`.
+
+## 15. Kinh nghiệm xử lý lỗi thường gặp
 
 ### Flutter warning Java restricted method
 
@@ -292,10 +402,11 @@ Kiểm tra:
 3. Flutter web-server có chạy với `--web-hostname 0.0.0.0` không.
 4. Tường lửa/router có chặn thiết bị khác trong LAN không.
 
-## 13. Nguyên tắc làm feature cho app cá nhân
+## 16. Nguyên tắc làm feature cho app cá nhân
 
 - Ưu tiên offline-first.
 - Không bắt người dùng nhập backend URL khi không sync.
+- Không tự update version/release/APK nếu người dùng chưa yêu cầu.
 - UI system text nên thống nhất một ngôn ngữ, ví dụ English.
 - Nội dung task người dùng nhập vẫn phải hỗ trợ tiếng Việt.
 - Mỗi feature mới nên có test cho logic và test cho thao tác chính trên mobile
