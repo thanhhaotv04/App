@@ -114,7 +114,7 @@ Kiểm tra APK có ký đúng không:
 
 ```bash
 /home/thanhhao/.local/share/android-sdk/build-tools/36.0.0/apksigner verify \
-  --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk
+  --verbose --print-certs build/app/outputs/flutter-apk/app-release-task-reminder.apk
 ```
 
 Kết quả tốt cần có:
@@ -185,7 +185,7 @@ Ví dụ:
 {
   "versionName": "1.0.1",
   "versionCode": 2,
-  "apkFile": "task_reminder.apk",
+  "apkFile": "app-release-task-reminder.apk",
   "notes": "New app icon, no-priority tasks, and monthly multi-day scheduling."
 }
 ```
@@ -193,8 +193,7 @@ Ví dụ:
 Sau khi build:
 
 ```bash
-flutter build apk --release
-cp build/app/outputs/flutter-apk/app-release.apk backend/releases/task_reminder.apk
+./tools/build_release_apk.sh
 ```
 
 Tên `apkFile` trong JSON phải khớp với file thật trong `backend/releases/`.
@@ -207,14 +206,14 @@ Chạy tối thiểu:
 flutter analyze
 flutter test
 flutter build web
-flutter build apk --release
+./tools/build_release_apk.sh
 ```
 
 Kiểm tra APK:
 
 ```bash
 /home/thanhhao/.local/share/android-sdk/build-tools/36.0.0/apksigner verify \
-  --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk
+  --verbose --print-certs build/app/outputs/flutter-apk/app-release-task-reminder.apk
 ```
 
 Kiểm tra web preview:
@@ -302,4 +301,3 @@ Kiểm tra:
 - Mỗi feature mới nên có test cho logic và test cho thao tác chính trên mobile
   width.
 - Sau khi sửa release/security/signing, luôn build APK thật và verify chữ ký.
-

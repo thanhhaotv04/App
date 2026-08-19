@@ -36,6 +36,7 @@ backend/releases/*.apk
 .pub-cache/
 .pub/
 /build/
+/android/build/
 /coverage/
 
 # Symbolication related

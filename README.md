@@ -81,17 +81,18 @@ build/app/outputs/flutter-apk/app-debug.apk
 Release APK:
 
 ```bash
-flutter build apk --release
+./tools/build_release_apk.sh
 ```
 
 Output:
 
 ```text
-build/app/outputs/flutter-apk/app-release.apk
+build/app/outputs/flutter-apk/app-release-task-reminder.apk
 ```
 
-Note: the release APK is not signed with a real release key yet. Sign it before
-publishing.
+The script keeps Flutter's default `app-release.apk`, creates
+`app-release-task-reminder.apk`, and copies it to `backend/releases/` so APK
+files from multiple apps are easy to distinguish.
 
 ## Version Update Commands
 
@@ -104,13 +105,13 @@ version: 1.0.1+2
 2. Build the release APK:
 
 ```bash
-flutter build apk --release
+./tools/build_release_apk.sh
 ```
 
-3. Copy the APK to the backend release folder:
+3. Confirm the APK copied to the backend release folder:
 
 ```bash
-cp build/app/outputs/flutter-apk/app-release.apk backend/releases/app-release.apk
+ls -lh backend/releases/app-release-task-reminder.apk
 ```
 
 4. Update `backend/releases/latest.json`:
@@ -119,7 +120,7 @@ cp build/app/outputs/flutter-apk/app-release.apk backend/releases/app-release.ap
 {
   "versionName": "1.0.1",
   "versionCode": 2,
-  "apkFile": "app-release.apk",
+  "apkFile": "app-release-task-reminder.apk",
   "notes": "Feature updates and bug fixes."
 }
 ```
