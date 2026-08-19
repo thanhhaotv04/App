@@ -131,10 +131,15 @@ void main() {
 
     await tester.tap(find.text('Lịch tuần').last);
     await tester.pumpAndSettle();
-    expect(find.text('Schedule'), findsOneWidget);
     expect(find.byKey(const ValueKey('edit-task-title-input')), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.pumpAndSettle();
+    expect(find.text('Schedule'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ActionChip, 'Mon'));
+    final monChip = find.widgetWithText(ActionChip, 'Mon');
+    await tester.ensureVisible(monChip);
+    await tester.pumpAndSettle();
+    await tester.tap(monChip);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
     await tester.pumpAndSettle();
@@ -168,6 +173,8 @@ void main() {
       find.byKey(const ValueKey('add-task-title-input')),
       'Pay bills',
     );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('add-task-month-day-input')),
       '1, 15',
@@ -213,6 +220,8 @@ void main() {
       find.byKey(const ValueKey('add-task-title-input')),
       'Read docs',
     );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'No priority'));
     await tester.pumpAndSettle();
     expect(find.text('Anytime today'), findsOneWidget);
@@ -243,6 +252,8 @@ void main() {
     await tester.ensureVisible(taskText);
     await tester.pumpAndSettle();
     await tester.tap(taskText);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Travel'));
     await tester.pumpAndSettle();
@@ -276,6 +287,8 @@ void main() {
     await tester.ensureVisible(taskText);
     await tester.pumpAndSettle();
     await tester.tap(taskText);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('edit-task-title-input')),
@@ -393,7 +406,7 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('Kiểm tra lịch'), findsOneWidget);
-    expect(find.byTooltip('Mark as done'), findsOneWidget);
+    expect(find.byTooltip('Task actions'), findsOneWidget);
   });
 
   testWidgets('today view remains overflow-free at representative widths', (
@@ -439,10 +452,8 @@ Future<void> addTaskFromAllTasks(
   expect(find.widgetWithText(ActionChip, 'Today'), findsNothing);
   expect(find.widgetWithText(ActionChip, 'Tomorrow'), findsNothing);
   expect(find.widgetWithText(ActionChip, 'No schedule'), findsNothing);
-  expect(
-    find.byKey(const ValueKey('add-task-month-day-input')),
-    findsOneWidget,
-  );
+  expect(find.byKey(const ValueKey('add-task-month-day-input')), findsNothing);
+  expect(find.widgetWithText(OutlinedButton, 'More options'), findsOneWidget);
   await tester.enterText(
     find.byKey(const ValueKey('add-task-title-input')),
     title,

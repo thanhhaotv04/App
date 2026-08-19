@@ -533,7 +533,7 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
       titleSpacing: 24,
       title: Row(
         children: [
-          Icon(Icons.draw_outlined, color: colors.primary, size: 38),
+          Icon(Icons.draw_outlined, color: colors.primary, size: 30),
           const SizedBox(width: 14),
           Flexible(
             child: Text(
@@ -932,7 +932,7 @@ class _OverviewPageState extends State<OverviewPage> {
     return PageList(
       children: [
         SectionCard(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(10),
           child: Column(
             children: [
               Row(
@@ -979,8 +979,8 @@ class _OverviewPageState extends State<OverviewPage> {
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 7,
-                      crossAxisSpacing: 6,
-                      mainAxisSpacing: 6,
+                      crossAxisSpacing: 4,
+                      mainAxisSpacing: 4,
                       childAspectRatio: constraints.maxWidth < 430
                           ? 0.62
                           : 0.82,
@@ -1474,7 +1474,7 @@ class CalendarDayCell extends StatelessWidget {
       return DecoratedBox(
         decoration: BoxDecoration(
           color: colors.container.withValues(alpha: 0.38),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(8),
         ),
       );
     }
@@ -1491,15 +1491,15 @@ class CalendarDayCell extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         key: ValueKey('calendar-${DateFormat('yyyy-MM-dd').format(date!)}'),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Ink(
-          padding: const EdgeInsets.all(5),
+          padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
             color: isToday
                 ? colors.success.withValues(alpha: .2)
                 : colors.container,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isToday ? colors.success : colors.border,
               width: isToday ? 2 : 1,
@@ -1513,7 +1513,7 @@ class CalendarDayCell extends StatelessWidget {
                 child: Text(
                   '${date!.day}',
                   style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: 16,
                     height: 1,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1522,7 +1522,7 @@ class CalendarDayCell extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
-                top: 24,
+                top: 21,
                 bottom: 0,
                 child: rows.isEmpty
                     ? const SizedBox.shrink()
@@ -1552,7 +1552,7 @@ class CalendarDayCell extends StatelessWidget {
                                           index < 3;
                                           index++
                                         )
-                                          const SizedBox(width: 22, height: 22),
+                                          const SizedBox(width: 16, height: 16),
                                       ],
                                     ),
                                   ),
@@ -1601,8 +1601,8 @@ class CalendarStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     return Container(
-      width: 22,
-      height: 22,
+      width: 16,
+      height: 16,
       decoration: BoxDecoration(
         color: done ? colors.success : colors.error,
         shape: BoxShape.circle,
@@ -1610,7 +1610,7 @@ class CalendarStatusIcon extends StatelessWidget {
       child: Icon(
         done ? Icons.check : Icons.close,
         color: Colors.white,
-        size: 15,
+        size: 11,
       ),
     );
   }
@@ -1670,29 +1670,43 @@ class DayTasksDialog extends StatelessWidget {
                         trailing: Wrap(
                           spacing: 2,
                           children: [
-                            IconButton(
-                              tooltip: item.$1.done
-                                  ? 'Mark as pending'
-                                  : 'Mark as done',
-                              onPressed: () {
+                            PopupMenuButton<String>(
+                              tooltip: 'Task actions',
+                              icon: const Icon(Icons.more_vert),
+                              onSelected: (value) {
                                 Navigator.of(context).pop();
-                                item.$1.done
-                                    ? onUndoDone(item.$1)
-                                    : onDone(item.$1);
+                                if (value == 'toggle') {
+                                  item.$1.done
+                                      ? onUndoDone(item.$1)
+                                      : onDone(item.$1);
+                                } else if (value == 'remove') {
+                                  onRemoveAssignment(item.$1);
+                                }
                               },
-                              icon: Icon(
-                                item.$1.done
-                                    ? Icons.undo
-                                    : Icons.check_circle_outline,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Remove from this day',
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                                onRemoveAssignment(item.$1);
-                              },
-                              icon: const Icon(Icons.delete_outline),
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'toggle',
+                                  child: ListTile(
+                                    leading: Icon(
+                                      item.$1.done
+                                          ? Icons.undo
+                                          : Icons.check_circle_outline,
+                                    ),
+                                    title: Text(
+                                      item.$1.done
+                                          ? 'Mark as pending'
+                                          : 'Mark as done',
+                                    ),
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: 'remove',
+                                  child: ListTile(
+                                    leading: Icon(Icons.delete_outline),
+                                    title: Text('Remove from this day'),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1885,7 +1899,7 @@ class PriorityPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18, color: colors.primary),
+          Icon(icon, size: 13, color: colors.primary),
           const SizedBox(width: 6),
           Text(
             label,
@@ -1910,17 +1924,17 @@ class ReminderArt extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     return Container(
-      width: 82,
-      height: 82,
+      width: 41,
+      height: 41,
       decoration: BoxDecoration(
         color: color.withValues(alpha: .45),
         shape: BoxShape.circle,
         border: Border.all(
           color: colors.border.withValues(alpha: .9),
-          width: 3,
+          width: 2,
         ),
       ),
-      child: Icon(icon, size: 42, color: colors.primary),
+      child: Icon(icon, size: 29, color: colors.primary),
     );
   }
 }
@@ -1995,7 +2009,7 @@ class DoodleSectionHeader extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Row(
               children: [
-                Icon(icon, color: accent, size: 30),
+                Icon(icon, color: accent, size: 21),
                 const SizedBox(width: 8),
                 Text(
                   title,
@@ -2173,8 +2187,8 @@ class LibraryWorkRow extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   color: iconColor.withValues(alpha: .24),
                   borderRadius: BorderRadius.circular(8),
@@ -2183,10 +2197,10 @@ class LibraryWorkRow extends StatelessWidget {
                 child: Icon(
                   taskIconData(task.iconKind),
                   color: iconColor,
-                  size: 26,
+                  size: 18,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2271,6 +2285,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
+  bool _showOptions = false;
   String? _error;
 
   @override
@@ -2383,152 +2398,165 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('add-task-note-input'),
-                controller: _note,
-                minLines: 1,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Note',
-                  prefixIcon: Icon(Icons.notes_outlined),
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _showOptions = !_showOptions),
+                icon: Icon(
+                  _showOptions ? Icons.expand_less : Icons.tune_outlined,
                 ),
+                label: Text(_showOptions ? 'Hide options' : 'More options'),
               ),
-              const SizedBox(height: 20),
-              Text(
-                'Icon',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final iconKind in TaskIconKind.values)
-                    ChoiceChip(
-                      avatar: Icon(taskIconData(iconKind), size: 18),
-                      label: Text(taskIconLabel(iconKind)),
-                      selected: _iconKind == iconKind,
-                      onSelected: (_) => setState(() => _iconKind = iconKind),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Priority',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final priority in TaskPriority.values)
-                    ChoiceChip(
-                      avatar: Icon(priorityIcon(priority), size: 18),
-                      label: Text(priorityLabel(priority)),
-                      selected: _priority == priority,
-                      onSelected: (_) => setState(() {
-                        _priority = priority;
-                        if (priority == TaskPriority.none) {
-                          _reminderTime = null;
-                        }
-                      }),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 15, label: Text('15p')),
-                      ButtonSegment(value: 30, label: Text('30p')),
-                      ButtonSegment(value: 45, label: Text('45p')),
-                      ButtonSegment(value: 60, label: Text('60p')),
-                    ],
-                    selected: {_estimateMinutes},
-                    onSelectionChanged: (value) =>
-                        setState(() => _estimateMinutes = value.first),
+              if (_showOptions) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  key: const ValueKey('add-task-note-input'),
+                  controller: _note,
+                  minLines: 1,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Note',
+                    prefixIcon: Icon(Icons.notes_outlined),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: _priority == TaskPriority.none
-                        ? null
-                        : _pickReminderTime,
-                    icon: Icon(
-                      _priority == TaskPriority.none
-                          ? Icons.event_available_outlined
-                          : Icons.schedule,
-                    ),
-                    label: Text(
-                      _priority == TaskPriority.none
-                          ? 'Anytime today'
-                          : _reminderTime == null
-                          ? 'Reminder time'
-                          : _reminderTime!.format(context),
-                    ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Icon',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
                   ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Schedule',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final (weekday, label) in weekdays)
-                    ActionChip(
-                      avatar: const Icon(Icons.event_repeat_outlined, size: 18),
-                      label: Text(label),
-                      onPressed: () => _setSchedule(
-                        '$label, next 12 times',
-                        nextWeekdayDates(weekday),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final iconKind in TaskIconKind.values)
+                      ChoiceChip(
+                        avatar: Icon(taskIconData(iconKind), size: 13),
+                        label: Text(taskIconLabel(iconKind)),
+                        selected: _iconKind == iconKind,
+                        onSelected: (_) => setState(() => _iconKind = iconKind),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Priority',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final priority in TaskPriority.values)
+                      ChoiceChip(
+                        avatar: Icon(priorityIcon(priority), size: 13),
+                        label: Text(priorityLabel(priority)),
+                        selected: _priority == priority,
+                        onSelected: (_) => setState(() {
+                          _priority = priority;
+                          if (priority == TaskPriority.none) {
+                            _reminderTime = null;
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 15, label: Text('15p')),
+                        ButtonSegment(value: 30, label: Text('30p')),
+                        ButtonSegment(value: 45, label: Text('45p')),
+                        ButtonSegment(value: 60, label: Text('60p')),
+                      ],
+                      selected: {_estimateMinutes},
+                      onSelectionChanged: (value) =>
+                          setState(() => _estimateMinutes = value.first),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _priority == TaskPriority.none
+                          ? null
+                          : _pickReminderTime,
+                      icon: Icon(
+                        _priority == TaskPriority.none
+                            ? Icons.event_available_outlined
+                            : Icons.schedule,
+                      ),
+                      label: Text(
+                        _priority == TaskPriority.none
+                            ? 'Anytime today'
+                            : _reminderTime == null
+                            ? 'Reminder time'
+                            : _reminderTime!.format(context),
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey('add-task-month-day-input'),
-                      controller: _monthDay,
-                      keyboardType: TextInputType.text,
-                      onSubmitted: (_) => _setMonthDaySchedule(),
-                      decoration: const InputDecoration(
-                        labelText: 'Month day',
-                        hintText: 'Example: 1, 15, 30',
-                        prefixIcon: Icon(Icons.calendar_month_outlined),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Schedule',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final (weekday, label) in weekdays)
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.event_repeat_outlined,
+                          size: 13,
+                        ),
+                        label: Text(label),
+                        onPressed: () => _setSchedule(
+                          '$label, next 12 times',
+                          nextWeekdayDates(weekday),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('add-task-month-day-input'),
+                        controller: _monthDay,
+                        keyboardType: TextInputType.text,
+                        onSubmitted: (_) => _setMonthDaySchedule(),
+                        decoration: const InputDecoration(
+                          labelText: 'Month day',
+                          hintText: 'Example: 1, 15, 30',
+                          prefixIcon: Icon(Icons.calendar_month_outlined),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    height: 58,
-                    child: OutlinedButton.icon(
-                      onPressed: _setMonthDaySchedule,
-                      icon: const Icon(Icons.event_repeat_outlined),
-                      label: const Text('Set'),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      height: 58,
+                      child: OutlinedButton.icon(
+                        onPressed: _setMonthDaySchedule,
+                        icon: const Icon(Icons.event_repeat_outlined),
+                        label: const Text('Set'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: colors.error)),
@@ -2587,6 +2615,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
+  bool _showOptions = false;
   String? _error;
 
   @override
@@ -2703,152 +2732,165 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('edit-task-note-input'),
-                controller: _note,
-                minLines: 1,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Note',
-                  prefixIcon: Icon(Icons.notes_outlined),
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _showOptions = !_showOptions),
+                icon: Icon(
+                  _showOptions ? Icons.expand_less : Icons.tune_outlined,
                 ),
+                label: Text(_showOptions ? 'Hide options' : 'More options'),
               ),
-              const SizedBox(height: 20),
-              Text(
-                'Icon',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final iconKind in TaskIconKind.values)
-                    ChoiceChip(
-                      avatar: Icon(taskIconData(iconKind), size: 18),
-                      label: Text(taskIconLabel(iconKind)),
-                      selected: _iconKind == iconKind,
-                      onSelected: (_) => setState(() => _iconKind = iconKind),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Priority',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final priority in TaskPriority.values)
-                    ChoiceChip(
-                      avatar: Icon(priorityIcon(priority), size: 18),
-                      label: Text(priorityLabel(priority)),
-                      selected: _priority == priority,
-                      onSelected: (_) => setState(() {
-                        _priority = priority;
-                        if (priority == TaskPriority.none) {
-                          _reminderTime = null;
-                        }
-                      }),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 15, label: Text('15p')),
-                      ButtonSegment(value: 30, label: Text('30p')),
-                      ButtonSegment(value: 45, label: Text('45p')),
-                      ButtonSegment(value: 60, label: Text('60p')),
-                    ],
-                    selected: {_estimateMinutes},
-                    onSelectionChanged: (value) =>
-                        setState(() => _estimateMinutes = value.first),
+              if (_showOptions) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  key: const ValueKey('edit-task-note-input'),
+                  controller: _note,
+                  minLines: 1,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Note',
+                    prefixIcon: Icon(Icons.notes_outlined),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: _priority == TaskPriority.none
-                        ? null
-                        : _pickReminderTime,
-                    icon: Icon(
-                      _priority == TaskPriority.none
-                          ? Icons.event_available_outlined
-                          : Icons.schedule,
-                    ),
-                    label: Text(
-                      _priority == TaskPriority.none
-                          ? 'Anytime today'
-                          : _reminderTime == null
-                          ? 'Reminder time'
-                          : _reminderTime!.format(context),
-                    ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Icon',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
                   ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              Text(
-                'Schedule',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final (weekday, label) in weekdays)
-                    ActionChip(
-                      avatar: const Icon(Icons.event_repeat_outlined, size: 18),
-                      label: Text(label),
-                      onPressed: () => _setSchedule(
-                        '$label, next 12 times',
-                        nextWeekdayDates(weekday),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final iconKind in TaskIconKind.values)
+                      ChoiceChip(
+                        avatar: Icon(taskIconData(iconKind), size: 13),
+                        label: Text(taskIconLabel(iconKind)),
+                        selected: _iconKind == iconKind,
+                        onSelected: (_) => setState(() => _iconKind = iconKind),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Priority',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final priority in TaskPriority.values)
+                      ChoiceChip(
+                        avatar: Icon(priorityIcon(priority), size: 13),
+                        label: Text(priorityLabel(priority)),
+                        selected: _priority == priority,
+                        onSelected: (_) => setState(() {
+                          _priority = priority;
+                          if (priority == TaskPriority.none) {
+                            _reminderTime = null;
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 15, label: Text('15p')),
+                        ButtonSegment(value: 30, label: Text('30p')),
+                        ButtonSegment(value: 45, label: Text('45p')),
+                        ButtonSegment(value: 60, label: Text('60p')),
+                      ],
+                      selected: {_estimateMinutes},
+                      onSelectionChanged: (value) =>
+                          setState(() => _estimateMinutes = value.first),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _priority == TaskPriority.none
+                          ? null
+                          : _pickReminderTime,
+                      icon: Icon(
+                        _priority == TaskPriority.none
+                            ? Icons.event_available_outlined
+                            : Icons.schedule,
+                      ),
+                      label: Text(
+                        _priority == TaskPriority.none
+                            ? 'Anytime today'
+                            : _reminderTime == null
+                            ? 'Reminder time'
+                            : _reminderTime!.format(context),
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey('edit-task-month-day-input'),
-                      controller: _monthDay,
-                      keyboardType: TextInputType.text,
-                      onSubmitted: (_) => _setMonthDaySchedule(),
-                      decoration: const InputDecoration(
-                        labelText: 'Month day',
-                        hintText: 'Example: 1, 15, 30',
-                        prefixIcon: Icon(Icons.calendar_month_outlined),
+                  ],
+                ),
+                const SizedBox(height: 22),
+                Text(
+                  'Schedule',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final (weekday, label) in weekdays)
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.event_repeat_outlined,
+                          size: 13,
+                        ),
+                        label: Text(label),
+                        onPressed: () => _setSchedule(
+                          '$label, next 12 times',
+                          nextWeekdayDates(weekday),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('edit-task-month-day-input'),
+                        controller: _monthDay,
+                        keyboardType: TextInputType.text,
+                        onSubmitted: (_) => _setMonthDaySchedule(),
+                        decoration: const InputDecoration(
+                          labelText: 'Month day',
+                          hintText: 'Example: 1, 15, 30',
+                          prefixIcon: Icon(Icons.calendar_month_outlined),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    height: 58,
-                    child: OutlinedButton.icon(
-                      onPressed: _setMonthDaySchedule,
-                      icon: const Icon(Icons.event_repeat_outlined),
-                      label: const Text('Set'),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      height: 58,
+                      child: OutlinedButton.icon(
+                        onPressed: _setMonthDaySchedule,
+                        icon: const Icon(Icons.event_repeat_outlined),
+                        label: const Text('Set'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: colors.error)),
@@ -3195,13 +3237,13 @@ class TaskIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     return Container(
-      width: 58,
-      height: 58,
+      width: 41,
+      height: 41,
       decoration: BoxDecoration(
         color: muted ? colors.container : colors.secondary,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Icon(icon, color: colors.primary, size: 28),
+      child: Icon(icon, color: colors.primary, size: 20),
     );
   }
 }
