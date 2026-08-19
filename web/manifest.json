@@ -3,8 +3,8 @@
     "short_name": "Tasks",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#F7FAF3",
-    "theme_color": "#6A8F55",
+    "background_color": "#FCF9F4",
+    "theme_color": "#5E5452",
     "description": "Task Reminder daily planning and sync preview.",
     "prefer_related_applications": false,
     "icons": [
