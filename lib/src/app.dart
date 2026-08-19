@@ -2353,6 +2353,25 @@ class FeatureToggleHeader extends StatelessWidget {
   }
 }
 
+class CompactChipGrid extends StatelessWidget {
+  const CompactChipGrid({super.key, required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 430;
+    final itemWidth = compact ? 96.0 : 122.0;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final child in children) SizedBox(width: itemWidth, child: child),
+      ],
+    );
+  }
+}
+
 class _AddTaskDialogState extends State<AddTaskDialog> {
   final _title = TextEditingController();
   final _note = TextEditingController();
@@ -2364,6 +2383,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
   String? _scheduleKey;
+  Set<int> _selectedWeekdays = const {};
   bool _iconEnabled = false;
   bool _priorityEnabled = false;
   bool _scheduleEnabled = false;
@@ -2381,6 +2401,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     setState(() {
       _scheduleLabel = 'No schedule set';
       _scheduleKey = null;
+      _selectedWeekdays = const {};
       _dates = const [];
       _error = null;
     });
@@ -2406,7 +2427,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     });
   }
 
-  void _toggleSchedule(String key, String label, List<DateTime> dates) {
+  void _toggleExclusiveSchedule(
+    String key,
+    String label,
+    List<DateTime> dates,
+  ) {
     if (_scheduleKey == key) {
       _clearSchedule();
       return;
@@ -2414,7 +2439,29 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     setState(() {
       _scheduleLabel = label;
       _scheduleKey = key;
+      _selectedWeekdays = const {};
       _dates = dates;
+      _error = null;
+    });
+  }
+
+  void _toggleWeekdaySchedule(int weekday) {
+    final selected = {..._selectedWeekdays};
+    if (selected.contains(weekday)) {
+      selected.remove(weekday);
+    } else {
+      selected.add(weekday);
+    }
+    if (selected.isEmpty) {
+      _clearSchedule();
+      return;
+    }
+    final weekdays = selected.toList()..sort();
+    setState(() {
+      _scheduleLabel = weekdayScheduleLabel(weekdays);
+      _scheduleKey = 'weekdays:${weekdays.join(',')}';
+      _selectedWeekdays = weekdays.toSet();
+      _dates = nextWeekdayDatesForWeekdays(weekdays);
       _error = null;
     });
   }
@@ -2460,7 +2507,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
       );
       return;
     }
-    _toggleSchedule(
+    _toggleExclusiveSchedule(
       'month:${days.join(',')}',
       monthDayScheduleLabel(days),
       dates,
@@ -2563,9 +2610,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               ),
               if (_iconEnabled) ...[
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+                CompactChipGrid(
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
@@ -2651,9 +2696,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+                CompactChipGrid(
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
@@ -2664,12 +2707,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                           size: 13,
                         ),
                         label: Text(label),
-                        selected: _scheduleKey == 'weekday:$weekday',
-                        onSelected: (_) => _toggleSchedule(
-                          'weekday:$weekday',
-                          '$label, next 12 times',
-                          nextWeekdayDates(weekday),
-                        ),
+                        selected: _selectedWeekdays.contains(weekday),
+                        onSelected: (_) => _toggleWeekdaySchedule(weekday),
                       ),
                     FilterChip(
                       visualDensity: VisualDensity.compact,
@@ -2677,7 +2716,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
-                      onSelected: (_) => _toggleSchedule(
+                      onSelected: (_) => _toggleExclusiveSchedule(
                         'daily',
                         'Every day, next 30 days',
                         nextDailyDates(),
@@ -2777,6 +2816,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
   String? _scheduleKey;
+  Set<int> _selectedWeekdays = const {};
   bool _iconEnabled = false;
   bool _priorityEnabled = false;
   bool _scheduleEnabled = false;
@@ -2805,6 +2845,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     setState(() {
       _scheduleLabel = 'No schedule set';
       _scheduleKey = null;
+      _selectedWeekdays = const {};
       _dates = const [];
       _error = null;
     });
@@ -2830,7 +2871,11 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     });
   }
 
-  void _toggleSchedule(String key, String label, List<DateTime> dates) {
+  void _toggleExclusiveSchedule(
+    String key,
+    String label,
+    List<DateTime> dates,
+  ) {
     if (_scheduleKey == key) {
       _clearSchedule();
       return;
@@ -2838,7 +2883,29 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     setState(() {
       _scheduleLabel = label;
       _scheduleKey = key;
+      _selectedWeekdays = const {};
       _dates = dates;
+      _error = null;
+    });
+  }
+
+  void _toggleWeekdaySchedule(int weekday) {
+    final selected = {..._selectedWeekdays};
+    if (selected.contains(weekday)) {
+      selected.remove(weekday);
+    } else {
+      selected.add(weekday);
+    }
+    if (selected.isEmpty) {
+      _clearSchedule();
+      return;
+    }
+    final weekdays = selected.toList()..sort();
+    setState(() {
+      _scheduleLabel = weekdayScheduleLabel(weekdays);
+      _scheduleKey = 'weekdays:${weekdays.join(',')}';
+      _selectedWeekdays = weekdays.toSet();
+      _dates = nextWeekdayDatesForWeekdays(weekdays);
       _error = null;
     });
   }
@@ -2859,7 +2926,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
       );
       return;
     }
-    _toggleSchedule(
+    _toggleExclusiveSchedule(
       'month:${days.join(',')}',
       monthDayScheduleLabel(days),
       dates,
@@ -2978,9 +3045,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
               ),
               if (_iconEnabled) ...[
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+                CompactChipGrid(
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
@@ -3066,9 +3131,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                   style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+                CompactChipGrid(
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
@@ -3079,12 +3142,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                           size: 13,
                         ),
                         label: Text(label),
-                        selected: _scheduleKey == 'weekday:$weekday',
-                        onSelected: (_) => _toggleSchedule(
-                          'weekday:$weekday',
-                          '$label, next 12 times',
-                          nextWeekdayDates(weekday),
-                        ),
+                        selected: _selectedWeekdays.contains(weekday),
+                        onSelected: (_) => _toggleWeekdaySchedule(weekday),
                       ),
                     FilterChip(
                       visualDensity: VisualDensity.compact,
@@ -3092,7 +3151,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
-                      onSelected: (_) => _toggleSchedule(
+                      onSelected: (_) => _toggleExclusiveSchedule(
                         'daily',
                         'Every day, next 30 days',
                         nextDailyDates(),
@@ -3160,6 +3219,17 @@ List<DateTime> nextWeekdayDates(int weekday) {
   return List.generate(12, (index) => first.add(Duration(days: 7 * index)));
 }
 
+List<DateTime> nextWeekdayDatesForWeekdays(List<int> weekdays) {
+  final keyed = <String, DateTime>{};
+  for (final weekday in weekdays) {
+    for (final date in nextWeekdayDates(weekday)) {
+      keyed[date.toIso8601String().substring(0, 10)] = date;
+    }
+  }
+  final dates = keyed.values.toList()..sort();
+  return dates;
+}
+
 List<DateTime> nextDailyDates() {
   final today = dateOnly(DateTime.now());
   return List.generate(30, (index) => today.add(Duration(days: index)));
@@ -3211,6 +3281,23 @@ String monthDayScheduleLabel(List<int> days) {
   if (days.length == 1) return 'Day ${days.single} monthly, next 12 times';
   return 'Days ${days.join(', ')} monthly, next 12 times each';
 }
+
+String weekdayScheduleLabel(List<int> weekdays) {
+  final labels = weekdays.map(weekdayShortLabel).join(', ');
+  if (weekdays.length == 1) return '$labels, next 12 times';
+  return '$labels, next 12 times each';
+}
+
+String weekdayShortLabel(int weekday) => switch (weekday) {
+  1 => 'Mon',
+  2 => 'Tue',
+  3 => 'Wed',
+  4 => 'Thu',
+  5 => 'Fri',
+  6 => 'Sat',
+  7 => 'Sun',
+  _ => '',
+};
 
 class HeroPanel extends StatelessWidget {
   const HeroPanel({

@@ -247,6 +247,50 @@ void main() {
     expect(assignments.length, 30);
   });
 
+  testWidgets('add task can schedule multiple weekdays', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-title-input')),
+      'Gym week',
+    );
+    await tester.tap(find.text('Schedule').last);
+    await tester.pumpAndSettle();
+
+    for (final label in ['Mon', 'Wed', 'Fri']) {
+      final chip = find.widgetWithText(FilterChip, label);
+      await tester.ensureVisible(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('Mon, Wed, Fri, next 12 times each'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    final assignments =
+        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+            as List<Object?>;
+    expect(assignments.length, 36);
+  });
+
   testWidgets('all tasks can schedule multiple month days', (tester) async {
     SharedPreferences.setMockInitialValues({
       AuthCache.userKey: 'preview',
