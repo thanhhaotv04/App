@@ -1,6 +1,6 @@
 {
-  "versionName": "1.0.3",
-  "versionCode": 4,
+  "versionName": "1.0.5",
+  "versionCode": 6,
   "apkFile": "app-release-task-reminder.apk",
-  "notes": "Togglable schedule chips, every-day task scheduling, and tighter Overview calendar cells."
+  "notes": "Per-feature task option toggles, mobile scale fixes, and release automation."
 }
