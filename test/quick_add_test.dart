@@ -18,4 +18,17 @@ void main() {
     expect(parsed.estimateMinutes, 45);
     expect(parsed.iconKind, TaskIconKind.laptop);
   });
+
+  test('parses no priority quick-add token', () {
+    final parsed = parseQuickTask('Dọn phòng hôm nay !không');
+
+    expect(parsed.title, 'Dọn phòng');
+    expect(parsed.priority, TaskPriority.none);
+  });
+
+  test('parses multiple month days separated by commas', () {
+    expect(parseMonthDays('15, 1, 15'), [1, 15]);
+    expect(parseMonthDays('0, 15'), isEmpty);
+    expect(parseMonthDays('abc'), isEmpty);
+  });
 }

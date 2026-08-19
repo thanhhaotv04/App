@@ -24,6 +24,20 @@ void main() {
     expect(restored.updatedAt, original.updatedAt);
   });
 
+  test('task JSON supports no priority tasks', () {
+    final original = TaskItem(
+      id: 'task-2',
+      title: 'Clean inbox',
+      priority: TaskPriority.none,
+      createdAt: DateTime.utc(2026, 8, 14, 7),
+      updatedAt: DateTime.utc(2026, 8, 14, 8),
+    );
+
+    final restored = TaskItem.fromJson(original.toJson());
+
+    expect(restored.priority, TaskPriority.none);
+  });
+
   test('assignment JSON stores date-only schedule and done state', () {
     final original = TaskAssignment(
       id: 'assign-1',

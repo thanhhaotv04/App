@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum TaskPriority { low, normal, high }
+enum TaskPriority { none, low, normal, high }
 
 enum TaskIconKind { study, fitness, health, laptop, smile, travel }
 

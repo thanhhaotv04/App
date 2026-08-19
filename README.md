@@ -9,9 +9,9 @@ with a Node.js backend only when the user chooses to sync.
 ## What The App Can Do
 
 - Create an offline account, sign in, and change the local password.
-- Add tasks with notes, icons, priority, and estimated focus time.
+- Add tasks with notes, icons, priority or no priority, and estimated focus time.
 - Use Smart Quick Add, for example: `Nộp báo cáo mai 9:30 !cao ~45p #laptop`.
-- Schedule tasks for today, a specific day, a weekday, or a monthly date.
+- Schedule tasks for today, a specific day, a weekday, or one/many monthly dates.
 - View My Day, progress, streak, total focus minutes, and quick snooze controls.
 - View a monthly overview with task status by day.
 - Sync data with the backend through `/api/task-reminder/data`.

@@ -1828,7 +1828,7 @@ class DailyReminderCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                reminderLabel(assignment),
+                taskReminderLabel(task, assignment),
                 style: TextStyle(
                   color: colors.muted,
                   fontWeight: FontWeight.w800,
@@ -1839,11 +1839,12 @@ class DailyReminderCard extends StatelessWidget {
                 alignment: WrapAlignment.center,
                 spacing: 4,
                 children: [
-                  IconButton(
-                    tooltip: 'Snooze 15 minutes',
-                    onPressed: onSnooze15,
-                    icon: const Icon(Icons.snooze_outlined),
-                  ),
+                  if (task.priority != TaskPriority.none)
+                    IconButton(
+                      tooltip: 'Snooze 15 minutes',
+                      onPressed: onSnooze15,
+                      icon: const Icon(Icons.snooze_outlined),
+                    ),
                   IconButton(
                     tooltip: 'Move to tomorrow',
                     onPressed: onSnoozeTomorrow,
@@ -2117,7 +2118,7 @@ class TodayWorkRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${priorityLabel(task.priority)} - ${task.estimateMinutes} min - ${reminderLabel(assignment)}',
+                  '${priorityLabel(task.priority)} - ${task.estimateMinutes} min - ${taskReminderLabel(task, assignment)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: colors.muted),
@@ -2126,7 +2127,7 @@ class TodayWorkRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (!assignment.done)
+          if (!assignment.done && task.priority != TaskPriority.none)
             IconButton(
               tooltip: 'Snooze 15 minutes',
               onPressed: onSnooze,
@@ -2291,6 +2292,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   void _save() {
     final parsed = parseQuickTask(_title.text);
     final title = parsed.title;
+    final priority = parsed.priority ?? _priority;
     if (title.isEmpty) {
       setState(() => _error = 'Enter a task name first.');
       return;
@@ -2301,27 +2303,32 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
         note: _note.text.trim(),
         iconKind: parsed.iconKind ?? _iconKind,
         dates: _dates.isEmpty ? parsed.dates : _dates,
-        priority: parsed.priority ?? _priority,
+        priority: priority,
         estimateMinutes: parsed.estimateMinutes ?? _estimateMinutes,
-        reminderTime: parsed.reminderTime ?? _reminderTime,
+        reminderTime: priority == TaskPriority.none
+            ? null
+            : parsed.reminderTime ?? _reminderTime,
       ),
     );
   }
 
   void _setMonthDaySchedule() {
-    final day = int.tryParse(_monthDay.text.trim());
-    if (day == null || day < 1 || day > 31) {
-      setState(() => _error = 'Enter a month day from 1 to 31.');
-      return;
-    }
-    final dates = nextMonthDayDates(day);
-    if (dates.isEmpty) {
+    final days = parseMonthDays(_monthDay.text);
+    if (days.isEmpty) {
       setState(
-        () => _error = 'No matching schedule is available for this day.',
+        () => _error =
+            'Enter one or more month days from 1 to 31, separated by commas.',
       );
       return;
     }
-    _setSchedule('Day $day monthly, next 12 times', dates);
+    final dates = nextMonthDayDatesForDays(days);
+    if (dates.isEmpty) {
+      setState(
+        () => _error = 'No matching schedule is available for these days.',
+      );
+      return;
+    }
+    _setSchedule(monthDayScheduleLabel(days), dates);
   }
 
   Future<void> _pickReminderTime() async {
@@ -2424,7 +2431,12 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       avatar: Icon(priorityIcon(priority), size: 18),
                       label: Text(priorityLabel(priority)),
                       selected: _priority == priority,
-                      onSelected: (_) => setState(() => _priority = priority),
+                      onSelected: (_) => setState(() {
+                        _priority = priority;
+                        if (priority == TaskPriority.none) {
+                          _reminderTime = null;
+                        }
+                      }),
                     ),
                 ],
               ),
@@ -2446,10 +2458,18 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                         setState(() => _estimateMinutes = value.first),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _pickReminderTime,
-                    icon: const Icon(Icons.schedule),
+                    onPressed: _priority == TaskPriority.none
+                        ? null
+                        : _pickReminderTime,
+                    icon: Icon(
+                      _priority == TaskPriority.none
+                          ? Icons.event_available_outlined
+                          : Icons.schedule,
+                    ),
                     label: Text(
-                      _reminderTime == null
+                      _priority == TaskPriority.none
+                          ? 'Anytime today'
+                          : _reminderTime == null
                           ? 'Reminder time'
                           : _reminderTime!.format(context),
                     ),
@@ -2489,11 +2509,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                     child: TextField(
                       key: const ValueKey('add-task-month-day-input'),
                       controller: _monthDay,
-                      keyboardType: TextInputType.number,
+                      keyboardType: TextInputType.text,
                       onSubmitted: (_) => _setMonthDaySchedule(),
                       decoration: const InputDecoration(
                         labelText: 'Month day',
-                        hintText: 'Example: 15',
+                        hintText: 'Example: 1, 15, 30',
                         prefixIcon: Icon(Icons.calendar_month_outlined),
                       ),
                     ),
@@ -2596,19 +2616,22 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   }
 
   void _setMonthDaySchedule() {
-    final day = int.tryParse(_monthDay.text.trim());
-    if (day == null || day < 1 || day > 31) {
-      setState(() => _error = 'Enter a month day from 1 to 31.');
-      return;
-    }
-    final dates = nextMonthDayDates(day);
-    if (dates.isEmpty) {
+    final days = parseMonthDays(_monthDay.text);
+    if (days.isEmpty) {
       setState(
-        () => _error = 'No matching schedule is available for this day.',
+        () => _error =
+            'Enter one or more month days from 1 to 31, separated by commas.',
       );
       return;
     }
-    _setSchedule('Day $day monthly, next 12 times', dates);
+    final dates = nextMonthDayDatesForDays(days);
+    if (dates.isEmpty) {
+      setState(
+        () => _error = 'No matching schedule is available for these days.',
+      );
+      return;
+    }
+    _setSchedule(monthDayScheduleLabel(days), dates);
   }
 
   void _save() {
@@ -2625,7 +2648,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
         priority: _priority,
         estimateMinutes: _estimateMinutes,
         dates: _dates,
-        reminderTime: _reminderTime,
+        reminderTime: _priority == TaskPriority.none ? null : _reminderTime,
       ),
     );
   }
@@ -2728,7 +2751,12 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       avatar: Icon(priorityIcon(priority), size: 18),
                       label: Text(priorityLabel(priority)),
                       selected: _priority == priority,
-                      onSelected: (_) => setState(() => _priority = priority),
+                      onSelected: (_) => setState(() {
+                        _priority = priority;
+                        if (priority == TaskPriority.none) {
+                          _reminderTime = null;
+                        }
+                      }),
                     ),
                 ],
               ),
@@ -2750,10 +2778,18 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                         setState(() => _estimateMinutes = value.first),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _pickReminderTime,
-                    icon: const Icon(Icons.schedule),
+                    onPressed: _priority == TaskPriority.none
+                        ? null
+                        : _pickReminderTime,
+                    icon: Icon(
+                      _priority == TaskPriority.none
+                          ? Icons.event_available_outlined
+                          : Icons.schedule,
+                    ),
                     label: Text(
-                      _reminderTime == null
+                      _priority == TaskPriority.none
+                          ? 'Anytime today'
+                          : _reminderTime == null
                           ? 'Reminder time'
                           : _reminderTime!.format(context),
                     ),
@@ -2793,11 +2829,11 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                     child: TextField(
                       key: const ValueKey('edit-task-month-day-input'),
                       controller: _monthDay,
-                      keyboardType: TextInputType.number,
+                      keyboardType: TextInputType.text,
                       onSubmitted: (_) => _setMonthDaySchedule(),
                       decoration: const InputDecoration(
                         labelText: 'Month day',
-                        hintText: 'Example: 15',
+                        hintText: 'Example: 1, 15, 30',
                         prefixIcon: Icon(Icons.calendar_month_outlined),
                       ),
                     ),
@@ -2858,6 +2894,33 @@ List<DateTime> nextMonthDayDates(int day) {
     }
   }
   return dates;
+}
+
+List<int> parseMonthDays(String raw) {
+  final values = <int>{};
+  for (final part in raw.split(',')) {
+    final day = int.tryParse(part.trim());
+    if (day == null || day < 1 || day > 31) return const [];
+    values.add(day);
+  }
+  final days = values.toList()..sort();
+  return days;
+}
+
+List<DateTime> nextMonthDayDatesForDays(List<int> days) {
+  final keyed = <String, DateTime>{};
+  for (final day in days) {
+    for (final date in nextMonthDayDates(day)) {
+      keyed[date.toIso8601String()] = date;
+    }
+  }
+  final dates = keyed.values.toList()..sort();
+  return dates;
+}
+
+String monthDayScheduleLabel(List<int> days) {
+  if (days.length == 1) return 'Day ${days.single} monthly, next 12 times';
+  return 'Days ${days.join(', ')} monthly, next 12 times each';
 }
 
 class HeroPanel extends StatelessWidget {
@@ -3008,56 +3071,56 @@ class TaskAssignmentList extends StatelessWidget {
       return Text(emptyText, style: TextStyle(color: context.doodle.muted));
     }
     return Column(
-      children: assignments
-          .map(
-            (assignment) => TaskAssignmentTile(
-              task: taskFor(tasks, assignment),
-              assignment: assignment,
-              trailing: Wrap(
-                spacing: 4,
-                children: [
-                  if (!assignment.done)
-                    IconButton(
-                      tooltip: 'Done',
-                      onPressed: () => onDone(assignment),
-                      icon: const Icon(Icons.check_circle_outline),
-                    )
-                  else
-                    IconButton(
-                      tooltip: 'Undo done',
-                      onPressed: () => onUndoDone(assignment),
-                      icon: const Icon(Icons.undo),
-                    ),
-                  if (!assignment.done)
-                    IconButton(
-                      tooltip: 'Tomorrow',
-                      onPressed: () => onMoveTomorrow(assignment),
-                      icon: const Icon(Icons.next_plan_outlined),
-                    ),
-                  IconButton(
-                    tooltip: 'Reminder',
-                    onPressed: () async {
-                      final value = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay(
-                          hour: assignment.reminderHour,
-                          minute: assignment.reminderMinute,
-                        ),
-                      );
-                      if (value != null) await onReminder(assignment, value);
-                    },
-                    icon: const Icon(Icons.schedule),
-                  ),
-                  IconButton(
-                    tooltip: 'Remove',
-                    onPressed: () => onRemove(assignment),
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ],
+      children: assignments.map((assignment) {
+        final task = taskFor(tasks, assignment);
+        return TaskAssignmentTile(
+          task: task,
+          assignment: assignment,
+          trailing: Wrap(
+            spacing: 4,
+            children: [
+              if (!assignment.done)
+                IconButton(
+                  tooltip: 'Done',
+                  onPressed: () => onDone(assignment),
+                  icon: const Icon(Icons.check_circle_outline),
+                )
+              else
+                IconButton(
+                  tooltip: 'Undo done',
+                  onPressed: () => onUndoDone(assignment),
+                  icon: const Icon(Icons.undo),
+                ),
+              if (!assignment.done)
+                IconButton(
+                  tooltip: 'Tomorrow',
+                  onPressed: () => onMoveTomorrow(assignment),
+                  icon: const Icon(Icons.next_plan_outlined),
+                ),
+              if (task.priority != TaskPriority.none)
+                IconButton(
+                  tooltip: 'Reminder',
+                  onPressed: () async {
+                    final value = await showTimePicker(
+                      context: context,
+                      initialTime: TimeOfDay(
+                        hour: assignment.reminderHour,
+                        minute: assignment.reminderMinute,
+                      ),
+                    );
+                    if (value != null) await onReminder(assignment, value);
+                  },
+                  icon: const Icon(Icons.schedule),
+                ),
+              IconButton(
+                tooltip: 'Remove',
+                onPressed: () => onRemove(assignment),
+                icon: const Icon(Icons.delete_outline),
               ),
-            ),
-          )
-          .toList(),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -3109,7 +3172,7 @@ class TaskAssignmentTile extends StatelessWidget {
                   assignment.done
                       ? 'Done ${shortDateFormat.format(assignment.completedAt!)}'
                       : '${shortDateFormat.format(assignment.date)} - '
-                            '${reminderLabel(assignment)}',
+                            '${taskReminderLabel(task, assignment)}',
                   style: TextStyle(color: colors.muted),
                 ),
               ],
@@ -3461,8 +3524,16 @@ ParsedQuickTask parseQuickTask(String raw) {
   }
 
   const priorities = {
+    '!none': TaskPriority.none,
+    '!nopriority': TaskPriority.none,
+    '!anytime': TaskPriority.none,
+    '!khong': TaskPriority.none,
+    '!không': TaskPriority.none,
     '!cao': TaskPriority.high,
     '!high': TaskPriority.high,
+    '!normal': TaskPriority.normal,
+    '!thuong': TaskPriority.normal,
+    '!thường': TaskPriority.normal,
     '!thap': TaskPriority.low,
     '!low': TaskPriority.low,
   };
@@ -3606,19 +3677,27 @@ int priorityWeight(TaskPriority priority) => switch (priority) {
   TaskPriority.high => 3,
   TaskPriority.normal => 2,
   TaskPriority.low => 1,
+  TaskPriority.none => 0,
 };
 
 IconData priorityIcon(TaskPriority priority) => switch (priority) {
   TaskPriority.high => Icons.priority_high,
   TaskPriority.normal => Icons.flag_outlined,
   TaskPriority.low => Icons.low_priority,
+  TaskPriority.none => Icons.event_available_outlined,
 };
 
 String priorityLabel(TaskPriority priority) => switch (priority) {
   TaskPriority.high => 'High',
   TaskPriority.normal => 'Normal',
   TaskPriority.low => 'Low',
+  TaskPriority.none => 'No priority',
 };
+
+String taskReminderLabel(TaskItem task, TaskAssignment assignment) {
+  if (task.priority == TaskPriority.none) return 'Anytime today';
+  return reminderLabel(assignment);
+}
 
 int currentDoneStreak(List<TaskAssignment> assignments) {
   final completedDays = {

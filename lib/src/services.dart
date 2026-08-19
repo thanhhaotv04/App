@@ -295,6 +295,7 @@ class LocalReminderService {
     for (final assignment in assignments.where((item) => !item.done)) {
       final task = byId[assignment.taskId];
       if (task == null) continue;
+      if (task.priority == TaskPriority.none) continue;
       var scheduled = DateTime(
         assignment.date.year,
         assignment.date.month,

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,6 +146,81 @@ void main() {
       RegExp('Lịch tuần').hasMatch(prefs.getString(TaskStore.tasksKey) ?? ''),
       isTrue,
     );
+  });
+
+  testWidgets('all tasks can schedule multiple month days', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-title-input')),
+      'Pay bills',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-month-day-input')),
+      '1, 15',
+    );
+    final setButton = find.widgetWithText(OutlinedButton, 'Set');
+    await tester.ensureVisible(setButton);
+    await tester.pumpAndSettle();
+    await tester.tap(setButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Days 1, 15 monthly, next 12 times each'), findsOneWidget);
+    final saveButton = find.widgetWithText(FilledButton, 'Save Task');
+    await tester.ensureVisible(saveButton);
+    await tester.pumpAndSettle();
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    final assignments =
+        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+            as List<Object?>;
+    expect(assignments.length, greaterThanOrEqualTo(20));
+  });
+
+  testWidgets('all tasks can save no priority tasks for anytime today', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-title-input')),
+      'Read docs',
+    );
+    await tester.tap(find.widgetWithText(ChoiceChip, 'No priority'));
+    await tester.pumpAndSettle();
+    expect(find.text('Anytime today'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(TaskStore.tasksKey), contains('"priority":"none"'));
   });
 
   testWidgets('all tasks can save a custom icon', (tester) async {
