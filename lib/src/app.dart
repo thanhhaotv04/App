@@ -982,8 +982,8 @@ class _OverviewPageState extends State<OverviewPage> {
                       crossAxisSpacing: 4,
                       mainAxisSpacing: 4,
                       childAspectRatio: constraints.maxWidth < 430
-                          ? 0.62
-                          : 0.82,
+                          ? 0.78
+                          : 0.95,
                     ),
                     itemBuilder: (context, index) {
                       final day = slots[index];
@@ -1494,7 +1494,7 @@ class CalendarDayCell extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Ink(
-          padding: const EdgeInsets.all(4),
+          padding: const EdgeInsets.all(3),
           decoration: BoxDecoration(
             color: isToday
                 ? colors.success.withValues(alpha: .2)
@@ -1513,7 +1513,7 @@ class CalendarDayCell extends StatelessWidget {
                 child: Text(
                   '${date!.day}',
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     height: 1,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1522,7 +1522,7 @@ class CalendarDayCell extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
-                top: 21,
+                top: 20,
                 bottom: 0,
                 child: rows.isEmpty
                     ? const SizedBox.shrink()
@@ -1532,7 +1532,7 @@ class CalendarDayCell extends StatelessWidget {
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.topCenter,
                           child: SizedBox(
-                            width: 102,
+                            width: 84,
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -1552,7 +1552,7 @@ class CalendarDayCell extends StatelessWidget {
                                           index < 3;
                                           index++
                                         )
-                                          const SizedBox(width: 16, height: 16),
+                                          const SizedBox(width: 14, height: 14),
                                       ],
                                     ),
                                   ),
@@ -1601,8 +1601,8 @@ class CalendarStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     return Container(
-      width: 16,
-      height: 16,
+      width: 14,
+      height: 14,
       decoration: BoxDecoration(
         color: done ? colors.success : colors.error,
         shape: BoxShape.circle,
@@ -1610,7 +1610,7 @@ class CalendarStatusIcon extends StatelessWidget {
       child: Icon(
         done ? Icons.check : Icons.close,
         color: Colors.white,
-        size: 11,
+        size: 10,
       ),
     );
   }
@@ -2285,6 +2285,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
+  String? _scheduleKey;
   bool _showOptions = false;
   String? _error;
 
@@ -2296,9 +2297,23 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     super.dispose();
   }
 
-  void _setSchedule(String label, List<DateTime> dates) {
+  void _clearSchedule() {
+    setState(() {
+      _scheduleLabel = 'No schedule set';
+      _scheduleKey = null;
+      _dates = const [];
+      _error = null;
+    });
+  }
+
+  void _toggleSchedule(String key, String label, List<DateTime> dates) {
+    if (_scheduleKey == key) {
+      _clearSchedule();
+      return;
+    }
     setState(() {
       _scheduleLabel = label;
+      _scheduleKey = key;
       _dates = dates;
       _error = null;
     });
@@ -2343,7 +2358,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
       );
       return;
     }
-    _setSchedule(monthDayScheduleLabel(days), dates);
+    _toggleSchedule(
+      'month:${days.join(',')}',
+      monthDayScheduleLabel(days),
+      dates,
+    );
   }
 
   Future<void> _pickReminderTime() async {
@@ -2515,17 +2534,29 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   runSpacing: 8,
                   children: [
                     for (final (weekday, label) in weekdays)
-                      ActionChip(
+                      FilterChip(
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
                         ),
                         label: Text(label),
-                        onPressed: () => _setSchedule(
+                        selected: _scheduleKey == 'weekday:$weekday',
+                        onSelected: (_) => _toggleSchedule(
+                          'weekday:$weekday',
                           '$label, next 12 times',
                           nextWeekdayDates(weekday),
                         ),
                       ),
+                    FilterChip(
+                      avatar: const Icon(Icons.today_outlined, size: 13),
+                      label: const Text('Every day'),
+                      selected: _scheduleKey == 'daily',
+                      onSelected: (_) => _toggleSchedule(
+                        'daily',
+                        'Every day, next 30 days',
+                        nextDailyDates(),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -2551,7 +2582,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       child: OutlinedButton.icon(
                         onPressed: _setMonthDaySchedule,
                         icon: const Icon(Icons.event_repeat_outlined),
-                        label: const Text('Set'),
+                        label: Text(
+                          _scheduleKey?.startsWith('month:') ?? false
+                              ? 'Clear'
+                              : 'Set',
+                        ),
                       ),
                     ),
                   ],
@@ -2615,6 +2650,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   TimeOfDay? _reminderTime;
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
+  String? _scheduleKey;
   bool _showOptions = false;
   String? _error;
 
@@ -2636,9 +2672,23 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     super.dispose();
   }
 
-  void _setSchedule(String label, List<DateTime> dates) {
+  void _clearSchedule() {
+    setState(() {
+      _scheduleLabel = 'No schedule set';
+      _scheduleKey = null;
+      _dates = const [];
+      _error = null;
+    });
+  }
+
+  void _toggleSchedule(String key, String label, List<DateTime> dates) {
+    if (_scheduleKey == key) {
+      _clearSchedule();
+      return;
+    }
     setState(() {
       _scheduleLabel = label;
+      _scheduleKey = key;
       _dates = dates;
       _error = null;
     });
@@ -2660,7 +2710,11 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
       );
       return;
     }
-    _setSchedule(monthDayScheduleLabel(days), dates);
+    _toggleSchedule(
+      'month:${days.join(',')}',
+      monthDayScheduleLabel(days),
+      dates,
+    );
   }
 
   void _save() {
@@ -2849,17 +2903,29 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                   runSpacing: 8,
                   children: [
                     for (final (weekday, label) in weekdays)
-                      ActionChip(
+                      FilterChip(
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
                         ),
                         label: Text(label),
-                        onPressed: () => _setSchedule(
+                        selected: _scheduleKey == 'weekday:$weekday',
+                        onSelected: (_) => _toggleSchedule(
+                          'weekday:$weekday',
                           '$label, next 12 times',
                           nextWeekdayDates(weekday),
                         ),
                       ),
+                    FilterChip(
+                      avatar: const Icon(Icons.today_outlined, size: 13),
+                      label: const Text('Every day'),
+                      selected: _scheduleKey == 'daily',
+                      onSelected: (_) => _toggleSchedule(
+                        'daily',
+                        'Every day, next 30 days',
+                        nextDailyDates(),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -2885,7 +2951,11 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       child: OutlinedButton.icon(
                         onPressed: _setMonthDaySchedule,
                         icon: const Icon(Icons.event_repeat_outlined),
-                        label: const Text('Set'),
+                        label: Text(
+                          _scheduleKey?.startsWith('month:') ?? false
+                              ? 'Clear'
+                              : 'Set',
+                        ),
                       ),
                     ),
                   ],
@@ -2916,6 +2986,11 @@ List<DateTime> nextWeekdayDates(int weekday) {
   if (daysToAdd <= 0) daysToAdd += 7;
   final first = today.add(Duration(days: daysToAdd));
   return List.generate(12, (index) => first.add(Duration(days: 7 * index)));
+}
+
+List<DateTime> nextDailyDates() {
+  final today = dateOnly(DateTime.now());
+  return List.generate(30, (index) => today.add(Duration(days: index)));
 }
 
 List<DateTime> nextMonthDayDates(int day) {

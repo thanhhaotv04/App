@@ -136,9 +136,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Schedule'), findsOneWidget);
 
-    final monChip = find.widgetWithText(ActionChip, 'Mon');
+    final monChip = find.widgetWithText(FilterChip, 'Mon');
     await tester.ensureVisible(monChip);
     await tester.pumpAndSettle();
+    await tester.tap(monChip);
+    await tester.pumpAndSettle();
+    expect(find.text('Mon, next 12 times'), findsOneWidget);
+    await tester.tap(monChip);
+    await tester.pumpAndSettle();
+    expect(find.text('No schedule set'), findsOneWidget);
     await tester.tap(monChip);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
@@ -151,6 +157,44 @@ void main() {
       RegExp('Lịch tuần').hasMatch(prefs.getString(TaskStore.tasksKey) ?? ''),
       isTrue,
     );
+  });
+
+  testWidgets('all tasks can schedule every day', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-title-input')),
+      'Daily stretch',
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.pumpAndSettle();
+    final everyDayChip = find.widgetWithText(FilterChip, 'Every day');
+    await tester.ensureVisible(everyDayChip);
+    await tester.pumpAndSettle();
+    await tester.tap(everyDayChip);
+    await tester.pumpAndSettle();
+    expect(find.text('Every day, next 30 days'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    final assignments =
+        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+            as List<Object?>;
+    expect(assignments.length, 30);
   });
 
   testWidgets('all tasks can schedule multiple month days', (tester) async {
