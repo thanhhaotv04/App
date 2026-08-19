@@ -54,7 +54,7 @@ android {
             } else {
                 null
             }
-            manifestPlaceholders["usesCleartextTraffic"] = "false"
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
     }
 }
