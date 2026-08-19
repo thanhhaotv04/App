@@ -132,7 +132,7 @@ void main() {
     await tester.tap(find.text('Lịch tuần').last);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('edit-task-title-input')), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.tap(find.text('Schedule').last);
     await tester.pumpAndSettle();
     expect(find.text('Schedule'), findsOneWidget);
 
@@ -171,7 +171,9 @@ void main() {
 
     await tester.pumpWidget(const TaskReminderApp());
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'home');
     await openTab(tester, 2);
+    expect(tester.takeException(), isNull, reason: 'all tasks');
 
     await tester.tap(find.byTooltip('Add task'));
     await tester.pumpAndSettle();
@@ -179,7 +181,7 @@ void main() {
       find.byKey(const ValueKey('add-task-title-input')),
       'Daily stretch',
     );
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.tap(find.text('Schedule').last);
     await tester.pumpAndSettle();
     final everyDayChip = find.widgetWithText(FilterChip, 'Every day');
     await tester.ensureVisible(everyDayChip);
@@ -209,7 +211,9 @@ void main() {
 
     await tester.pumpWidget(const TaskReminderApp());
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'home');
     await openTab(tester, 2);
+    expect(tester.takeException(), isNull, reason: 'all tasks');
 
     await tester.tap(find.byTooltip('Add task'));
     await tester.pumpAndSettle();
@@ -217,7 +221,7 @@ void main() {
       find.byKey(const ValueKey('add-task-title-input')),
       'Pay bills',
     );
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.tap(find.text('Schedule').last);
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('add-task-month-day-input')),
@@ -264,11 +268,7 @@ void main() {
       find.byKey(const ValueKey('add-task-title-input')),
       'Read docs',
     );
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, 'No priority'));
-    await tester.pumpAndSettle();
-    expect(find.text('Anytime today'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Normal'), findsNothing);
     await tester.tap(find.widgetWithText(FilledButton, 'Save Task'));
     await tester.pumpAndSettle();
 
@@ -297,7 +297,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(taskText);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
+    await tester.tap(find.text('Icon').last);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Travel'));
     await tester.pumpAndSettle();
@@ -331,8 +331,6 @@ void main() {
     await tester.ensureVisible(taskText);
     await tester.pumpAndSettle();
     await tester.tap(taskText);
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'More options'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('edit-task-title-input')),
@@ -471,6 +469,36 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'viewport width $width');
     }
   });
+
+  testWidgets('add task options stay stable at phone scale', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'home');
+    await openTab(tester, 2);
+    expect(tester.takeException(), isNull, reason: 'all tasks');
+
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    for (final label in ['Icon', 'Priority', 'Schedule']) {
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: label);
+    }
+
+    expect(find.widgetWithText(ChoiceChip, '15m'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'Every day'), findsOneWidget);
+  });
 }
 
 Future<void> openTab(WidgetTester tester, int index) async {
@@ -497,7 +525,7 @@ Future<void> addTaskFromAllTasks(
   expect(find.widgetWithText(ActionChip, 'Tomorrow'), findsNothing);
   expect(find.widgetWithText(ActionChip, 'No schedule'), findsNothing);
   expect(find.byKey(const ValueKey('add-task-month-day-input')), findsNothing);
-  expect(find.widgetWithText(OutlinedButton, 'More options'), findsOneWidget);
+  expect(find.widgetWithText(OutlinedButton, 'More options'), findsNothing);
   await tester.enterText(
     find.byKey(const ValueKey('add-task-title-input')),
     title,

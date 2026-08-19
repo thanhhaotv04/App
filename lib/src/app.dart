@@ -2001,29 +2001,47 @@ class DoodleSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.doodle;
-    return Row(
-      children: [
-        Expanded(
-          child: Transform.rotate(
-            angle: tiltRight ? 0.018 : -0.018,
-            alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                Icon(icon, color: accent, size: 21),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: colors.primary,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
+    final titleRow = Transform.rotate(
+      angle: tiltRight ? 0.018 : -0.018,
+      alignment: Alignment.centerLeft,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: accent, size: 21),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: colors.primary,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
-        ),
-        ?trailing,
-      ],
+        ],
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (trailing != null && constraints.maxWidth < 380) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleRow,
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: trailing),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: titleRow),
+            ?trailing,
+          ],
+        );
+      },
     );
   }
 }
@@ -2275,6 +2293,66 @@ class AddTaskDialog extends StatefulWidget {
   State<AddTaskDialog> createState() => _AddTaskDialogState();
 }
 
+class FeatureToggleHeader extends StatelessWidget {
+  const FeatureToggleHeader({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.doodle;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onChanged(!value),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: value
+                  ? colors.secondary.withValues(alpha: .65)
+                  : colors.field,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colors.border, width: 1.1),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Switch.adaptive(
+                  value: value,
+                  onChanged: onChanged,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AddTaskDialogState extends State<AddTaskDialog> {
   final _title = TextEditingController();
   final _note = TextEditingController();
@@ -2286,7 +2364,9 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
   String? _scheduleKey;
-  bool _showOptions = false;
+  bool _iconEnabled = false;
+  bool _priorityEnabled = false;
+  bool _scheduleEnabled = false;
   String? _error;
 
   @override
@@ -2302,6 +2382,26 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
       _scheduleLabel = 'No schedule set';
       _scheduleKey = null;
       _dates = const [];
+      _error = null;
+    });
+  }
+
+  void _setPriorityEnabled(bool value) {
+    setState(() {
+      _priorityEnabled = value;
+      if (!value) _reminderTime = null;
+      _error = null;
+    });
+  }
+
+  void _setScheduleEnabled(bool value) {
+    if (!value) {
+      _clearSchedule();
+      setState(() => _scheduleEnabled = false);
+      return;
+    }
+    setState(() {
+      _scheduleEnabled = true;
       _error = null;
     });
   }
@@ -2322,7 +2422,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   void _save() {
     final parsed = parseQuickTask(_title.text);
     final title = parsed.title;
-    final priority = parsed.priority ?? _priority;
+    final priority =
+        parsed.priority ?? (_priorityEnabled ? _priority : TaskPriority.none);
     if (title.isEmpty) {
       setState(() => _error = 'Enter a task name first.');
       return;
@@ -2331,7 +2432,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
       AddTaskDialogResult(
         title: title,
         note: _note.text.trim(),
-        iconKind: parsed.iconKind ?? _iconKind,
+        iconKind:
+            parsed.iconKind ?? (_iconEnabled ? _iconKind : TaskIconKind.study),
         dates: _dates.isEmpty ? parsed.dates : _dates,
         priority: priority,
         estimateMinutes: parsed.estimateMinutes ?? _estimateMinutes,
@@ -2376,6 +2478,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   @override
   Widget build(BuildContext context) {
     final colors = context.doodle;
+    final compact = MediaQuery.sizeOf(context).width < 430;
     const weekdays = [
       (1, 'Mon'),
       (2, 'Tue'),
@@ -2387,10 +2490,27 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     ];
 
     return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(24, 18, 14, 0),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 18 : 32,
+        vertical: compact ? 18 : 24,
+      ),
+      titlePadding: EdgeInsets.fromLTRB(
+        compact ? 18 : 24,
+        compact ? 14 : 18,
+        compact ? 10 : 14,
+        0,
+      ),
       title: Row(
         children: [
-          const Expanded(child: Text('Add Task')),
+          Expanded(
+            child: Text(
+              'Add Task',
+              style: TextStyle(
+                fontSize: compact ? 27 : 32,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
           IconButton(
             tooltip: 'Close',
             onPressed: () => Navigator.of(context).pop(),
@@ -2398,8 +2518,14 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           ),
         ],
       ),
-      content: SizedBox(
-        width: 560,
+      contentPadding: EdgeInsets.fromLTRB(
+        compact ? 18 : 24,
+        compact ? 14 : 20,
+        compact ? 18 : 24,
+        0,
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2409,47 +2535,42 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 key: const ValueKey('add-task-title-input'),
                 controller: _title,
                 autofocus: true,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Quick Add',
-                  hintText:
-                      'Example: Submit report tomorrow 9:00 !high ~45m #work',
-                  prefixIcon: Icon(Icons.task_alt_outlined),
+                  hintText: compact
+                      ? 'Example: Report tomorrow 9:00'
+                      : 'Example: Submit report tomorrow 9:00 !high ~45m #work',
+                  prefixIcon: const Icon(Icons.task_alt_outlined),
                 ),
               ),
               const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => setState(() => _showOptions = !_showOptions),
-                icon: Icon(
-                  _showOptions ? Icons.expand_less : Icons.tune_outlined,
+              TextField(
+                key: const ValueKey('add-task-note-input'),
+                controller: _note,
+                minLines: 1,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  prefixIcon: Icon(Icons.notes_outlined),
                 ),
-                label: Text(_showOptions ? 'Hide options' : 'More options'),
               ),
-              if (_showOptions) ...[
-                const SizedBox(height: 12),
-                TextField(
-                  key: const ValueKey('add-task-note-input'),
-                  controller: _note,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Note',
-                    prefixIcon: Icon(Icons.notes_outlined),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Icon',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
+              const SizedBox(height: 12),
+              FeatureToggleHeader(
+                label: 'Icon',
+                icon: Icons.category_outlined,
+                value: _iconEnabled,
+                onChanged: (value) => setState(() => _iconEnabled = value),
+              ),
+              if (_iconEnabled) ...[
+                const SizedBox(height: 8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: Icon(taskIconData(iconKind), size: 13),
                         label: Text(taskIconLabel(iconKind)),
                         selected: _iconKind == iconKind,
@@ -2457,20 +2578,26 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                Text(
-                  'Priority',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 10),
+              FeatureToggleHeader(
+                label: 'Priority',
+                icon: Icons.flag_outlined,
+                value: _priorityEnabled,
+                onChanged: _setPriorityEnabled,
+              ),
+              if (_priorityEnabled) ...[
+                const SizedBox(height: 8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    for (final priority in TaskPriority.values)
+                    for (final priority in TaskPriority.values.where(
+                      (value) => value != TaskPriority.none,
+                    ))
                       ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: Icon(priorityIcon(priority), size: 13),
                         label: Text(priorityLabel(priority)),
                         selected: _priority == priority,
@@ -2483,58 +2610,55 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    SegmentedButton<int>(
-                      segments: const [
-                        ButtonSegment(value: 15, label: Text('15p')),
-                        ButtonSegment(value: 30, label: Text('30p')),
-                        ButtonSegment(value: 45, label: Text('45p')),
-                        ButtonSegment(value: 60, label: Text('60p')),
-                      ],
-                      selected: {_estimateMinutes},
-                      onSelectionChanged: (value) =>
-                          setState(() => _estimateMinutes = value.first),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _priority == TaskPriority.none
-                          ? null
-                          : _pickReminderTime,
-                      icon: Icon(
-                        _priority == TaskPriority.none
-                            ? Icons.event_available_outlined
-                            : Icons.schedule,
+                    for (final minutes in [15, 30, 45, 60])
+                      ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        label: Text('${minutes}m'),
+                        selected: _estimateMinutes == minutes,
+                        onSelected: (_) =>
+                            setState(() => _estimateMinutes = minutes),
                       ),
+                    OutlinedButton.icon(
+                      onPressed: _pickReminderTime,
+                      icon: const Icon(Icons.schedule, size: 18),
                       label: Text(
-                        _priority == TaskPriority.none
-                            ? 'Anytime today'
-                            : _reminderTime == null
-                            ? 'Reminder time'
+                        _reminderTime == null
+                            ? 'Reminder'
                             : _reminderTime!.format(context),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
+              ],
+              const SizedBox(height: 10),
+              FeatureToggleHeader(
+                label: 'Schedule',
+                icon: Icons.event_repeat_outlined,
+                value: _scheduleEnabled,
+                onChanged: _setScheduleEnabled,
+              ),
+              if (_scheduleEnabled) ...[
+                const SizedBox(height: 8),
                 Text(
-                  'Schedule',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
+                  _scheduleLabel,
+                  style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
-                Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
-                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
@@ -2548,6 +2672,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                         ),
                       ),
                     FilterChip(
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
@@ -2559,7 +2685,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2578,10 +2704,10 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                     ),
                     const SizedBox(width: 10),
                     SizedBox(
-                      height: 58,
+                      height: 52,
                       child: OutlinedButton.icon(
                         onPressed: _setMonthDaySchedule,
-                        icon: const Icon(Icons.event_repeat_outlined),
+                        icon: const Icon(Icons.event_repeat_outlined, size: 18),
                         label: Text(
                           _scheduleKey?.startsWith('month:') ?? false
                               ? 'Clear'
@@ -2651,7 +2777,9 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   List<DateTime> _dates = const [];
   String _scheduleLabel = 'No schedule set';
   String? _scheduleKey;
-  bool _showOptions = false;
+  bool _iconEnabled = false;
+  bool _priorityEnabled = false;
+  bool _scheduleEnabled = false;
   String? _error;
 
   @override
@@ -2661,6 +2789,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     _note.text = widget.task.note;
     _iconKind = widget.task.iconKind;
     _priority = widget.task.priority;
+    _priorityEnabled = widget.task.priority != TaskPriority.none;
     _estimateMinutes = widget.task.estimateMinutes;
   }
 
@@ -2677,6 +2806,26 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
       _scheduleLabel = 'No schedule set';
       _scheduleKey = null;
       _dates = const [];
+      _error = null;
+    });
+  }
+
+  void _setPriorityEnabled(bool value) {
+    setState(() {
+      _priorityEnabled = value;
+      if (!value) _reminderTime = null;
+      _error = null;
+    });
+  }
+
+  void _setScheduleEnabled(bool value) {
+    if (!value) {
+      _clearSchedule();
+      setState(() => _scheduleEnabled = false);
+      return;
+    }
+    setState(() {
+      _scheduleEnabled = true;
       _error = null;
     });
   }
@@ -2728,10 +2877,10 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
         title: title,
         note: _note.text.trim(),
         iconKind: _iconKind,
-        priority: _priority,
+        priority: _priorityEnabled ? _priority : TaskPriority.none,
         estimateMinutes: _estimateMinutes,
-        dates: _dates,
-        reminderTime: _priority == TaskPriority.none ? null : _reminderTime,
+        dates: _scheduleEnabled ? _dates : const [],
+        reminderTime: _priorityEnabled ? _reminderTime : null,
       ),
     );
   }
@@ -2747,6 +2896,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
   @override
   Widget build(BuildContext context) {
     final colors = context.doodle;
+    final compact = MediaQuery.sizeOf(context).width < 430;
     const weekdays = [
       (1, 'Mon'),
       (2, 'Tue'),
@@ -2758,10 +2908,27 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
     ];
 
     return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(24, 18, 14, 0),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 18 : 32,
+        vertical: compact ? 18 : 24,
+      ),
+      titlePadding: EdgeInsets.fromLTRB(
+        compact ? 18 : 24,
+        compact ? 14 : 18,
+        compact ? 10 : 14,
+        0,
+      ),
       title: Row(
         children: [
-          const Expanded(child: Text('Task Settings')),
+          Expanded(
+            child: Text(
+              'Task Settings',
+              style: TextStyle(
+                fontSize: compact ? 27 : 32,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
           IconButton(
             tooltip: 'Close',
             onPressed: () => Navigator.of(context).pop(),
@@ -2769,8 +2936,14 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
           ),
         ],
       ),
-      content: SizedBox(
-        width: 560,
+      contentPadding: EdgeInsets.fromLTRB(
+        compact ? 18 : 24,
+        compact ? 14 : 20,
+        compact ? 18 : 24,
+        0,
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2786,39 +2959,33 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => setState(() => _showOptions = !_showOptions),
-                icon: Icon(
-                  _showOptions ? Icons.expand_less : Icons.tune_outlined,
+              TextField(
+                key: const ValueKey('edit-task-note-input'),
+                controller: _note,
+                minLines: 1,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  prefixIcon: Icon(Icons.notes_outlined),
                 ),
-                label: Text(_showOptions ? 'Hide options' : 'More options'),
               ),
-              if (_showOptions) ...[
-                const SizedBox(height: 12),
-                TextField(
-                  key: const ValueKey('edit-task-note-input'),
-                  controller: _note,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Note',
-                    prefixIcon: Icon(Icons.notes_outlined),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Icon',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
+              const SizedBox(height: 12),
+              FeatureToggleHeader(
+                label: 'Icon',
+                icon: Icons.category_outlined,
+                value: _iconEnabled,
+                onChanged: (value) => setState(() => _iconEnabled = value),
+              ),
+              if (_iconEnabled) ...[
+                const SizedBox(height: 8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: Icon(taskIconData(iconKind), size: 13),
                         label: Text(taskIconLabel(iconKind)),
                         selected: _iconKind == iconKind,
@@ -2826,20 +2993,26 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                Text(
-                  'Priority',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 10),
+              FeatureToggleHeader(
+                label: 'Priority',
+                icon: Icons.flag_outlined,
+                value: _priorityEnabled,
+                onChanged: _setPriorityEnabled,
+              ),
+              if (_priorityEnabled) ...[
+                const SizedBox(height: 8),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    for (final priority in TaskPriority.values)
+                    for (final priority in TaskPriority.values.where(
+                      (value) => value != TaskPriority.none,
+                    ))
                       ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: Icon(priorityIcon(priority), size: 13),
                         label: Text(priorityLabel(priority)),
                         selected: _priority == priority,
@@ -2852,58 +3025,55 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    SegmentedButton<int>(
-                      segments: const [
-                        ButtonSegment(value: 15, label: Text('15p')),
-                        ButtonSegment(value: 30, label: Text('30p')),
-                        ButtonSegment(value: 45, label: Text('45p')),
-                        ButtonSegment(value: 60, label: Text('60p')),
-                      ],
-                      selected: {_estimateMinutes},
-                      onSelectionChanged: (value) =>
-                          setState(() => _estimateMinutes = value.first),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _priority == TaskPriority.none
-                          ? null
-                          : _pickReminderTime,
-                      icon: Icon(
-                        _priority == TaskPriority.none
-                            ? Icons.event_available_outlined
-                            : Icons.schedule,
+                    for (final minutes in [15, 30, 45, 60])
+                      ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        label: Text('${minutes}m'),
+                        selected: _estimateMinutes == minutes,
+                        onSelected: (_) =>
+                            setState(() => _estimateMinutes = minutes),
                       ),
+                    OutlinedButton.icon(
+                      onPressed: _pickReminderTime,
+                      icon: const Icon(Icons.schedule, size: 18),
                       label: Text(
-                        _priority == TaskPriority.none
-                            ? 'Anytime today'
-                            : _reminderTime == null
-                            ? 'Reminder time'
+                        _reminderTime == null
+                            ? 'Reminder'
                             : _reminderTime!.format(context),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 22),
+              ],
+              const SizedBox(height: 10),
+              FeatureToggleHeader(
+                label: 'Schedule',
+                icon: Icons.event_repeat_outlined,
+                value: _scheduleEnabled,
+                onChanged: _setScheduleEnabled,
+              ),
+              if (_scheduleEnabled) ...[
+                const SizedBox(height: 8),
                 Text(
-                  'Schedule',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
+                  _scheduleLabel,
+                  style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
-                Text(_scheduleLabel, style: TextStyle(color: colors.muted)),
-                const SizedBox(height: 10),
                 Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
@@ -2917,6 +3087,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                         ),
                       ),
                     FilterChip(
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
@@ -2928,7 +3100,7 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2947,10 +3119,10 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                     ),
                     const SizedBox(width: 10),
                     SizedBox(
-                      height: 58,
+                      height: 52,
                       child: OutlinedButton.icon(
                         onPressed: _setMonthDaySchedule,
-                        icon: const Icon(Icons.event_repeat_outlined),
+                        icon: const Icon(Icons.event_repeat_outlined, size: 18),
                         label: Text(
                           _scheduleKey?.startsWith('month:') ?? false
                               ? 'Clear'
