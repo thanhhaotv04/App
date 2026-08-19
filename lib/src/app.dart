@@ -3548,6 +3548,8 @@ class AccountPage extends StatefulWidget {
     required this.onReload,
     required this.onLogout,
     required this.onChangePassword,
+    this.checkLatestForTest,
+    this.installUpdateForTest,
   });
 
   final List<TaskItem> tasks;
@@ -3558,6 +3560,9 @@ class AccountPage extends StatefulWidget {
   final Future<void> Function() onReload;
   final VoidCallback onLogout;
   final ChangePasswordCallback onChangePassword;
+  final Future<UpdateInfo> Function(String baseUrl)? checkLatestForTest;
+  final Future<void> Function(AppUpdateService service, UpdateInfo info)?
+  installUpdateForTest;
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -3642,14 +3647,45 @@ class _AccountPageState extends State<AccountPage> {
         return 'Enter a Backend URL in Account before checking updates.';
       }
       final service = AppUpdateService(baseUrl: baseUrl);
-      final info = await service.checkLatest();
+      final info =
+          await (widget.checkLatestForTest?.call(baseUrl) ??
+              service.checkLatest());
       if (!info.available) return 'App is up to date.';
-      if (!kIsWeb) {
-        final path = await service.downloadApk(info);
-        await service.installApk(path);
+      if (!mounted) return null;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Update ${info.versionName}+${info.versionCode}'),
+          content: Text(
+            info.notes.isEmpty
+                ? 'A newer APK is available on the backend.'
+                : info.notes,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.download_outlined),
+              label: Text(kIsWeb ? 'OK' : 'Download'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true && !kIsWeb) {
+        await (widget.installUpdateForTest?.call(service, info) ??
+            _installUpdate(service, info));
+        return 'Update installer opened.';
       }
-      return 'Version ${info.versionName}+${info.versionCode} is available: ${info.notes}';
+      return 'Version ${info.versionName}+${info.versionCode} is available.';
     }, 'Update check complete.');
+  }
+
+  Future<void> _installUpdate(AppUpdateService service, UpdateInfo info) async {
+    final path = await service.downloadApk(info);
+    await service.installApk(path);
   }
 
   @override

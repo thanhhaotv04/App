@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:task_reminder/src/app.dart';
+import 'package:task_reminder/src/services.dart';
 import 'package:task_reminder/src/storage.dart';
 
 void main() {
@@ -69,6 +70,53 @@ void main() {
 
     expect(find.byType(NavigationRail), findsNothing);
     expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('check update shows version popup before downloading', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      BackendConfig.key: 'http://127.0.0.1:3002',
+    });
+    var installRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: const [DoodlePalette.light]),
+        home: AccountPage(
+          tasks: const [],
+          assignments: const [],
+          userName: 'preview',
+          password: 'preview-password',
+          onSync: () async => null,
+          onReload: () async {},
+          onLogout: () {},
+          onChangePassword: (_, _, _) async => null,
+          checkLatestForTest: (_) async => const UpdateInfo(
+            available: true,
+            versionName: '9.9.9',
+            versionCode: 999,
+            apkUrl: '/releases/app-release-task-reminder.apk',
+            notes: 'Popup first.',
+          ),
+          installUpdateForTest: (_, _) async => installRequests++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Check update'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update 9.9.9+999'), findsOneWidget);
+    expect(find.text('Popup first.'), findsOneWidget);
+    expect(installRequests, 0);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Version 9.9.9+999 is available.'), findsOneWidget);
+    expect(installRequests, 0);
   });
 
   testWidgets('work list saves a unique reusable task', (tester) async {
