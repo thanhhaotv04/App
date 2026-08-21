@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:task_reminder/src/app.dart';
+import 'package:task_reminder/src/models.dart';
 import 'package:task_reminder/src/services.dart';
 import 'package:task_reminder/src/storage.dart';
 
@@ -541,6 +542,107 @@ void main() {
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('Kiểm tra lịch'), findsOneWidget);
     expect(find.byTooltip('Task actions'), findsOneWidget);
+  });
+
+  testWidgets('overview preview hides future no priority and daily tasks', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final today = dateOnly(now);
+    final tomorrow = today.add(const Duration(days: 1));
+    final dailyTask = TaskItem(
+      id: 'daily-task',
+      title: 'Daily stretch',
+      priority: TaskPriority.normal,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final noPriorityTask = TaskItem(
+      id: 'no-priority-task',
+      title: 'Buy fruit',
+      priority: TaskPriority.none,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final priorityTask = TaskItem(
+      id: 'priority-task',
+      title: 'Pay invoice',
+      priority: TaskPriority.high,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final assignments = <TaskAssignment>[
+      for (var index = 0; index < 30; index++)
+        TaskAssignment(
+          id: 'daily-$index',
+          taskId: dailyTask.id,
+          date: today.add(Duration(days: index)),
+          createdAt: now,
+          updatedAt: now,
+        ),
+      TaskAssignment(
+        id: 'no-priority-today',
+        taskId: noPriorityTask.id,
+        date: today,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      TaskAssignment(
+        id: 'no-priority-tomorrow',
+        taskId: noPriorityTask.id,
+        date: tomorrow,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      TaskAssignment(
+        id: 'priority-tomorrow',
+        taskId: priorityTask.id,
+        date: tomorrow,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ];
+
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+      TaskStore.tasksKey: jsonEncode([
+        dailyTask.toJson(),
+        noPriorityTask.toJson(),
+        priorityTask.toJson(),
+      ]),
+      TaskStore.assignmentsKey: jsonEncode([
+        for (final assignment in assignments) assignment.toJson(),
+      ]),
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+
+    final todayKey = ValueKey(
+      'calendar-${today.toIso8601String().substring(0, 10)}',
+    );
+    await tester.tap(find.byKey(todayKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Daily stretch'), findsOneWidget);
+    expect(find.text('Buy fruit'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Close'));
+    await tester.pumpAndSettle();
+
+    final tomorrowKey = ValueKey(
+      'calendar-${tomorrow.toIso8601String().substring(0, 10)}',
+    );
+    await tester.tap(find.byKey(tomorrowKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pay invoice'), findsOneWidget);
+    expect(find.text('Daily stretch'), findsNothing);
+    expect(find.text('Buy fruit'), findsNothing);
   });
 
   testWidgets('today view remains overflow-free at representative widths', (

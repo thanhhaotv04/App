@@ -923,11 +923,50 @@ class _OverviewPageState extends State<OverviewPage> {
     return _visibleMonth.year == now.year && _visibleMonth.month == now.month;
   }
 
+  Set<String> _dailyScheduledTaskIds() {
+    final datesByTask = <String, Set<DateTime>>{};
+    for (final assignment in widget.assignments) {
+      datesByTask
+          .putIfAbsent(assignment.taskId, () => <DateTime>{})
+          .add(dateOnly(assignment.date));
+    }
+
+    final dailyTaskIds = <String>{};
+    for (final entry in datesByTask.entries) {
+      final dates = entry.value.toList()..sort();
+      var consecutiveDays = 1;
+      for (var index = 1; index < dates.length; index++) {
+        if (dates[index].difference(dates[index - 1]).inDays == 1) {
+          consecutiveDays++;
+          if (consecutiveDays >= 7) {
+            dailyTaskIds.add(entry.key);
+            break;
+          }
+        } else {
+          consecutiveDays = 1;
+        }
+      }
+    }
+    return dailyTaskIds;
+  }
+
+  bool _shouldShowInOverviewPreview({
+    required TaskAssignment assignment,
+    required DateTime day,
+    required DateTime today,
+    required Set<String> dailyTaskIds,
+  }) {
+    if (!day.isAfter(today)) return true;
+    if (dailyTaskIds.contains(assignment.taskId)) return false;
+    return taskFor(widget.tasks, assignment).priority != TaskPriority.none;
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = dateOnly(DateTime.now());
     final slots = _calendarSlots();
     final monthTitle = 'Month ${_visibleMonth.month}/${_visibleMonth.year}';
+    final dailyTaskIds = _dailyScheduledTaskIds();
 
     return PageList(
       children: [
@@ -992,7 +1031,14 @@ class _OverviewPageState extends State<OverviewPage> {
                                 ? <TaskAssignment>[]
                                 : widget.assignments
                                       .where(
-                                        (item) => isSameDay(item.date, day),
+                                        (item) =>
+                                            isSameDay(item.date, day) &&
+                                            _shouldShowInOverviewPreview(
+                                              assignment: item,
+                                              day: day,
+                                              today: today,
+                                              dailyTaskIds: dailyTaskIds,
+                                            ),
                                       )
                                       .toList()
                             ..sort((a, b) {
