@@ -72,7 +72,7 @@ class MoneyStore {
     final raw =
         _prefs.getString(transactionsKey) ??
         _prefs.getString(legacyTransactionsKey);
-    if (raw == null || raw.isEmpty) return _seedTransactions();
+    if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
       final items = decoded
@@ -81,7 +81,7 @@ class MoneyStore {
       items.sort((a, b) => b.date.compareTo(a.date));
       return items;
     } catch (_) {
-      return _seedTransactions();
+      return [];
     }
   }
 
@@ -215,38 +215,5 @@ class MoneyStore {
   DateTime _monthlyDue(int year, int month, int day) {
     final lastDay = DateTime(year, month + 1, 0).day;
     return DateTime(year, month, day.clamp(1, lastDay));
-  }
-
-  List<Tx> _seedTransactions() {
-    final now = DateTime.now();
-    return [
-      Tx(
-        id: 'seed-1',
-        title: 'Lunch',
-        note: 'Office meal',
-        category: 'Food',
-        amount: 65000,
-        date: now.subtract(const Duration(hours: 3)),
-        icon: categoryByName('Food').icon.codePoint,
-      ),
-      Tx(
-        id: 'seed-2',
-        title: 'Groceries',
-        note: 'Household items',
-        category: 'Shopping',
-        amount: 385000,
-        date: now.subtract(const Duration(hours: 7)),
-        icon: categoryByName('Shopping').icon.codePoint,
-      ),
-      Tx(
-        id: 'seed-3',
-        title: 'Movie',
-        note: 'Weekend',
-        category: 'Fun',
-        amount: 90000,
-        date: now.subtract(const Duration(days: 1)),
-        icon: categoryByName('Fun').icon.codePoint,
-      ),
-    ];
   }
 }

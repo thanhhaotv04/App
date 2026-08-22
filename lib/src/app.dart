@@ -16,7 +16,7 @@ final dateFormat = DateFormat('MMM d, HH:mm', 'en_US');
 final fullDateFormat = DateFormat('EEEE, MMMM d, y', 'en_US');
 
 abstract final class AppColors {
-  static const primary = Color(0xFF78D26C);
+  static const primary = Color(0xFF2E7D32);
   static const primarySoft = Color(0xFFDDF5D8);
   static const background = Color(0xFFF3FFF2);
   static const header = Color(0xFFEAF3E3);
@@ -29,9 +29,12 @@ abstract final class AppColors {
 }
 
 class MoneyManagerApp extends StatefulWidget {
-  const MoneyManagerApp({super.key});
+  const MoneyManagerApp({super.key, this.now});
 
   static final themeMode = ValueNotifier(ThemeMode.light);
+
+  /// Keeps visual previews deterministic without changing production time.
+  final DateTime? now;
 
   @override
   State<MoneyManagerApp> createState() => _MoneyManagerAppState();
@@ -155,6 +158,7 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
             : HomeScreen(
                 userName: _userName!,
                 password: _password!,
+                now: widget.now,
                 onLogout: _logout,
                 onChangePassword: _changePassword,
               ),
@@ -210,11 +214,11 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.ink,
+          foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(58),
           textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(18),
           ),
         ),
       ),
@@ -228,26 +232,34 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
           ),
           textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(18),
           ),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        height: 88,
+        height: 80,
         elevation: 0,
         backgroundColor: dark ? const Color(0xFF172019) : Colors.white,
         indicatorColor: dark ? const Color(0xFF29432D) : AppColors.primarySoft,
         indicatorShape: const StadiumBorder(),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
-            color: dark ? Colors.white : AppColors.ink,
+            color: dark
+                ? Colors.white
+                : states.contains(WidgetState.selected)
+                ? AppColors.primary
+                : AppColors.muted,
             fontSize: 13,
             fontWeight: FontWeight.w800,
           ),
         ),
         iconTheme: WidgetStateProperty.resolveWith(
           (states) => IconThemeData(
-            color: dark ? Colors.white : AppColors.ink,
+            color: dark
+                ? Colors.white
+                : states.contains(WidgetState.selected)
+                ? AppColors.primary
+                : AppColors.muted,
             size: 29,
           ),
         ),
@@ -459,28 +471,32 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   const BrandAppBar({super.key});
 
   @override
-  Size get preferredSize => const Size.fromHeight(98);
+  Size get preferredSize => const Size.fromHeight(80);
 
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return AppBar(
-      toolbarHeight: 98,
+      toolbarHeight: 80,
       elevation: 0,
       scrolledUnderElevation: 0,
       backgroundColor: dark ? const Color(0xFF1A251C) : AppColors.header,
       titleSpacing: 24,
       title: Row(
         children: [
-          const Icon(Icons.eco_outlined, color: AppColors.primary, size: 38),
-          const SizedBox(width: 14),
+          const Icon(
+            Icons.account_balance_wallet_outlined,
+            color: AppColors.primary,
+            size: 34,
+          ),
+          const SizedBox(width: 12),
           Flexible(
             child: Text(
               'money-manager',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: dark ? Colors.white : AppColors.ink,
-                fontSize: 27,
+                fontSize: 24,
                 fontWeight: FontWeight.w900,
                 letterSpacing: -.4,
               ),
@@ -497,12 +513,14 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.userName,
     required this.password,
+    this.now,
     required this.onLogout,
     required this.onChangePassword,
   });
 
   final String userName;
   final String password;
+  final DateTime? now;
   final VoidCallback onLogout;
   final ChangePasswordCallback onChangePassword;
 
@@ -542,6 +560,23 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _removeTransaction(Tx tx) async {
     await _store!.removeTransaction(tx.id);
     await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Transaction deleted'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => _restoreTransaction(tx),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _restoreTransaction(Tx tx) async {
+    await _store!.addExpense(tx);
+    await _load();
   }
 
   Future<void> _removeRecurring(RecurringExpense item) async {
@@ -558,9 +593,11 @@ class _HomeScreenState extends State<HomeScreen> {
       OverviewPage(
         transactions: _transactions,
         recurring: _recurring,
+        now: widget.now,
+        onAdd: () => setState(() => _page = 1),
         onRemoveRecurring: _removeRecurring,
       ),
-      AddExpensePage(onSave: _saveExpense),
+      AddExpensePage(now: widget.now, onSave: _saveExpense),
       HistoryPage(transactions: _transactions, onRemove: _removeTransaction),
       AccountPage(
         store: _store!,
@@ -626,7 +663,7 @@ class PageList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
       children: children,
     );
   }
@@ -642,7 +679,7 @@ class SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: padding ?? const EdgeInsets.all(22),
+        padding: padding ?? const EdgeInsets.all(20),
         child: child,
       ),
     );
@@ -672,11 +709,15 @@ class OverviewPage extends StatefulWidget {
     super.key,
     required this.transactions,
     required this.recurring,
+    this.now,
+    required this.onAdd,
     required this.onRemoveRecurring,
   });
 
   final List<Tx> transactions;
   final List<RecurringExpense> recurring;
+  final DateTime? now;
+  final VoidCallback onAdd;
   final ValueChanged<RecurringExpense> onRemoveRecurring;
 
   @override
@@ -694,40 +735,76 @@ class _OverviewPageState extends State<OverviewPage> {
     };
   }).toList();
 
-  int _total(Iterable<Tx> items) => items.fold(0, (sum, tx) => sum + tx.amount);
+  int _totalFor(Iterable<Tx> items, TxType type) => items
+      .where((tx) => tx.type == type)
+      .fold(0, (sum, tx) => sum + tx.amount);
 
   Future<void> _adjustRecurring() async {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Automatic expenses'),
+        title: const Text('Scheduled expenses'),
         content: SizedBox(
           width: 430,
           child: widget.recurring.isEmpty
-              ? const Text('No automatic expenses yet.')
-              : ListView(
-                  shrinkWrap: true,
-                  children: widget.recurring
-                      .map(
-                        (item) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(categoryByName(item.category).icon),
-                          title: Text(item.title),
-                          subtitle: Text(
-                            '${item.frequency.name} • '
-                            '${moneyFormat.format(item.amount)}',
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Delete',
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () {
-                              widget.onRemoveRecurring(item);
-                              Navigator.pop(dialogContext);
-                            },
-                          ),
-                        ),
-                      )
-                      .toList(),
+              ? const Text('No scheduled expenses yet.')
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 360),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: widget.recurring
+                          .map(
+                            (item) => ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(categoryByName(item.category).icon),
+                              title: Text(item.title),
+                              subtitle: Text(
+                                item.frequency == RecurringFrequency.daily
+                                    ? 'Every day • ${moneyFormat.format(item.amount)}'
+                                    : 'Monthly on day ${item.dayOfMonth} • '
+                                          '${moneyFormat.format(item.amount)}',
+                              ),
+                              trailing: IconButton(
+                                tooltip: 'Delete scheduled expense',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  final shouldDelete = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text('Delete schedule?'),
+                                      content: Text(
+                                        '“${item.title}” will no longer be '
+                                        'recorded automatically.',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, false),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: AppColors.danger,
+                                          ),
+                                          onPressed: () =>
+                                              Navigator.pop(context, true),
+                                          child: const Text('Delete'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (shouldDelete != true) return;
+                                  widget.onRemoveRecurring(item);
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext);
+                                  }
+                                },
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
                 ),
         ),
         actions: [
@@ -742,233 +819,123 @@ class _OverviewPageState extends State<OverviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final filtered = _filtered;
-    final today = filtered.where(
-      (tx) =>
-          tx.date.year == now.year &&
-          tx.date.month == now.month &&
-          tx.date.day == now.day,
-    );
-    final thisMonth = filtered.where(
+    final now = widget.now ?? DateTime.now();
+    final thisMonth = widget.transactions.where(
       (tx) => tx.date.year == now.year && tx.date.month == now.month,
     );
-    final thisYear = filtered.where((tx) => tx.date.year == now.year);
-    final daily = widget.recurring
-        .where((item) => item.frequency == RecurringFrequency.daily)
-        .fold(0, (sum, item) => sum + item.amount);
-    final monthly = widget.recurring
-        .where((item) => item.frequency == RecurringFrequency.monthly)
-        .fold(0, (sum, item) => sum + item.amount);
+    final monthIncome = _totalFor(thisMonth, TxType.income);
+    final monthExpenses = _totalFor(thisMonth, TxType.expense);
+    final balance =
+        _totalFor(widget.transactions, TxType.income) -
+        _totalFor(widget.transactions, TxType.expense);
+    final recent = _filtered.take(4).toList();
     final dark = Theme.of(context).brightness == Brightness.dark;
 
     return PageList(
       children: [
         Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
             color: dark ? const Color(0xFF203A25) : AppColors.hero,
-            borderRadius: BorderRadius.circular(26),
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: AppColors.heroBorder, width: 1.5),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Expanded(child: PageTitle('Overview')),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 175,
-                    child: DropdownButtonFormField<OverviewFilter>(
-                      initialValue: _filter,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Filter',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 16,
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        PageTitle('Overview'),
+                        SizedBox(height: 4),
+                        Text(
+                          'All recorded transactions',
+                          style: TextStyle(
+                            color: AppColors.muted,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      items: OverviewFilter.values
-                          .map(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text(
-                                switch (value) {
-                                  OverviewFilter.all => 'All',
-                                  OverviewFilter.expenses => 'Expenses',
-                                  OverviewFilter.income => 'Income',
-                                },
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) =>
-                          setState(() => _filter = value ?? _filter),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: dark ? const Color(0xFF315A34) : Colors.white70,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      Icons.account_balance_wallet_outlined,
+                      color: AppColors.primary,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 22),
               Text(
-                fullDateFormat.format(now),
+                'Available balance',
                 style: const TextStyle(
                   color: AppColors.muted,
-                  fontSize: 17,
+                  fontSize: 16,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
               FittedBox(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  moneyFormat.format(_total(thisYear)),
-                  style: const TextStyle(
-                    fontSize: 48,
+                  moneyFormat.format(balance),
+                  style: TextStyle(
+                    color: balance < 0 ? AppColors.danger : AppColors.ink,
+                    fontSize: 46,
                     height: 1,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -1,
                   ),
                 ),
               ),
-              const SizedBox(height: 28),
-              Row(
-                children: [
-                  Expanded(
-                    child: StatCard(
-                      label: 'Today',
-                      value: moneyFormat.format(_total(today)),
-                      icon: Icons.today_outlined,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: StatCard(
-                      label: 'This month',
-                      value: moneyFormat.format(_total(thisMonth)),
-                      icon: Icons.calendar_month_outlined,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'By month',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 22),
               LayoutBuilder(
-                builder: (context, constraints) => GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 12,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 14,
-                    mainAxisSpacing: 14,
-                    childAspectRatio: constraints.maxWidth < 330 ? 1.15 : 1.58,
-                  ),
-                  itemBuilder: (context, index) {
-                    final monthNumber = index + 1;
-                    final amount = _total(
-                      filtered.where(
-                        (tx) =>
-                            tx.date.year == now.year &&
-                            tx.date.month == monthNumber,
-                      ),
-                    );
-                    final selected = monthNumber == now.month;
-                    return Container(
-                      padding: const EdgeInsets.all(17),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? (dark
-                                  ? const Color(0xFF315A34)
-                                  : const Color(0xFFC1EAAF))
-                            : Theme.of(context).cardColor,
-                        borderRadius: BorderRadius.circular(22),
-                        border: selected
-                            ? Border.all(color: AppColors.primary, width: 1.5)
-                            : null,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            DateFormat.MMMM(
-                              'en_US',
-                            ).format(DateTime(now.year, monthNumber)),
-                            style: const TextStyle(
-                              color: AppColors.muted,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 7),
-                          FittedBox(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              moneyFormat.format(amount),
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 22),
-        SectionCard(
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Automatic expenses',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
+                builder: (context, constraints) {
+                  final metrics = [
+                    CashFlowMetric(
+                      label: 'Income this month',
+                      value: moneyFormat.format(monthIncome),
+                      icon: Icons.south_west_rounded,
+                      color: AppColors.primary,
                     ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _adjustRecurring,
-                    icon: const Icon(Icons.tune),
-                    label: const Text('Adjust'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              AutomaticRow(
-                icon: Icons.calendar_month_outlined,
-                label: 'Monthly expense',
-                amount: monthly,
-              ),
-              const SizedBox(height: 12),
-              AutomaticRow(
-                icon: Icons.today_outlined,
-                label: 'Daily expense',
-                amount: daily,
+                    CashFlowMetric(
+                      label: 'Spent this month',
+                      value: moneyFormat.format(monthExpenses),
+                      icon: Icons.north_east_rounded,
+                      color: AppColors.danger,
+                    ),
+                  ];
+                  if (constraints.maxWidth < 350) {
+                    return Column(
+                      children: [
+                        metrics.first,
+                        const SizedBox(height: 12),
+                        metrics.last,
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: metrics.first),
+                      const SizedBox(width: 12),
+                      Expanded(child: metrics.last),
+                    ],
+                  );
+                },
               ),
             ],
           ),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 20),
         SectionCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -980,15 +947,110 @@ class _OverviewPageState extends State<OverviewPage> {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 14),
-              if (widget.transactions.isEmpty)
+              if (recent.isEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _filter == OverviewFilter.all
+                          ? 'No transactions yet.'
+                          : 'No matching transactions yet.',
+                      style: const TextStyle(color: AppColors.muted),
+                    ),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      onPressed: widget.onAdd,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add a transaction'),
+                    ),
+                  ],
+                )
+              else
+                ...recent.map((tx) => TransactionRow(tx: tx)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        SectionCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Activity',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: OverviewFilter.values
+                    .map(
+                      (filter) => ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: ChoiceChip(
+                          label: Text(switch (filter) {
+                            OverviewFilter.all => 'All',
+                            OverviewFilter.expenses => 'Expenses',
+                            OverviewFilter.income => 'Income',
+                          }),
+                          selected: _filter == filter,
+                          onSelected: (_) => setState(() => _filter = filter),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Spending trend',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Last three months',
+                style: TextStyle(color: AppColors.muted),
+              ),
+              const SizedBox(height: 16),
+              SpendingTrend(transactions: widget.transactions, now: now),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        SectionCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Scheduled expenses',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _adjustRecurring,
+                    icon: const Icon(Icons.tune),
+                    label: const Text('Manage'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (widget.recurring.isEmpty)
                 const Text(
-                  'No transactions yet.',
+                  'No scheduled expenses yet. Add one from the Add tab.',
                   style: TextStyle(color: AppColors.muted),
                 )
               else
-                ...widget.transactions
-                    .take(4)
-                    .map((tx) => TransactionRow(tx: tx)),
+                ...widget.recurring
+                    .take(2)
+                    .map((item) => ScheduledExpenseRow(item: item)),
             ],
           ),
         ),
@@ -997,78 +1059,179 @@ class _OverviewPageState extends State<OverviewPage> {
   }
 }
 
-class StatCard extends StatelessWidget {
-  const StatCard({
+class CashFlowMetric extends StatelessWidget {
+  const CashFlowMetric({
     super.key,
     required this.label,
     required this.value,
     required this.icon,
+    required this.color,
   });
 
   final String label;
   final String value;
   final IconData icon;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(22),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: AppColors.primary, size: 28),
-          const SizedBox(height: 15),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.muted,
-              fontWeight: FontWeight.w800,
-            ),
+    return Semantics(
+      label: '$label: $value',
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: ExcludeSemantics(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: color, size: 26),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: AppColors.muted,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              FittedBox(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          FittedBox(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class AutomaticRow extends StatelessWidget {
-  const AutomaticRow({
+class SpendingTrend extends StatelessWidget {
+  const SpendingTrend({
     super.key,
-    required this.icon,
-    required this.label,
-    required this.amount,
+    required this.transactions,
+    required this.now,
   });
 
-  final IconData icon;
-  final String label;
-  final int amount;
+  final List<Tx> transactions;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final months = List.generate(
+      3,
+      (index) => DateTime(now.year, now.month - (2 - index)),
+    );
+    final amounts = months
+        .map(
+          (month) => transactions
+              .where(
+                (tx) =>
+                    tx.type == TxType.expense &&
+                    tx.date.year == month.year &&
+                    tx.date.month == month.month,
+              )
+              .fold(0, (sum, tx) => sum + tx.amount),
+        )
+        .toList();
+    final maximum = amounts.fold<int>(
+      1,
+      (current, amount) => amount > current ? amount : current,
+    );
+
+    return Column(
+      children: List.generate(
+        months.length,
+        (index) => Padding(
+          padding: EdgeInsets.only(bottom: index == months.length - 1 ? 0 : 12),
+          child: Semantics(
+            label:
+                '${DateFormat.MMM('en_US').format(months[index])} spending '
+                '${moneyFormat.format(amounts[index])}',
+            child: ExcludeSemantics(
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 42,
+                    child: Text(
+                      DateFormat.MMM('en_US').format(months[index]),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: amounts[index] / maximum,
+                      minHeight: 10,
+                      borderRadius: BorderRadius.circular(999),
+                      color: AppColors.primary,
+                      backgroundColor: AppColors.primarySoft,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 94,
+                    child: FittedBox(
+                      alignment: Alignment.centerRight,
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        moneyFormat.format(amounts[index]),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ScheduledExpenseRow extends StatelessWidget {
+  const ScheduledExpenseRow({super.key, required this.item});
+
+  final RecurringExpense item;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, color: AppColors.primary, size: 28),
+        Icon(
+          categoryByName(item.category).icon,
+          color: AppColors.primary,
+          size: 28,
+        ),
         const SizedBox(width: 14),
         Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.title,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              Text(
+                item.frequency == RecurringFrequency.daily
+                    ? 'Every day'
+                    : 'Monthly on day ${item.dayOfMonth}',
+                style: const TextStyle(color: AppColors.muted),
+              ),
+            ],
           ),
         ),
         Text(
-          moneyFormat.format(amount),
+          moneyFormat.format(item.amount),
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ],
@@ -1125,11 +1288,17 @@ class TransactionRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Text(
-            '${income ? '+' : '-'} ${moneyFormat.format(tx.amount)}',
-            style: TextStyle(
-              color: income ? const Color(0xFF278A36) : AppColors.danger,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text(
+                '${income ? '+' : '-'} ${moneyFormat.format(tx.amount)}',
+                style: TextStyle(
+                  color: income ? AppColors.primary : AppColors.danger,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ),
           ),
           if (onDelete != null) ...[
@@ -1150,8 +1319,9 @@ typedef SaveExpenseCallback =
     Future<void> Function(Tx tx, RecurringExpense? recurring);
 
 class AddExpensePage extends StatefulWidget {
-  const AddExpensePage({super.key, required this.onSave});
+  const AddExpensePage({super.key, this.now, required this.onSave});
 
+  final DateTime? now;
   final SaveExpenseCallback onSave;
 
   @override
@@ -1161,6 +1331,8 @@ class AddExpensePage extends StatefulWidget {
 class _AddExpensePageState extends State<AddExpensePage> {
   final _note = TextEditingController();
   MoneyCategory _category = moneyCategories.first;
+  TxType _type = TxType.expense;
+  RecurringFrequency? _recurrence;
   String _digits = '';
   bool _busy = false;
 
@@ -1185,10 +1357,22 @@ class _AddExpensePageState extends State<AddExpensePage> {
     });
   }
 
+  void _selectType(TxType type) {
+    setState(() {
+      _type = type;
+      _recurrence = type == TxType.expense ? _recurrence : null;
+      _category = type == TxType.income
+          ? categoryByName('Income')
+          : _category.name == 'Income'
+          ? moneyCategories.first
+          : _category;
+    });
+  }
+
   Future<void> _save() async {
     if (_amount <= 0) return;
     setState(() => _busy = true);
-    final now = DateTime.now();
+    final now = widget.now ?? DateTime.now();
     const uuid = Uuid();
     final title = _note.text.trim().isEmpty
         ? _category.name
@@ -1200,19 +1384,17 @@ class _AddExpensePageState extends State<AddExpensePage> {
       category: _category.name,
       amount: _amount,
       date: now,
+      type: _type,
       icon: _category.icon.codePoint,
     );
     RecurringExpense? rule;
-    if (_category.name == 'Daily' || _category.name == 'Monthly') {
-      final frequency = _category.name == 'Daily'
-          ? RecurringFrequency.daily
-          : RecurringFrequency.monthly;
+    if (_type == TxType.expense && _recurrence != null) {
       rule = RecurringExpense(
         id: uuid.v4(),
         title: title,
         amount: _amount,
         category: _category.name,
-        frequency: frequency,
+        frequency: _recurrence!,
         dayOfMonth: now.day,
         lastAppliedAt: now,
       );
@@ -1223,6 +1405,8 @@ class _AddExpensePageState extends State<AddExpensePage> {
       setState(() {
         _digits = '';
         _category = moneyCategories.first;
+        _type = TxType.expense;
+        _recurrence = null;
         _busy = false;
       });
     }
@@ -1230,16 +1414,46 @@ class _AddExpensePageState extends State<AddExpensePage> {
 
   @override
   Widget build(BuildContext context) {
-    final categories = moneyCategories
-        .where((item) => item.name != 'Income')
-        .toList();
+    final categories = _type == TxType.income
+        ? [categoryByName('Income')]
+        : moneyCategories
+              .where(
+                (item) =>
+                    item.name != 'Income' &&
+                    item.name != 'Daily' &&
+                    item.name != 'Monthly',
+              )
+              .toList();
     final dark = Theme.of(context).brightness == Brightness.dark;
     return PageList(
       children: [
         SectionCard(
           padding: const EdgeInsets.all(20),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              SizedBox(
+                height: 52,
+                child: SegmentedButton<TxType>(
+                  segments: const [
+                    ButtonSegment(
+                      value: TxType.expense,
+                      icon: Icon(Icons.north_east_rounded),
+                      label: Text('Expense'),
+                    ),
+                    ButtonSegment(
+                      value: TxType.income,
+                      icon: Icon(Icons.south_west_rounded),
+                      label: Text('Income'),
+                    ),
+                  ],
+                  selected: {_type},
+                  onSelectionChanged: (selection) {
+                    if (selection.isNotEmpty) _selectType(selection.first);
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
               Container(
                 width: double.infinity,
                 height: 170,
@@ -1247,78 +1461,27 @@ class _AddExpensePageState extends State<AddExpensePage> {
                 alignment: Alignment.centerRight,
                 decoration: BoxDecoration(
                   color: dark ? const Color(0xFF203A25) : AppColors.primarySoft,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: AppColors.heroBorder, width: 1.5),
                 ),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    moneyFormat.format(_amount),
-                    style: const TextStyle(
-                      fontSize: 54,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -1,
+                child: Semantics(
+                  label: 'Amount ${moneyFormat.format(_amount)}',
+                  child: ExcludeSemantics(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        moneyFormat.format(_amount),
+                        style: const TextStyle(
+                          fontSize: 54,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 22),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = (constraints.maxWidth - 16) / 3;
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 12,
-                    children: categories
-                        .map(
-                          (category) => SizedBox(
-                            width: width,
-                            child: FilterChip(
-                              selected: category.name == _category.name,
-                              showCheckmark: false,
-                              avatar: Icon(
-                                category.icon,
-                                color: category.name == _category.name
-                                    ? AppColors.ink
-                                    : AppColors.primary,
-                              ),
-                              label: Text(
-                                category.name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              labelStyle: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                              side: BorderSide(
-                                color: category.name == _category.name
-                                    ? Colors.transparent
-                                    : AppColors.muted.withValues(alpha: .45),
-                              ),
-                              selectedColor: dark
-                                  ? const Color(0xFF315A34)
-                                  : const Color(0xFFDCECCB),
-                              backgroundColor: Theme.of(context).cardColor,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              onSelected: (_) =>
-                                  setState(() => _category = category),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  );
-                },
-              ),
               const SizedBox(height: 20),
-              TextField(
-                controller: _note,
-                decoration: const InputDecoration(
-                  hintText: 'Note',
-                  prefixIcon: Icon(Icons.notes),
-                ),
-              ),
-              const SizedBox(height: 18),
               GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -1374,12 +1537,150 @@ class _AddExpensePageState extends State<AddExpensePage> {
               FilledButton.icon(
                 onPressed: _amount > 0 && !_busy ? _save : null,
                 icon: const Icon(Icons.check),
-                label: Text(_busy ? 'Saving...' : 'Save'),
+                label: Text(
+                  _busy
+                      ? 'Saving...'
+                      : _type == TxType.income
+                      ? 'Save income'
+                      : 'Save expense',
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              Text(
+                'Details (optional)',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Category: ${_category.name}',
+                style: const TextStyle(color: AppColors.muted),
+              ),
+              const SizedBox(height: 14),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = _type == TxType.income
+                      ? constraints.maxWidth
+                      : (constraints.maxWidth - 8) / 2;
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: categories
+                        .map(
+                          (category) => SizedBox(
+                            width: width,
+                            height: 48,
+                            child: FilterChip(
+                              selected: category.name == _category.name,
+                              showCheckmark: false,
+                              avatar: Icon(
+                                category.icon,
+                                color: category.name == _category.name
+                                    ? AppColors.ink
+                                    : AppColors.primary,
+                              ),
+                              label: Text(
+                                category.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              labelStyle: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                              side: BorderSide(
+                                color: category.name == _category.name
+                                    ? Colors.transparent
+                                    : AppColors.muted.withValues(alpha: .45),
+                              ),
+                              selectedColor: dark
+                                  ? const Color(0xFF315A34)
+                                  : const Color(0xFFDCECCB),
+                              backgroundColor: Theme.of(context).cardColor,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              onSelected: (_) =>
+                                  setState(() => _category = category),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  );
+                },
+              ),
+              if (_type == TxType.expense) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Repeat',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _RepeatChip(
+                      label: 'No repeat',
+                      selected: _recurrence == null,
+                      onSelected: () => setState(() => _recurrence = null),
+                    ),
+                    _RepeatChip(
+                      label: 'Every day',
+                      selected: _recurrence == RecurringFrequency.daily,
+                      onSelected: () => setState(
+                        () => _recurrence = RecurringFrequency.daily,
+                      ),
+                    ),
+                    _RepeatChip(
+                      label: 'Every month',
+                      selected: _recurrence == RecurringFrequency.monthly,
+                      onSelected: () => setState(
+                        () => _recurrence = RecurringFrequency.monthly,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 20),
+              TextField(
+                controller: _note,
+                decoration: const InputDecoration(
+                  labelText: 'Note (optional)',
+                  prefixIcon: Icon(Icons.notes),
+                ),
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _RepeatChip extends StatelessWidget {
+  const _RepeatChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onSelected(),
+      ),
     );
   }
 }
@@ -1399,54 +1700,158 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
-  String _filter = '';
+  String _query = '';
+  OverviewFilter _typeFilter = OverviewFilter.all;
+
+  Future<void> _confirmRemove(Tx tx) async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete transaction?'),
+        content: Text(
+          '“${tx.title}” will be removed from this device. '
+          'You can undo it immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (shouldRemove == true) widget.onRemove(tx);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final query = _filter.toLowerCase();
+    final query = _query.toLowerCase();
     final filtered = widget.transactions
         .where(
           (tx) =>
-              tx.title.toLowerCase().contains(query) ||
-              tx.note.toLowerCase().contains(query) ||
-              tx.category.toLowerCase().contains(query),
+              (_typeFilter == OverviewFilter.all ||
+                  (_typeFilter == OverviewFilter.expenses &&
+                      tx.type == TxType.expense) ||
+                  (_typeFilter == OverviewFilter.income &&
+                      tx.type == TxType.income)) &&
+              (tx.title.toLowerCase().contains(query) ||
+                  tx.note.toLowerCase().contains(query) ||
+                  tx.category.toLowerCase().contains(query)),
         )
         .toList();
+    final byDay = <DateTime, List<Tx>>{};
+    for (final tx in filtered) {
+      final day = DateTime(tx.date.year, tx.date.month, tx.date.day);
+      byDay.putIfAbsent(day, () => []).add(tx);
+    }
     return PageList(
       children: [
         const PageTitle('History'),
-        const SizedBox(height: 22),
+        const SizedBox(height: 18),
         TextField(
-          onChanged: (value) => setState(() => _filter = value),
+          onChanged: (value) => setState(() => _query = value),
           decoration: const InputDecoration(
             hintText: 'Search transactions',
             prefixIcon: Icon(Icons.search, size: 30),
           ),
         ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: OverviewFilter.values
+              .map(
+                (filter) => ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: ChoiceChip(
+                    label: Text(switch (filter) {
+                      OverviewFilter.all => 'All',
+                      OverviewFilter.expenses => 'Expenses',
+                      OverviewFilter.income => 'Income',
+                    }),
+                    selected: _typeFilter == filter,
+                    onSelected: (_) => setState(() => _typeFilter = filter),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
         const SizedBox(height: 18),
         if (filtered.isEmpty)
-          const SectionCard(
+          SectionCard(
             child: Text(
-              'No matching transactions.',
-              style: TextStyle(color: AppColors.muted),
+              _typeFilter == OverviewFilter.all && query.isEmpty
+                  ? 'No transactions yet.'
+                  : 'No matching transactions.',
+              style: const TextStyle(color: AppColors.muted),
             ),
           )
         else
-          ...filtered.map(
-            (tx) => Padding(
+          ...byDay.entries.map((entry) {
+            final income = entry.value
+                .where((tx) => tx.type == TxType.income)
+                .fold(0, (sum, tx) => sum + tx.amount);
+            final expenses = entry.value
+                .where((tx) => tx.type == TxType.expense)
+                .fold(0, (sum, tx) => sum + tx.amount);
+            final net = income - expenses;
+            return Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: SectionCard(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
-                  vertical: 10,
+                  vertical: 8,
                 ),
-                child: TransactionRow(
-                  tx: tx,
-                  onDelete: () => widget.onRemove(tx),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              DateFormat(
+                                'EEEE, MMM d',
+                                'en_US',
+                              ).format(entry.key),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            (net >= 0 ? '+' : '-') +
+                                moneyFormat.format(net.abs()),
+                            style: TextStyle(
+                              color: net >= 0
+                                  ? AppColors.primary
+                                  : AppColors.danger,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ...entry.value.asMap().entries.expand(
+                      (item) => [
+                        TransactionRow(
+                          tx: item.value,
+                          onDelete: () => _confirmRemove(item.value),
+                        ),
+                        if (item.key != entry.value.length - 1)
+                          const Divider(height: 1),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ),
+            );
+          }),
       ],
     );
   }
@@ -1598,13 +2003,41 @@ class _AccountPageState extends State<AccountPage> {
     _toast(error ?? 'Password updated');
   }
 
+  Future<void> _confirmClear({
+    required String title,
+    required String message,
+    required Future<void> Function() onConfirm,
+  }) async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    if (shouldClear == true) await onConfirm();
+  }
+
   Future<void> _clearThisMonth() async {
     final now = DateTime.now();
     final count = await widget.store.removeTransactionsWhere(
       (tx) => tx.date.year == now.year && tx.date.month == now.month,
     );
     await widget.onReload();
-    _toast(count == 0 ? 'No expenses to delete' : 'Deleted $count expenses');
+    _toast(
+      count == 0 ? 'No transactions to delete' : 'Deleted $count transactions',
+    );
   }
 
   Future<void> _clearToday() async {
@@ -1616,7 +2049,9 @@ class _AccountPageState extends State<AccountPage> {
           tx.date.day == now.day,
     );
     await widget.onReload();
-    _toast(count == 0 ? 'No expenses to delete' : 'Deleted $count expenses');
+    _toast(
+      count == 0 ? 'No transactions to delete' : 'Deleted $count transactions',
+    );
   }
 
   @override
@@ -1780,22 +2215,46 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Reset spending data',
+                'Reset local data',
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
-                onPressed: _busy ? null : _clearToday,
+                onPressed: _busy
+                    ? null
+                    : () => _confirmClear(
+                        title: 'Clear today’s transactions?',
+                        message:
+                            'This removes every transaction dated today from '
+                            'this device.',
+                        onConfirm: _clearToday,
+                      ),
                 icon: const Icon(Icons.today_outlined),
                 label: const Text('Clear Today'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  side: const BorderSide(color: AppColors.danger),
+                ),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: _busy ? null : _clearThisMonth,
+                onPressed: _busy
+                    ? null
+                    : () => _confirmClear(
+                        title: 'Clear this month’s transactions?',
+                        message:
+                            'This removes every transaction dated this month '
+                            'from this device.',
+                        onConfirm: _clearThisMonth,
+                      ),
                 icon: const Icon(Icons.calendar_month_outlined),
                 label: const Text('Clear This Month'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  side: const BorderSide(color: AppColors.danger),
+                ),
               ),
             ],
           ),
