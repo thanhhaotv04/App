@@ -1,11 +1,11 @@
 {
-    "name": "vietnam_map_01",
-    "short_name": "vietnam_map_01",
+    "name": "VietNam Map Checkin",
+    "short_name": "VN Checkin",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F8F3E7",
+    "theme_color": "#CB7B2B",
+    "description": "Local-first Vietnam travel check-in map with photos, sync, insights, and backups.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

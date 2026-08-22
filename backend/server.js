@@ -10,10 +10,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const preferredPort = Number(process.env.PORT || 3000);
 
-const DATA_DIR = path.join(__dirname, "server-data");
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "server-data");
 const CHECKINS_FILE = path.join(DATA_DIR, "checkins.json");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
-const PHOTO_ROOT = path.join(__dirname, "user", "Picture", "thanhhao");
+const PHOTO_ROOT = process.env.PHOTO_ROOT || path.join(__dirname, "user", "Picture");
+const LEGACY_CHECKINS_KEY = "__legacy";
 const RELEASES_DIR = path.join(__dirname, "releases");
 const UPDATE_MANIFEST = path.join(RELEASES_DIR, "latest.json");
 const UPLOAD = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
@@ -46,17 +47,18 @@ function parseTags(value) {
   return String(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-async function loadCheckins() {
+async function loadAllCheckins() {
   try {
     const raw = await fs.readFile(CHECKINS_FILE, "utf8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return { [LEGACY_CHECKINS_KEY]: parsed };
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
-async function saveCheckins(items) {
+async function saveAllCheckins(items) {
   await ensureDir(DATA_DIR);
   const tempFile = `${CHECKINS_FILE}.tmp`;
   await fs.writeFile(tempFile, JSON.stringify(items, null, 2), "utf8");
@@ -101,22 +103,65 @@ function findAccount(accounts, name) {
   return accounts.find((item) => normalizedName(item.name).toLocaleLowerCase("vi") === key);
 }
 
+async function authenticate(req, res) {
+  const accounts = await loadAccounts();
+  const name =
+    req.get("X-User-Name") ||
+    req.body?.name ||
+    req.body?.userName ||
+    req.body?.username;
+  const password =
+    req.get("X-Password") ||
+    req.body?.currentPassword ||
+    req.body?.password;
+  const account = findAccount(accounts, name);
+  if (!account || !passwordMatches(password, account.passwordHash)) {
+    res.status(401).json({
+      error: "invalid_account",
+      message: "Backend rejected this account. Sign in again or reset the password.",
+    });
+    return null;
+  }
+  return { account, accounts };
+}
+
+function userCheckins(allCheckins, account) {
+  if (Array.isArray(allCheckins[account.id])) return allCheckins[account.id];
+  const legacyItems = allCheckins[LEGACY_CHECKINS_KEY];
+  if (
+    Array.isArray(legacyItems) &&
+    cleanSegment(account.name).toLocaleLowerCase("vi") === "thanhhao"
+  ) {
+    return legacyItems;
+  }
+  return [];
+}
+
+function setUserCheckins(allCheckins, account, items) {
+  allCheckins[account.id] = items;
+  if (cleanSegment(account.name).toLocaleLowerCase("vi") === "thanhhao") {
+    delete allCheckins[LEGACY_CHECKINS_KEY];
+  }
+}
+
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Password");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-User-Name, X-Password");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 app.use(express.json({ limit: "2mb" }));
-app.use(express.static(__dirname));
+app.use("/user/Picture", express.static(PHOTO_ROOT));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "vietnam-map-backend" });
 });
 
-app.get("/api/checkins", async (_req, res) => {
-  res.json(await loadCheckins());
+app.get("/api/checkins", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  res.json(userCheckins(await loadAllCheckins(), authenticated.account));
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -174,10 +219,19 @@ app.post("/api/auth/update", async (req, res) => {
   if (newPassword && newPassword.length < 4) {
     return res.status(400).json({ error: "weak_password", message: "New password must have at least 4 characters." });
   }
+  const oldName = account.name;
   if (newName) account.name = newName;
   if (newPassword) account.passwordHash = hashPassword(newPassword);
   account.updatedAt = Date.now();
   await saveAccounts(accounts);
+  if (newName) {
+    const oldDir = path.join(PHOTO_ROOT, cleanSegment(oldName));
+    const newDir = path.join(PHOTO_ROOT, cleanSegment(newName));
+    if (oldDir !== newDir) {
+      await ensureDir(PHOTO_ROOT);
+      await fs.rename(oldDir, newDir).catch(() => {});
+    }
+  }
   res.json({ ok: true, name: account.name });
 });
 
@@ -207,17 +261,21 @@ app.get("/releases/:file", async (req, res) => {
 
 app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
   try {
+    const authenticated = await authenticate(req, res);
+    if (!authenticated) return;
     const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath, favorite, rating, tags } = req.body;
     if (!city) return res.status(400).json({ error: "city_required" });
 
-    const checkins = await loadCheckins();
+    const allCheckins = await loadAllCheckins();
+    const checkins = userCheckins(allCheckins, authenticated.account);
     const id = incomingId || randomUUID();
     const createdAt = Number(incomingCreatedAt) || Date.now();
     let savedPhotoPath = photoPath || "";
 
     if (req.file) {
+      const userFolder = cleanSegment(authenticated.account.name);
       const cityFolder = cleanSegment(city);
-      const destDir = path.join(PHOTO_ROOT, cityFolder);
+      const destDir = path.join(PHOTO_ROOT, userFolder, cityFolder);
       await ensureDir(destDir);
       const ext = path.extname(req.file.originalname || "").slice(0, 10) || ".jpg";
       const fileName = `${createdAt}-${safeFileName(path.basename(req.file.originalname || "photo", path.extname(req.file.originalname || "")))}${ext}`;
@@ -248,7 +306,8 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
     } else {
       checkins.unshift(item);
     }
-    await saveCheckins(checkins);
+    setUserCheckins(allCheckins, authenticated.account, checkins);
+    await saveAllCheckins(allCheckins);
     res.json(existingIndex >= 0 ? checkins[existingIndex] : item);
   } catch (err) {
     res.status(500).json({ error: err.message || "server_error" });
@@ -256,20 +315,28 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
 });
 
 app.delete("/api/checkins/:id", async (req, res) => {
-  const checkins = await loadCheckins();
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const allCheckins = await loadAllCheckins();
+  const checkins = userCheckins(allCheckins, authenticated.account);
   const next = checkins.filter((item) => item.id !== req.params.id);
-  await saveCheckins(next);
+  setUserCheckins(allCheckins, authenticated.account, next);
+  await saveAllCheckins(allCheckins);
   res.json({ ok: true });
 });
 
 app.delete("/api/checkins/:id/photo", async (req, res) => {
-  const checkins = await loadCheckins();
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const allCheckins = await loadAllCheckins();
+  const checkins = userCheckins(allCheckins, authenticated.account);
   const item = checkins.find((entry) => entry.id === req.params.id);
   if (!item) return res.status(404).json({ error: "not_found" });
   const previousPhoto = item.photo;
   item.photo = "";
   item.synced = true;
-  await saveCheckins(checkins);
+  setUserCheckins(allCheckins, authenticated.account, checkins);
+  await saveAllCheckins(allCheckins);
   if (previousPhoto) {
     const absolutePhoto = path.resolve(__dirname, previousPhoto);
     const absoluteRoot = path.resolve(PHOTO_ROOT);
@@ -280,12 +347,18 @@ app.delete("/api/checkins/:id/photo", async (req, res) => {
   res.json(item);
 });
 
-app.delete("/api/checkins", async (_req, res) => {
-  await saveCheckins([]);
+app.delete("/api/checkins", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const allCheckins = await loadAllCheckins();
+  setUserCheckins(allCheckins, authenticated.account, []);
+  await saveAllCheckins(allCheckins);
   res.json({ ok: true });
 });
 
-app.post("/api/seed", async (_req, res) => {
+app.post("/api/seed", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
   const items = [
     {
       id: randomUUID(),
@@ -324,16 +397,22 @@ app.post("/api/seed", async (_req, res) => {
       photo: "",
     },
   ];
-  await saveCheckins(items);
+  const allCheckins = await loadAllCheckins();
+  setUserCheckins(allCheckins, authenticated.account, items);
+  await saveAllCheckins(allCheckins);
   res.json(items);
 });
 
 app.post("/api/checkins/:id/synced", async (req, res) => {
-  const checkins = await loadCheckins();
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const allCheckins = await loadAllCheckins();
+  const checkins = userCheckins(allCheckins, authenticated.account);
   const item = checkins.find((x) => x.id === req.params.id);
   if (!item) return res.status(404).json({ error: "not_found" });
   item.synced = true;
-  await saveCheckins(checkins);
+  setUserCheckins(allCheckins, authenticated.account, checkins);
+  await saveAllCheckins(allCheckins);
   res.json(item);
 });
 

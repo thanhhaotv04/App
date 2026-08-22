@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../models/checkin.dart';
@@ -78,9 +79,19 @@ class _InsightsScreenState extends State<InsightsScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      'Travel insights',
-                      style: Theme.of(context).textTheme.headlineMedium,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Travel insights',
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'A calm overview of the places and memories you keep.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                     ),
                   ),
                   IconButton(
@@ -91,39 +102,96 @@ class _InsightsScreenState extends State<InsightsScreen> {
                 ],
               ),
               const SizedBox(height: 18),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _MetricCard(label: 'Check-ins', value: '${_items.length}'),
-                  _MetricCard(
-                    label: 'Visited provinces',
-                    value: '${visited.length}/63',
-                  ),
-                  _MetricCard(label: 'Favorites', value: '$favorites'),
-                  _MetricCard(label: 'Waiting sync', value: '$waiting'),
-                ],
+              LayoutBuilder(
+                builder: (context, metricsConstraints) {
+                  final columns = metricsConstraints.maxWidth >= 620 ? 4 : 2;
+                  final width =
+                      (metricsConstraints.maxWidth - (columns - 1) * 12) /
+                      columns;
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _MetricCard(
+                        width: width,
+                        icon: Icons.bookmark_added_outlined,
+                        label: 'Check-ins',
+                        value: '${_items.length}',
+                      ),
+                      _MetricCard(
+                        width: width,
+                        icon: Icons.map_outlined,
+                        label: 'Provinces',
+                        value: '${visited.length}/63',
+                      ),
+                      _MetricCard(
+                        width: width,
+                        icon: Icons.favorite_outline,
+                        label: 'Favorites',
+                        value: '$favorites',
+                      ),
+                      _MetricCard(
+                        width: width,
+                        icon: Icons.cloud_upload_outlined,
+                        label: 'Waiting sync',
+                        value: '$waiting',
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
+              if (_items.isEmpty) ...[
+                _InsightCard(
+                  icon: Icons.add_location_alt_outlined,
+                  title: 'Start your travel story',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Add your first place from the map. You can save it offline and enrich it with photos later.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: () => context.go('/map'),
+                        icon: const Icon(Icons.map_outlined),
+                        label: const Text('Open map'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               _InsightCard(
                 icon: Icons.map_outlined,
                 title: 'Vietnam coverage',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: progress,
-                        minHeight: 12,
-                        backgroundColor: colors.panel2,
-                        color: colors.accent,
+                    Semantics(
+                      label:
+                          '${(progress * 100).toStringAsFixed(1)} percent of Vietnam province coverage complete',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 12,
+                          backgroundColor: colors.panel2,
+                          color: colors.accent,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
                     Text(
                       '${(progress * 100).toStringAsFixed(1)}% complete · ${63 - visited.length} province(s) left',
                       style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => context.go('/map'),
+                      icon: const Icon(Icons.explore_outlined),
+                      label: const Text('Explore the map'),
                     ),
                   ],
                 ),
@@ -305,8 +373,15 @@ class _Achievement {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+  const _MetricCard({
+    required this.width,
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
+  final double width;
+  final IconData icon;
   final String label;
   final String value;
 
@@ -314,7 +389,7 @@ class _MetricCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     return SizedBox(
-      width: 210,
+      width: width,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -325,7 +400,14 @@ class _MetricCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            Icon(icon, color: colors.accent, size: 22),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 8),
             Text(value, style: Theme.of(context).textTheme.headlineMedium),
           ],
@@ -363,7 +445,14 @@ class _InsightCard extends StatelessWidget {
             children: [
               Icon(icon, color: colors.accent),
               const SizedBox(width: 10),
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),

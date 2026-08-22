@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource;
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
@@ -26,6 +27,7 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final _repo = CheckInRepository();
+  final _checkInFormKey = GlobalKey<FormState>();
   final _cityCtrl = TextEditingController();
   final _placeCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -152,6 +154,14 @@ class _MapScreenState extends State<MapScreen> {
     }).toList();
   }
 
+  bool get _hasActiveFilters =>
+      _searchCtrl.text.trim().isNotEmpty || _sourceFilter != 'all';
+
+  void _clearFilters() {
+    _searchCtrl.clear();
+    setState(() => _sourceFilter = 'all');
+  }
+
   Future<void> _pickPhoto([ImageSource? source]) async {
     final file = source == null
         ? await openFile(
@@ -183,13 +193,16 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _saveEditedCheckin(CheckIn original) async {
     final city = _cityCtrl.text.trim();
     if (city.isEmpty) return;
+    final checkInAt =
+        _takenAt ?? DateTime.fromMillisecondsSinceEpoch(original.createdAt);
+    final createdAt = checkInAt.millisecondsSinceEpoch;
     var localPhoto = original.localPhoto;
     if (_pickedPhotoBytes != null) {
       localPhoto = await LocalImageStorage.saveImage(
         bytes: _pickedPhotoBytes!,
         originalName: _pickedPhoto?.name ?? 'checkin-photo.jpg',
         city: city,
-        createdAt: original.createdAt,
+        createdAt: createdAt,
       );
       await LocalImageStorage.deleteImage(original.localPhoto);
     }
@@ -200,7 +213,7 @@ class _MapScreenState extends State<MapScreen> {
       notes: _notesCtrl.text.trim(),
       source: original.source,
       synced: false,
-      createdAt: original.createdAt,
+      createdAt: createdAt,
       lat: original.lat,
       lng: original.lng,
       photo: original.photo,
@@ -245,6 +258,34 @@ class _MapScreenState extends State<MapScreen> {
     _rating = 0;
     _favorite = false;
     _takenAt = null;
+  }
+
+  Future<void> _selectCheckInDateTime() async {
+    final initial = _takenAt ?? DateTime.now();
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 366)),
+      helpText: 'When did this memory happen?',
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      helpText: 'What time was it?',
+    );
+    if (!mounted) return;
+    setState(() {
+      _takenAt = DateTime(
+        pickedDate.year,
+        pickedDate.month,
+        pickedDate.day,
+        pickedTime?.hour ?? initial.hour,
+        pickedTime?.minute ?? initial.minute,
+      );
+    });
   }
 
   List<String> _tagsFromInput() {
@@ -303,8 +344,20 @@ class _MapScreenState extends State<MapScreen> {
     });
     await _load();
     if (!mounted) return;
+    final savedOnline = savedItem.synced;
     VietNamMapApp.navigatorKey.currentState?.pop();
     _openDetail(savedItem);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            savedOnline
+                ? 'Check-in saved and synced.'
+                : 'Check-in saved locally. It will sync when the backend is available.',
+          ),
+        ),
+      );
   }
 
   void _openForm([String? city, CheckIn? editing]) {
@@ -317,11 +370,14 @@ class _MapScreenState extends State<MapScreen> {
       _tagsCtrl.text = editing.tagLine;
       _rating = editing.rating;
       _favorite = editing.favorite;
+      _takenAt = DateTime.fromMillisecondsSinceEpoch(editing.createdAt);
       _photoInfo = editing.hasPhoto ? 'Current photo attached' : 'No photo';
     } else if (city != null && city.isNotEmpty) {
       _cityCtrl.text = city;
       _placeCtrl.text = city;
     }
+    _takenAt ??= DateTime.now();
+    var isSaving = false;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -330,108 +386,299 @@ class _MapScreenState extends State<MapScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: StatefulBuilder(
-            builder: (context, setModalState) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      editing == null ? 'New check-in' : 'Edit check-in',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: StatefulBuilder(
+              builder: (context, setModalState) {
+                final checkInAt = _takenAt ?? DateTime.now();
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  child: Form(
+                    key: _checkInFormKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        OutlinedButton.icon(
-                          onPressed: () async {
-                            await _pickPhoto();
-                            setModalState(() {});
-                          },
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: Text(
-                            editing == null ? 'Choose photo' : 'Change photo',
+                        Center(
+                          child: Container(
+                            width: 42,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: colors.line,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    editing == null
+                                        ? 'New check-in'
+                                        : 'Edit check-in',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleLarge,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Save the place first. Photos and details are optional.',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: isSaving
+                                  ? null
+                                  : () => Navigator.of(context).pop(),
+                              tooltip: 'Close check-in form',
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        TextFormField(
+                          controller: _cityCtrl,
+                          autofocus: editing == null && city == null,
+                          textCapitalization: TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Choose or enter a province / city.';
+                            }
+                            return null;
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Province / City',
+                            hintText: 'e.g. Đà Nẵng',
+                            prefixIcon: Icon(Icons.location_on_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _placeCtrl,
+                          textCapitalization: TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            labelText: 'Place',
+                            hintText: 'e.g. Cầu Rồng',
+                            prefixIcon: Icon(Icons.place_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         OutlinedButton.icon(
                           onPressed: () async {
-                            await _pickPhoto(ImageSource.camera);
+                            await _selectCheckInDateTime();
                             setModalState(() {});
                           },
-                          icon: const Icon(Icons.photo_camera_outlined),
-                          label: const Text('Take photo'),
+                          icon: const Icon(Icons.calendar_month_outlined),
+                          label: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              DateFormat(
+                                'EEE, d MMM yyyy · HH:mm',
+                              ).format(checkInAt),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ExpansionTile(
+                          initiallyExpanded: editing != null,
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: const EdgeInsets.only(bottom: 4),
+                          leading: const Icon(Icons.auto_awesome_outlined),
+                          title: const Text('Add memory details'),
+                          subtitle: const Text(
+                            'Photo, note, tags, favorite and rating',
+                          ),
+                          children: [
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await _pickPhoto();
+                                      setModalState(() {});
+                                    },
+                                    icon: const Icon(
+                                      Icons.photo_library_outlined,
+                                    ),
+                                    label: Text(
+                                      editing == null
+                                          ? 'Choose photo'
+                                          : 'Change photo',
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await _pickPhoto(ImageSource.camera);
+                                      setModalState(() {});
+                                    },
+                                    icon: const Icon(
+                                      Icons.photo_camera_outlined,
+                                    ),
+                                    label: const Text('Take photo'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            if (_pickedPhotoBytes != null)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: SizedBox(
+                                  height: 160,
+                                  width: double.infinity,
+                                  child: Image.memory(
+                                    Uint8List.fromList(_pickedPhotoBytes!),
+                                    fit: BoxFit.cover,
+                                    semanticLabel: 'Selected check-in photo',
+                                  ),
+                                ),
+                              )
+                            else if (editing?.hasPhoto ?? false)
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: colors.panel2,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: colors.line),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(Icons.photo_outlined),
+                                    SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Current photo will be kept unless you choose a replacement.',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (_pickedPhotoBytes != null ||
+                                (editing?.hasPhoto ?? false)) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _photoInfo,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _notesCtrl,
+                              textCapitalization: TextCapitalization.sentences,
+                              minLines: 3,
+                              maxLines: 5,
+                              decoration: const InputDecoration(
+                                labelText: 'Note',
+                                hintText: 'What made this memory special?',
+                                alignLabelWithHint: true,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _tagsCtrl,
+                              textCapitalization: TextCapitalization.words,
+                              decoration: const InputDecoration(
+                                labelText: 'Tags',
+                                hintText: 'food, family, beach',
+                                prefixIcon: Icon(Icons.sell_outlined),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _favorite,
+                              onChanged: (value) {
+                                setState(() => _favorite = value);
+                                setModalState(() {});
+                              },
+                              title: const Text('Favorite place'),
+                              secondary: const Icon(Icons.favorite_outline),
+                            ),
+                            _RatingPicker(
+                              value: _rating,
+                              onChanged: (value) {
+                                setState(() => _rating = value);
+                                setModalState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        FilledButton.icon(
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  if (!(_checkInFormKey.currentState
+                                          ?.validate() ??
+                                      false)) {
+                                    return;
+                                  }
+                                  FocusScope.of(context).unfocus();
+                                  setModalState(() => isSaving = true);
+                                  try {
+                                    if (editing == null) {
+                                      await _saveCheckin();
+                                    } else {
+                                      await _saveEditedCheckin(editing);
+                                    }
+                                  } catch (error) {
+                                    if (!context.mounted) return;
+                                    setModalState(() => isSaving = false);
+                                    ScaffoldMessenger.of(context)
+                                      ..hideCurrentSnackBar()
+                                      ..showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Could not save this check-in: $error',
+                                          ),
+                                        ),
+                                      );
+                                  }
+                                },
+                          icon: isSaving
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  editing == null
+                                      ? Icons.bookmark_add_outlined
+                                      : Icons.check_circle_outline,
+                                ),
+                          label: Text(
+                            isSaving
+                                ? 'Saving…'
+                                : editing == null
+                                ? 'Save check-in'
+                                : 'Save changes',
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _photoInfo,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _cityCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Province / City',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _placeCtrl,
-                      decoration: const InputDecoration(labelText: 'Place'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _notesCtrl,
-                      maxLines: 3,
-                      decoration: const InputDecoration(labelText: 'Notes'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _tagsCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Tags',
-                        hintText: 'food, family, beach',
-                        prefixIcon: Icon(Icons.sell_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: _favorite,
-                      onChanged: (value) {
-                        setState(() => _favorite = value);
-                        setModalState(() {});
-                      },
-                      title: const Text('Favorite place'),
-                      secondary: const Icon(Icons.favorite_outline),
-                    ),
-                    _RatingPicker(
-                      value: _rating,
-                      onChanged: (value) {
-                        setState(() => _rating = value);
-                        setModalState(() {});
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: editing == null
-                          ? _saveCheckin
-                          : () => _saveEditedCheckin(editing),
-                      child: Text(editing == null ? 'Save check-in' : 'Update'),
-                    ),
-                  ],
-                ),
-              );
-            },
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
@@ -554,6 +801,27 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _deleteSelected() async {
     final item = _selected;
     if (item == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete check-in?'),
+        content: Text(
+          'Remove ${item.place} from your local travel memories? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete check-in'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await LocalImageStorage.deleteImage(item.localPhoto);
     try {
       await SyncService(
@@ -625,16 +893,6 @@ class _MapScreenState extends State<MapScreen> {
     return items;
   }
 
-  Future<void> _markSynced() async {
-    final item = _selected;
-    if (item == null) return;
-    await _repo.markSynced(item.id);
-    await _load();
-    setState(() {
-      _selected = item.copyWith(synced: true);
-    });
-  }
-
   Future<void> _toggleFavorite(CheckIn item) async {
     final updated = item.copyWith(favorite: !item.favorite, synced: false);
     await _repo.update(updated);
@@ -654,14 +912,29 @@ class _MapScreenState extends State<MapScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Filters', style: Theme.of(context).textTheme.titleMedium),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Find memories',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (_hasActiveFilters)
+                TextButton.icon(
+                  onPressed: _clearFilters,
+                  icon: const Icon(Icons.clear_all_outlined),
+                  label: const Text('Clear'),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _searchCtrl,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
-              labelText: 'Search',
-              hintText: 'Hanoi, Da Nang...',
+              labelText: 'Search memories',
+              hintText: 'Hanoi, Da Nang, beach...',
               prefixIcon: Icon(Icons.search),
             ),
           ),
@@ -676,16 +949,7 @@ class _MapScreenState extends State<MapScreen> {
             ],
             onChanged: (value) =>
                 setState(() => _sourceFilter = value ?? 'all'),
-            decoration: const InputDecoration(labelText: 'Source'),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => _openForm(),
-              icon: const Icon(Icons.add),
-              label: const Text('New Check-in'),
-            ),
+            decoration: const InputDecoration(labelText: 'Check-in source'),
           ),
         ],
       ),
@@ -694,7 +958,9 @@ class _MapScreenState extends State<MapScreen> {
 
   Widget _buildRecentList() {
     final colors = AppColors.of(context);
-    final items = _filteredItems.take(8).toList();
+    final filtered = _filteredItems
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final items = filtered.take(8).toList();
     return Container(
       decoration: BoxDecoration(
         color: colors.panel,
@@ -706,23 +972,49 @@ class _MapScreenState extends State<MapScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Recent check-ins',
-                style: Theme.of(context).textTheme.titleMedium,
+              Expanded(
+                child: Text(
+                  'Recent memories',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
-              Text(
-                '${items.length} items',
-                style: TextStyle(color: colors.muted, fontSize: 12),
+              TextButton(
+                onPressed: () => context.go('/history'),
+                child: const Text('View all'),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          Text(
+            filtered.isEmpty
+                ? 'No memories found'
+                : '${filtered.length} matching memor${filtered.length == 1 ? 'y' : 'ies'}',
+            style: TextStyle(color: colors.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
           if (items.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 16),
-              child: Text('No matching data.'),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: colors.panel2,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: colors.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('No matching memories yet.'),
+                  if (_hasActiveFilters) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _clearFilters,
+                      icon: const Icon(Icons.clear_all_outlined),
+                      label: const Text('Clear filters'),
+                    ),
+                  ],
+                ],
+              ),
             )
           else
             ...items.map(
@@ -824,7 +1116,7 @@ class _MapScreenState extends State<MapScreen> {
             Text('Vietnam map', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              'Click a province to check in. Hover a province to see recent check-in photos.',
+              'Tap a province to view its memories or add a new one. On desktop, hover for recent photos.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
@@ -846,6 +1138,18 @@ class _MapScreenState extends State<MapScreen> {
                           );
                           final stats = _provinceStats();
                           final projected = _projectedFor(size);
+                          final tooltipWidth = min(
+                            260.0,
+                            max(0.0, size.width - 16),
+                          ).toDouble();
+                          final maxTooltipLeft = max(
+                            8.0,
+                            size.width - tooltipWidth - 8,
+                          ).toDouble();
+                          final maxTooltipTop = max(
+                            8.0,
+                            size.height - 176,
+                          ).toDouble();
                           return Stack(
                             children: [
                               Positioned.fill(
@@ -872,24 +1176,29 @@ class _MapScreenState extends State<MapScreen> {
                                       });
                                     }
                                   },
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.translucent,
-                                    onTapUp: (details) {
-                                      final hit = _provinceAt(
-                                        details.localPosition,
-                                        size,
-                                      );
-                                      if (hit != null) {
-                                        _openProvinceDetail(hit.name);
-                                      }
-                                    },
-                                    child: CustomPaint(
-                                      size: size,
-                                      painter: _VietnamMapPainter(
-                                        provinces: projected,
-                                        stats: stats,
-                                        hoveredProvince: _hoverProvince,
-                                        dark: dark,
+                                  child: Semantics(
+                                    label:
+                                        'Interactive Vietnam province map. Tap a province to view its memories or add a check-in.',
+                                    button: true,
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.translucent,
+                                      onTapUp: (details) {
+                                        final hit = _provinceAt(
+                                          details.localPosition,
+                                          size,
+                                        );
+                                        if (hit != null) {
+                                          _openProvinceDetail(hit.name);
+                                        }
+                                      },
+                                      child: CustomPaint(
+                                        size: size,
+                                        painter: _VietnamMapPainter(
+                                          provinces: projected,
+                                          stats: stats,
+                                          hoveredProvince: _hoverProvince,
+                                          dark: dark,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -911,20 +1220,22 @@ class _MapScreenState extends State<MapScreen> {
                               if (_hoverProvince != null &&
                                   _hoverPosition != null)
                                 Positioned(
-                                  left: (_hoverPosition!.dx + 14).clamp(
-                                    8,
-                                    size.width - 270,
-                                  ),
-                                  top: (_hoverPosition!.dy - 36).clamp(
-                                    8,
-                                    size.height - 176,
-                                  ),
-                                  child: _ProvinceTip(
-                                    name: _hoverProvince!,
-                                    count:
-                                        stats[_cleanName(_hoverProvince!)] ?? 0,
-                                    photos: _provincePhotos(_hoverProvince!),
-                                    photoUrl: _photoUrl,
+                                  left: (_hoverPosition!.dx + 14)
+                                      .clamp(8.0, maxTooltipLeft)
+                                      .toDouble(),
+                                  top: (_hoverPosition!.dy - 36)
+                                      .clamp(8.0, maxTooltipTop)
+                                      .toDouble(),
+                                  child: SizedBox(
+                                    width: tooltipWidth,
+                                    child: _ProvinceTip(
+                                      name: _hoverProvince!,
+                                      count:
+                                          stats[_cleanName(_hoverProvince!)] ??
+                                          0,
+                                      photos: _provincePhotos(_hoverProvince!),
+                                      photoUrl: _photoUrl,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -932,17 +1243,6 @@ class _MapScreenState extends State<MapScreen> {
                         },
                       ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FilledButton.icon(
-                  onPressed: _openForm,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Check-in'),
-                ),
-              ],
             ),
           ],
         ),
@@ -1037,6 +1337,7 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                     IconButton(
                       onPressed: () => setState(() => _selectedProvince = null),
+                      tooltip: 'Close province details',
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -1139,6 +1440,7 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                     IconButton(
                       onPressed: () => setState(() => _selected = null),
+                      tooltip: 'Close check-in details',
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -1208,26 +1510,34 @@ class _MapScreenState extends State<MapScreen> {
                   value: item.synced ? 'Synced' : 'Waiting to sync',
                 ),
                 const SizedBox(height: 12),
-                Row(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () => _openEditCheckin(item),
-                        child: const Text('Edit'),
-                      ),
+                    FilledButton.icon(
+                      onPressed: () => _openEditCheckin(item),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit check-in'),
                     ),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: _markSynced,
-                      child: const Text('Sync status'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: _deleteSelected,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
-                      child: const Text('Delete'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/sync'),
+                          icon: const Icon(Icons.sync_outlined),
+                          label: const Text('Open Sync'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _deleteSelected,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                          ),
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Delete'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1303,6 +1613,22 @@ class _MapScreenState extends State<MapScreen> {
           alignment: Alignment.bottomCenter,
           child: _buildDetailDrawer(context),
         ),
+        if (_selected == null && _selectedProvince == null)
+          Positioned(
+            right: 18,
+            bottom: 18,
+            child: Semantics(
+              label: 'Add a new travel memory',
+              button: true,
+              child: FloatingActionButton.extended(
+                heroTag: 'map-add-checkin',
+                onPressed: _openForm,
+                icon: const Icon(Icons.add_location_alt_outlined),
+                label: const Text('Add memory'),
+                tooltip: 'Add a new check-in',
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1480,31 +1806,37 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    final compact = width < 190;
     return SizedBox(
       width: width,
-      height: 116,
+      height: compact ? 132 : 116,
       child: Container(
         decoration: BoxDecoration(
           color: colors.panel,
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: colors.line),
         ),
-        padding: const EdgeInsets.all(18),
+        padding: EdgeInsets.all(compact ? 16 : 18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: colors.muted),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colors.muted,
+                fontSize: compact ? 13 : null,
+                height: compact ? 1.25 : null,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: compact ? 6 : 8),
             Text(
               value,
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.w800,
                 color: colors.accent,
+                fontSize: compact ? 24 : null,
               ),
             ),
           ],
@@ -1716,7 +2048,6 @@ class _ProvinceTip extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: 260,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: colors.panel.withValues(alpha: 0.98),

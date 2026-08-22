@@ -1,6 +1,6 @@
 {
-  "versionName": "1.1.2",
-  "versionCode": 24,
+  "versionName": "1.1.3",
+  "versionCode": 25,
   "apkFile": "app-release.apk",
-  "notes": "Fixes the default LAN backend URL for the current machine at 192.168.1.157, and includes backup restore, travel coverage progress, achievements, top province insights, favorite check-ins, memory scores, tags, advanced history filters, JSON export, and a clearer sync queue."
+  "notes": "Restores the original VietNam Map Checkin launcher logo across Android, web, iOS, and macOS icons, fixes the default LAN backend URL for 192.168.1.157, and includes backup restore, travel coverage progress, achievements, top province insights, favorite check-ins, memory scores, tags, advanced history filters, JSON export, and a clearer sync queue."
 }

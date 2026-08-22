@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
 import '../models/checkin.dart';
 import '../repositories/backend_config.dart';
@@ -19,6 +20,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final _repo = CheckInRepository();
+  final _queryController = TextEditingController();
   List<CheckIn> _items = [];
   String _backendUrl = BackendConfig.defaultUrl;
   String _query = '';
@@ -176,6 +178,102 @@ class _HistoryScreenState extends State<HistoryScreen> {
     setState(() => _items = items);
   }
 
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  bool get _hasActiveFilters => _query.trim().isNotEmpty || _filter != 'all';
+
+  void _clearFilters() {
+    _queryController.clear();
+    setState(() {
+      _query = '';
+      _filter = 'all';
+    });
+  }
+
+  int _compareText(String a, String b) =>
+      a.toLowerCase().compareTo(b.toLowerCase());
+
+  int _compareCheckIns(CheckIn a, CheckIn b) {
+    final primary = switch (_sort) {
+      'oldest' => a.createdAt.compareTo(b.createdAt),
+      'rating' => b.rating.compareTo(a.rating),
+      'city' => _compareText(a.city, b.city),
+      _ => b.createdAt.compareTo(a.createdAt),
+    };
+    if (primary != 0) return primary;
+
+    final date = _sort == 'oldest'
+        ? a.createdAt.compareTo(b.createdAt)
+        : b.createdAt.compareTo(a.createdAt);
+    if (date != 0) return date;
+
+    final city = _compareText(a.city, b.city);
+    if (city != 0) return city;
+    final place = _compareText(a.place, b.place);
+    if (place != 0) return place;
+    return a.id.compareTo(b.id);
+  }
+
+  int _latestDate(List<CheckIn> items) => items.fold(
+    items.first.createdAt,
+    (latest, item) => item.createdAt > latest ? item.createdAt : latest,
+  );
+
+  int _earliestDate(List<CheckIn> items) => items.fold(
+    items.first.createdAt,
+    (earliest, item) => item.createdAt < earliest ? item.createdAt : earliest,
+  );
+
+  int _highestRating(List<CheckIn> items) => items.fold(
+    0,
+    (highest, item) => item.rating > highest ? item.rating : highest,
+  );
+
+  List<String> _orderedCities(Map<String, List<CheckIn>> grouped) {
+    final cities = grouped.keys.toList();
+    cities.sort((a, b) {
+      final aItems = grouped[a]!;
+      final bItems = grouped[b]!;
+      final primary = switch (_sort) {
+        'oldest' => _earliestDate(aItems).compareTo(_earliestDate(bItems)),
+        'rating' => _highestRating(bItems).compareTo(_highestRating(aItems)),
+        'city' => _compareText(a, b),
+        _ => _latestDate(bItems).compareTo(_latestDate(aItems)),
+      };
+      if (primary != 0) return primary;
+
+      if (_sort == 'rating') {
+        final recent = _latestDate(bItems).compareTo(_latestDate(aItems));
+        if (recent != 0) return recent;
+      }
+      return _compareText(a, b);
+    });
+    return cities;
+  }
+
+  String _groupSummary(List<CheckIn> items) {
+    final date = switch (_sort) {
+      'oldest' => _earliestDate(items),
+      _ => _latestDate(items),
+    };
+    final dateLabel = DateFormat(
+      'dd MMM yyyy',
+    ).format(DateTime.fromMillisecondsSinceEpoch(date));
+    final countLabel =
+        '${items.length} ${items.length == 1 ? 'memory' : 'memories'}';
+    return switch (_sort) {
+      'oldest' => '$countLabel · First $dateLabel',
+      'rating' when _highestRating(items) > 0 =>
+        '$countLabel · Best ${_highestRating(items)}/5',
+      'rating' => '$countLabel · Not rated yet',
+      _ => '$countLabel · Latest $dateLabel',
+    };
+  }
+
   List<CheckIn> get _visibleItems {
     final q = _query.trim().toLowerCase();
     final items = _items.where((item) {
@@ -194,14 +292,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       };
       return matchesQuery && matchesFilter;
     }).toList();
-    items.sort((a, b) {
-      return switch (_sort) {
-        'oldest' => a.createdAt.compareTo(b.createdAt),
-        'rating' => b.rating.compareTo(a.rating),
-        'city' => a.city.compareTo(b.city),
-        _ => b.createdAt.compareTo(a.createdAt),
-      };
-    });
+    items.sort(_compareCheckIns);
     return items;
   }
 
@@ -213,7 +304,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     for (final item in visible) {
       grouped.putIfAbsent(item.city, () => []).add(item);
     }
-    final cities = grouped.keys.toList()..sort();
+    final cities = _orderedCities(grouped);
 
     return Container(
       decoration: BoxDecoration(
@@ -237,85 +328,57 @@ class _HistoryScreenState extends State<HistoryScreen> {
         children: [
           _SectionHeader(
             title: 'Check-in history',
-            action: TextButton(onPressed: _load, child: const Text('Reload')),
+            action: TextButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reload'),
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+            ),
           ),
           const SizedBox(height: 18),
           _HistoryTools(
             query: _query,
+            queryController: _queryController,
             filter: _filter,
             sort: _sort,
             total: visible.length,
+            hasActiveFilters: _hasActiveFilters,
             onQueryChanged: (value) => setState(() => _query = value),
             onFilterChanged: (value) =>
                 setState(() => _filter = value ?? 'all'),
             onSortChanged: (value) => setState(() => _sort = value ?? 'newest'),
+            onClearFilters: _clearFilters,
           ),
           const SizedBox(height: 14),
           if (cities.isEmpty)
             _EmptyHistoryCard(
+              icon: _items.isEmpty
+                  ? Icons.add_location_alt_outlined
+                  : Icons.search_off_outlined,
+              title: _items.isEmpty
+                  ? 'Start your travel story'
+                  : 'No matches yet',
               text: _items.isEmpty
-                  ? 'No check-ins yet. Go back to the map to create the first one.'
-                  : 'No check-ins match these filters.',
+                  ? 'Add a first memory from the map. It will appear here by province.'
+                  : 'Try a different search term or remove the current filters.',
+              actionLabel: _items.isEmpty ? 'Open map' : 'Clear filters',
+              actionIcon: _items.isEmpty
+                  ? Icons.map_outlined
+                  : Icons.filter_alt_off_outlined,
+              onAction: _items.isEmpty
+                  ? () => context.go('/map')
+                  : _clearFilters,
               colors: colors,
             ),
-          for (final city in cities)
-            Container(
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: colors.panel,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: colors.line),
-              ),
-              child: ExpansionTile(
-                iconColor: colors.accent,
-                collapsedIconColor: colors.muted,
-                tilePadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                minTileHeight: 76,
-                title: Text(
-                  '$city (${grouped[city]!.length})',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                children: grouped[city]!
-                    .map(
-                      (item) => Container(
-                        margin: const EdgeInsets.only(top: 8),
-                        decoration: BoxDecoration(
-                          color: colors.panel2,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: colors.line),
-                        ),
-                        child: ListTile(
-                          leading: _HistoryThumbnail(
-                            item: item,
-                            photoUrl: _photoUrl,
-                            onTap: () => _openPhoto(item),
-                          ),
-                          title: Text(
-                            item.place,
-                            style: Theme.of(context).textTheme.bodyLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            '${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))} · ${item.source.toUpperCase()}${item.rating > 0 ? ' · ${item.rating}/5' : ''}${item.tags.isNotEmpty ? ' · ${item.tagLine}' : ''}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          trailing: Icon(
-                            item.favorite
-                                ? Icons.favorite
-                                : Icons.chevron_right,
-                            color: item.favorite
-                                ? colors.accent2
-                                : colors.muted,
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
+          for (var index = 0; index < cities.length; index += 1)
+            _ProvinceHistoryGroup(
+              city: cities[index],
+              summary: _groupSummary(grouped[cities[index]]!),
+              items: grouped[cities[index]]!,
+              initiallyExpanded: index == 0,
+              colors: colors,
+              photoUrl: _photoUrl,
+              onOpenPhoto: _openPhoto,
             ),
         ],
       ),
@@ -324,21 +387,60 @@ class _HistoryScreenState extends State<HistoryScreen> {
 }
 
 class _EmptyHistoryCard extends StatelessWidget {
-  const _EmptyHistoryCard({required this.text, required this.colors});
+  const _EmptyHistoryCard({
+    required this.icon,
+    required this.title,
+    required this.text,
+    required this.actionLabel,
+    required this.actionIcon,
+    required this.onAction,
+    required this.colors,
+  });
 
+  final IconData icon;
+  final String title;
   final String text;
+  final String actionLabel;
+  final IconData actionIcon;
+  final VoidCallback onAction;
   final AppColors colors;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: colors.panel,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: colors.line),
       ),
-      child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: colors.panel2,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: colors.accent2),
+          ),
+          const SizedBox(height: 16),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text(text, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onAction,
+              icon: Icon(actionIcon),
+              label: Text(actionLabel),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -346,21 +448,27 @@ class _EmptyHistoryCard extends StatelessWidget {
 class _HistoryTools extends StatelessWidget {
   const _HistoryTools({
     required this.query,
+    required this.queryController,
     required this.filter,
     required this.sort,
     required this.total,
+    required this.hasActiveFilters,
     required this.onQueryChanged,
     required this.onFilterChanged,
     required this.onSortChanged,
+    required this.onClearFilters,
   });
 
   final String query;
+  final TextEditingController queryController;
   final String filter;
   final String sort;
   final int total;
+  final bool hasActiveFilters;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<String?> onFilterChanged;
   final ValueChanged<String?> onSortChanged;
+  final VoidCallback onClearFilters;
 
   @override
   Widget build(BuildContext context) {
@@ -373,14 +481,49 @@ class _HistoryTools extends StatelessWidget {
         border: Border.all(color: colors.line),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Find a memory',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Semantics(
+                label:
+                    '$total ${total == 1 ? 'memory' : 'memories'} currently visible',
+                child: ExcludeSemantics(
+                  child: Text(
+                    '$total ${total == 1 ? 'memory' : 'memories'}',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelLarge?.copyWith(color: colors.muted),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           TextField(
+            controller: queryController,
             onChanged: onQueryChanged,
+            textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               labelText: 'Search memories',
               hintText: 'place, note, tag...',
               prefixIcon: const Icon(Icons.search),
-              suffixText: '$total',
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        queryController.clear();
+                        onQueryChanged('');
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
             ),
           ),
           const SizedBox(height: 12),
@@ -388,7 +531,9 @@ class _HistoryTools extends StatelessWidget {
             builder: (context, constraints) {
               final narrow = constraints.maxWidth < 620;
               final filterField = DropdownButtonFormField<String>(
+                key: ValueKey('history-filter-$filter'),
                 initialValue: filter,
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(value: 'all', child: Text('All')),
                   DropdownMenuItem(
@@ -403,10 +548,15 @@ class _HistoryTools extends StatelessWidget {
                   DropdownMenuItem(value: 'rated', child: Text('Rated')),
                 ],
                 onChanged: onFilterChanged,
-                decoration: const InputDecoration(labelText: 'Filter'),
+                decoration: const InputDecoration(
+                  labelText: 'Filter',
+                  prefixIcon: Icon(Icons.filter_list_outlined),
+                ),
               );
               final sortField = DropdownButtonFormField<String>(
+                key: ValueKey('history-sort-$sort'),
                 initialValue: sort,
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(value: 'newest', child: Text('Newest')),
                   DropdownMenuItem(value: 'oldest', child: Text('Oldest')),
@@ -414,7 +564,10 @@ class _HistoryTools extends StatelessWidget {
                   DropdownMenuItem(value: 'city', child: Text('Province A-Z')),
                 ],
                 onChanged: onSortChanged,
-                decoration: const InputDecoration(labelText: 'Sort'),
+                decoration: const InputDecoration(
+                  labelText: 'Sort',
+                  prefixIcon: Icon(Icons.sort_outlined),
+                ),
               );
               if (narrow) {
                 return Column(
@@ -434,7 +587,176 @@ class _HistoryTools extends StatelessWidget {
               );
             },
           ),
+          if (hasActiveFilters) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onClearFilters,
+                icon: const Icon(Icons.filter_alt_off_outlined),
+                label: const Text('Clear filters'),
+                style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _ProvinceHistoryGroup extends StatelessWidget {
+  const _ProvinceHistoryGroup({
+    required this.city,
+    required this.summary,
+    required this.items,
+    required this.initiallyExpanded,
+    required this.colors,
+    required this.photoUrl,
+    required this.onOpenPhoto,
+  });
+
+  final String city;
+  final String summary;
+  final List<CheckIn> items;
+  final bool initiallyExpanded;
+  final AppColors colors;
+  final String Function(String path) photoUrl;
+  final ValueChanged<CheckIn> onOpenPhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: colors.line),
+      ),
+      child: ExpansionTile(
+        key: PageStorageKey('history-province-$city'),
+        initiallyExpanded: initiallyExpanded,
+        iconColor: colors.accent,
+        collapsedIconColor: colors.muted,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        minTileHeight: 84,
+        title: Text(city, style: Theme.of(context).textTheme.titleMedium),
+        subtitle: Text(
+          summary,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: colors.muted),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        children: items
+            .map(
+              (item) => _HistoryEntryCard(
+                item: item,
+                colors: colors,
+                photoUrl: photoUrl,
+                onOpenPhoto: () => onOpenPhoto(item),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _HistoryEntryCard extends StatelessWidget {
+  const _HistoryEntryCard({
+    required this.item,
+    required this.colors,
+    required this.photoUrl,
+    required this.onOpenPhoto,
+  });
+
+  final CheckIn item;
+  final AppColors colors;
+  final String Function(String path) photoUrl;
+  final VoidCallback onOpenPhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = StringBuffer(
+      '${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.createdAt))} · ${item.source.toUpperCase()}',
+    );
+    if (item.rating > 0) details.write(' · ${item.rating}/5');
+    if (item.tags.isNotEmpty) details.write(' · ${item.tagLine}');
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: colors.panel2,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.line),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        minLeadingWidth: 52,
+        minVerticalPadding: 10,
+        isThreeLine: true,
+        leading: _HistoryThumbnail(
+          item: item,
+          photoUrl: photoUrl,
+          onTap: onOpenPhoto,
+        ),
+        title: Text(
+          item.place,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          details.toString(),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        trailing: _HistoryStatus(item: item, colors: colors),
+      ),
+    );
+  }
+}
+
+class _HistoryStatus extends StatelessWidget {
+  const _HistoryStatus({required this.item, required this.colors});
+
+  final CheckIn item;
+  final AppColors colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = item.synced ? 'Synced' : 'Waiting to sync';
+    final labels = [if (item.favorite) 'Favorite', status];
+    return Semantics(
+      label: labels.join(', '),
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: 28,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (item.favorite)
+                Tooltip(
+                  message: 'Favorite',
+                  child: Icon(Icons.favorite, size: 20, color: colors.accent2),
+                ),
+              Tooltip(
+                message: status,
+                child: Icon(
+                  item.synced
+                      ? Icons.cloud_done_outlined
+                      : Icons.cloud_upload_outlined,
+                  size: 20,
+                  color: item.synced ? colors.good : colors.accent2,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -455,28 +777,36 @@ class _HistoryThumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
     if (!item.hasPhoto) {
-      return CircleAvatar(
-        backgroundColor: item.synced
-            ? colors.good.withValues(alpha: 0.22)
-            : colors.warning.withValues(alpha: 0.25),
-        foregroundColor: item.synced ? colors.good : colors.accent2,
-        child: Icon(
-          item.synced ? Icons.cloud_done : Icons.cloud_upload_outlined,
+      return Semantics(
+        image: true,
+        label: item.synced ? 'No photo, synced' : 'No photo, waiting to sync',
+        child: CircleAvatar(
+          backgroundColor: item.synced
+              ? colors.good.withValues(alpha: 0.22)
+              : colors.warning.withValues(alpha: 0.25),
+          foregroundColor: item.synced ? colors.good : colors.accent2,
+          child: Icon(
+            item.synced ? Icons.cloud_done : Icons.cloud_upload_outlined,
+          ),
         ),
       );
     }
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: ClipRRect(
+    return Semantics(
+      button: true,
+      label: 'View photo from ${item.place}',
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: CheckInPhoto(
-            item: item,
-            remoteUrl: photoUrl,
-            emptyIconSize: 20,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: CheckInPhoto(
+              item: item,
+              remoteUrl: photoUrl,
+              emptyIconSize: 20,
+            ),
           ),
         ),
       ),

@@ -105,6 +105,7 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: seed,
       brightness: Brightness.dark,
+      surface: tokens.panel,
     );
     return ThemeData(
       useMaterial3: true,
@@ -121,20 +122,33 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         height: 88,
+        elevation: 0,
         backgroundColor: tokens.panel2,
         indicatorColor: tokens.line,
         indicatorShape: const StadiumBorder(),
-        iconTheme: WidgetStateProperty.all(
-          IconThemeData(color: tokens.text, size: 29),
-        ),
-        labelTextStyle: WidgetStateProperty.all(
-          TextStyle(color: tokens.muted, fontSize: 12),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          return IconThemeData(
+            color: tokens.text,
+            size: states.contains(WidgetState.selected) ? 30 : 28,
+          );
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            color: tokens.muted,
+            fontSize: 13,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w600
+                : FontWeight.w500,
+          ),
         ),
       ),
       cardTheme: CardThemeData(
         elevation: 0,
         color: tokens.panel,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(color: tokens.line),
+        ),
       ),
       inputDecorationTheme: _inputTheme(tokens),
       filledButtonTheme: FilledButtonThemeData(
@@ -142,6 +156,7 @@ class AppTheme {
           backgroundColor: tokens.accent,
           foregroundColor: const Color(0xFF1E1B16),
           minimumSize: const Size(48, 52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
@@ -152,6 +167,7 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: tokens.accent,
           minimumSize: const Size(48, 52),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           side: BorderSide(color: tokens.muted),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -159,6 +175,13 @@ class AppTheme {
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
         ),
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: tokens.accent,
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+      ),
+      dividerColor: tokens.line,
     );
   }
 

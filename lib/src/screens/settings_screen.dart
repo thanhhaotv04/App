@@ -6,6 +6,7 @@ import '../app_version.dart';
 import '../models/checkin.dart';
 import '../repositories/app_data_reset.dart';
 import '../repositories/app_update_service.dart';
+import '../repositories/auth_service.dart';
 import '../repositories/backup_service.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
@@ -94,18 +95,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     setState(() => _savingAccount = true);
-    await prefs.setString(_userKey, name);
-    if (newPassword.isNotEmpty) {
-      await prefs.setString(_passwordKey, newPassword);
+    try {
+      await BackendConfig.saveUrl(_backendCtrl.text);
+      final savedName =
+          await AuthService(
+            baseUrl: await BackendConfig.loadUrl(),
+          ).updateAccount(
+            name: prefs.getString(_userKey) ?? name,
+            currentPassword: currentPassword,
+            newName: name,
+            newPassword: newPassword.isEmpty ? null : newPassword,
+          );
+      await prefs.setString(_userKey, savedName);
+      if (newPassword.isNotEmpty) {
+        await prefs.setString(_passwordKey, newPassword);
+      }
+      if (!mounted) return;
+      setState(() {
+        _userCtrl.text = savedName;
+        _currentPasswordCtrl.clear();
+        _newPasswordCtrl.clear();
+        _confirmPasswordCtrl.clear();
+      });
+      _showMessage('Account saved.');
+    } catch (err) {
+      _showMessage('Account update failed: $err');
+    } finally {
+      if (mounted) setState(() => _savingAccount = false);
     }
-    if (!mounted) return;
-    setState(() {
-      _savingAccount = false;
-      _currentPasswordCtrl.clear();
-      _newPasswordCtrl.clear();
-      _confirmPasswordCtrl.clear();
-    });
-    _showMessage('Local account saved.');
   }
 
   Future<void> _saveBackendUrl() async {
