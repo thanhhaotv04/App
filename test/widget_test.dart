@@ -442,7 +442,7 @@ void main() {
     expect(tasks, contains('Ghi chú mới'));
   });
 
-  testWidgets('daily moves a task to collapsible done after double tap', (
+  testWidgets('daily exposes a one-tap done action and keeps undo available', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -465,12 +465,8 @@ void main() {
     expect(find.text('My Day'), findsOneWidget);
     expect(find.text('Done'), findsOneWidget);
 
-    await tester.tap(find.text('Uống nước'));
-    await tester.pumpAndSettle();
-    expect(find.text('Uống nước'), findsOneWidget);
-
-    await tester.tap(find.text('Uống nước'));
-    await tester.tap(find.text('Uống nước'));
+    expect(find.byTooltip('Mark Uống nước done'), findsOneWidget);
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.check));
     await tester.pumpAndSettle();
     expect(find.text('Uống nước'), findsNothing);
 
@@ -481,6 +477,91 @@ void main() {
     await tester.tap(find.byTooltip('Undo'));
     await tester.pumpAndSettle();
     expect(find.text('Uống nước'), findsOneWidget);
+  });
+
+  testWidgets('quick add previews recognized task details before saving', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+    await tester.tap(find.byTooltip('Add task'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('add-task-title-input')),
+      'Nộp báo cáo hôm nay 9:30 !cao ~45p #laptop',
+    );
+    await tester.pumpAndSettle();
+
+    final detection = find.byKey(const ValueKey('quick-add-detection'));
+    expect(detection, findsOneWidget);
+    expect(
+      find.descendant(
+        of: detection,
+        matching: find.textContaining('Detected:'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: detection, matching: find.textContaining('Today')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('overview can browse future months and return to current month', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Next month'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Go to current month'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Go to current month'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Go to current month'), findsNothing);
+  });
+
+  testWidgets('all tasks confirms the impact before deleting a task', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'preview',
+      AuthCache.passwordKey: 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await openTab(tester, 2);
+    await addTaskFromAllTasks(tester, 'Delete me');
+
+    await tester.tap(find.byTooltip('More actions for Delete me'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete task'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete task?'), findsOneWidget);
+    expect(find.textContaining('all of its scheduled dates'), findsOneWidget);
   });
 
   testWidgets('quick add smart tokens create a focused task for today', (
@@ -645,7 +726,7 @@ void main() {
     expect(find.text('Buy fruit'), findsNothing);
   });
 
-  testWidgets('today view remains overflow-free at representative widths', (
+  testWidgets('main task views remain overflow-free at representative widths', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -660,7 +741,14 @@ void main() {
       tester.view.physicalSize = Size(width, 1000);
       await tester.pumpWidget(const TaskReminderApp());
       await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull, reason: 'viewport width $width');
+      for (var tab = 0; tab < 4; tab++) {
+        await openTab(tester, tab);
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'viewport width $width, tab $tab',
+        );
+      }
     }
   });
 

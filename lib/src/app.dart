@@ -9,13 +9,14 @@ import 'storage.dart';
 
 final dateTitleFormat = DateFormat('EEE, dd/MM/yyyy');
 final shortDateFormat = DateFormat('dd/MM/yyyy');
+final monthTitleFormat = DateFormat('MMMM yyyy');
 
 abstract final class AppColors {
   static const surface = Color(0xFFFCF9F4);
   static const primary = Color(0xFF5E5452);
   static const secondary = Color(0xFFD6E3F8);
-  static const success = Color(0xFF4CAF50);
-  static const error = Color(0xFFF44336);
+  static const success = Color(0xFF2E7D32);
+  static const error = Color(0xFFC62828);
   static const container = Color(0xFFF6F3EE);
   static const primarySoft = Color(0xFFEEDDD9);
   static const background = surface;
@@ -24,7 +25,7 @@ abstract final class AppColors {
   static const hero = Color(0xFFF2ECE6);
   static const heroBorder = primary;
   static const ink = primary;
-  static const muted = Color(0xFF807572);
+  static const muted = Color(0xFF6F6663);
   static const danger = error;
 }
 
@@ -254,7 +255,6 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
       colorScheme: scheme,
       extensions: [colors],
       scaffoldBackgroundColor: colors.surface,
-      fontFamily: 'Bricolage Grotesque',
       textTheme: ThemeData(brightness: brightness).textTheme.apply(
         bodyColor: colors.primary,
         displayColor: colors.primary,
@@ -264,8 +264,8 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
         margin: EdgeInsets.zero,
         color: colors.container,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(color: colors.border, width: 1.2),
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: colors.border),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -279,15 +279,15 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
           vertical: 18,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: colors.border, width: 1.2),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: colors.border, width: 1.2),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: colors.primary, width: 2),
         ),
       ),
@@ -297,14 +297,18 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
           foregroundColor: dark ? colors.surface : AppColors.surface,
           minimumSize: const Size.fromHeight(54),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: colors.primary,
           side: BorderSide(color: colors.border, width: 1.4),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
@@ -343,7 +347,7 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
         side: BorderSide(color: colors.border, width: 2),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        height: 88,
+        height: 76,
         elevation: 0,
         backgroundColor: colors.container,
         indicatorColor: colors.secondary,
@@ -357,8 +361,8 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
           );
         }),
         indicatorShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
-          side: BorderSide(color: colors.primary, width: 1.2),
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: colors.primary),
         ),
       ),
     );
@@ -520,28 +524,28 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   const BrandAppBar({super.key});
 
   @override
-  Size get preferredSize => const Size.fromHeight(98);
+  Size get preferredSize => const Size.fromHeight(80);
 
   @override
   Widget build(BuildContext context) {
     final colors = context.doodle;
     return AppBar(
-      toolbarHeight: 98,
+      toolbarHeight: 80,
       elevation: 0,
       scrolledUnderElevation: 0,
       backgroundColor: colors.surface,
-      titleSpacing: 24,
+      titleSpacing: 20,
       title: Row(
         children: [
-          Icon(Icons.draw_outlined, color: colors.primary, size: 30),
-          const SizedBox(width: 14),
+          Icon(Icons.draw_outlined, color: colors.primary, size: 27),
+          const SizedBox(width: 12),
           Flexible(
             child: Text(
               'task-reminder',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: colors.primary,
-                fontSize: 27,
+                fontSize: 24,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -562,7 +566,7 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
             );
           },
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
       ],
     );
   }
@@ -821,7 +825,7 @@ class PageList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
       children: children,
     );
   }
@@ -965,7 +969,7 @@ class _OverviewPageState extends State<OverviewPage> {
   Widget build(BuildContext context) {
     final today = dateOnly(DateTime.now());
     final slots = _calendarSlots();
-    final monthTitle = 'Month ${_visibleMonth.month}/${_visibleMonth.year}';
+    final monthTitle = monthTitleFormat.format(_visibleMonth);
     final dailyTaskIds = _dailyScheduledTaskIds();
 
     return PageList(
@@ -983,16 +987,25 @@ class _OverviewPageState extends State<OverviewPage> {
                   ),
                   Expanded(
                     child: Text(
-                      monthTitle.toUpperCase(),
+                      monthTitle,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                   ),
+                  if (!_isCurrentMonth)
+                    IconButton.filledTonal(
+                      tooltip: 'Go to current month',
+                      onPressed: () => setState(() {
+                        final now = DateTime.now();
+                        _visibleMonth = DateTime(now.year, now.month);
+                      }),
+                      icon: const Icon(Icons.today_outlined),
+                    ),
                   IconButton.filledTonal(
                     tooltip: 'Next month',
-                    onPressed: _isCurrentMonth ? null : () => _moveMonth(1),
+                    onPressed: () => _moveMonth(1),
                     icon: const Icon(Icons.chevron_right),
                   ),
                 ],
@@ -1066,6 +1079,15 @@ class _OverviewPageState extends State<OverviewPage> {
                     },
                   );
                 },
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: const [
+                  CalendarStatusLegend(done: false, label: 'Planned'),
+                  CalendarStatusLegend(done: true, label: 'Done'),
+                ],
               ),
             ],
           ),
@@ -1178,24 +1200,13 @@ class _DailyPageState extends State<DailyPage> {
                   ),
                 )
               else
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth < 620 ? 2 : 3;
-                    return GridView.builder(
-                      itemCount: pending.length,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 14,
-                        childAspectRatio: columns == 2 ? .68 : .86,
-                      ),
-                      itemBuilder: (context, index) {
-                        final assignment = pending[index];
-                        final task = taskFor(widget.tasks, assignment);
-                        return DailyReminderCard(
-                          task: task,
+                Column(
+                  children: [
+                    for (final assignment in pending)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: DailyReminderCard(
+                          task: taskFor(widget.tasks, assignment),
                           assignment: assignment,
                           onDoubleTap: () => widget.onDone(assignment),
                           onSnooze15: () => widget.onSnooze(
@@ -1206,10 +1217,9 @@ class _DailyPageState extends State<DailyPage> {
                             assignment,
                             const Duration(days: 1),
                           ),
-                        );
-                      },
-                    );
-                  },
+                        ),
+                      ),
+                  ],
                 ),
             ],
           ),
@@ -1453,11 +1463,17 @@ class _WorkListPageState extends State<WorkListPage> {
                   icon: Icon(_showAll ? Icons.expand_less : Icons.expand_more),
                   label: Text(_showAll ? 'Less' : 'More'),
                 ),
-              DoodleIconButton(
-                tooltip: 'Add task',
-                icon: Icons.add,
-                label: 'Add',
-                onPressed: _addTaskFromDialog,
+              Tooltip(
+                message: 'Add task',
+                child: FilledButton.icon(
+                  onPressed: _addTaskFromDialog,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                  ),
+                ),
               ),
             ],
           ),
@@ -1527,88 +1543,106 @@ class CalendarDayCell extends StatelessWidget {
 
     final colors = context.doodle;
     final visible = assignments.take(9).toList();
+    final pendingCount = assignments.where((item) => !item.done).length;
+    final doneCount = assignments.length - pendingCount;
     final rows = [
       visible.take(3).toList(),
       visible.skip(3).take(3).toList(),
       visible.skip(6).take(3).toList(),
     ].where((items) => items.isNotEmpty).toList();
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: ValueKey('calendar-${DateFormat('yyyy-MM-dd').format(date!)}'),
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.all(3),
-          decoration: BoxDecoration(
-            color: isToday
-                ? colors.success.withValues(alpha: .2)
-                : colors.container,
+    final taskSummary = assignments.isEmpty
+        ? 'No tasks'
+        : '$pendingCount planned, $doneCount done';
+    return Semantics(
+      button: onTap != null,
+      onTap: onTap,
+      label:
+          '${DateFormat('EEEE, MMMM d, y').format(date!)}. $taskSummary. Tap to view tasks.',
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: ValueKey('calendar-${DateFormat('yyyy-MM-dd').format(date!)}'),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isToday ? colors.success : colors.border,
-              width: isToday ? 2 : 1,
-            ),
-          ),
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                top: 0,
-                child: Text(
-                  '${date!.day}',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    height: 1,
-                    fontWeight: FontWeight.w900,
-                  ),
+            onTap: onTap,
+            child: Ink(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: isToday
+                    ? colors.success.withValues(alpha: .2)
+                    : colors.container,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isToday ? colors.success : colors.border,
+                  width: isToday ? 2 : 1,
                 ),
               ),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 20,
-                bottom: 0,
-                child: rows.isEmpty
-                    ? const SizedBox.shrink()
-                    : Align(
-                        alignment: Alignment.topCenter,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.topCenter,
-                          child: SizedBox(
-                            width: 84,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                for (final row in rows)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 3),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceEvenly,
-                                      children: [
-                                        for (final assignment in row)
-                                          CalendarStatusIcon(
-                                            done: assignment.done,
-                                          ),
-                                        for (
-                                          var index = row.length;
-                                          index < 3;
-                                          index++
-                                        )
-                                          const SizedBox(width: 14, height: 14),
-                                      ],
-                                    ),
-                                  ),
-                              ],
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    child: Text(
+                      '${date!.day}',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 20,
+                    bottom: 0,
+                    child: rows.isEmpty
+                        ? const SizedBox.shrink()
+                        : Align(
+                            alignment: Alignment.topCenter,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.topCenter,
+                              child: SizedBox(
+                                width: 84,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    for (final row in rows)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 3,
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceEvenly,
+                                          children: [
+                                            for (final assignment in row)
+                                              CalendarStatusIcon(
+                                                done: assignment.done,
+                                              ),
+                                            for (
+                                              var index = row.length;
+                                              index < 3;
+                                              index++
+                                            )
+                                              const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1650,14 +1684,38 @@ class CalendarStatusIcon extends StatelessWidget {
       width: 14,
       height: 14,
       decoration: BoxDecoration(
-        color: done ? colors.success : colors.error,
+        color: done ? colors.success : colors.primary,
         shape: BoxShape.circle,
       ),
       child: Icon(
-        done ? Icons.check : Icons.close,
+        done ? Icons.check : Icons.circle,
         color: Colors.white,
-        size: 10,
+        size: done ? 10 : 7,
       ),
+    );
+  }
+}
+
+class CalendarStatusLegend extends StatelessWidget {
+  const CalendarStatusLegend({
+    super.key,
+    required this.done,
+    required this.label,
+  });
+
+  final bool done;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.doodle;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CalendarStatusIcon(done: done),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: colors.muted, fontSize: 12)),
+      ],
     );
   }
 }
@@ -1862,53 +1920,111 @@ class DailyReminderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = reminderStyleFor(task.iconKind, context: context);
     final colors = context.doodle;
-    return Material(
-      color: colors.container,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onDoubleTap: onDoubleTap,
+    final style = reminderStyleFor(task.iconKind, context: context);
+    final metadata =
+        '${priorityLabel(task.priority)} · ${task.estimateMinutes} min · ${taskReminderLabel(task, assignment)}';
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: '${task.title}. $metadata. Pending task.',
+      child: Material(
+        color: colors.container,
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
             children: [
               ReminderArt(icon: style.icon, color: style.color),
-              const SizedBox(height: 12),
-              Text(
-                task.title,
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                taskReminderLabel(task, assignment),
-                style: TextStyle(
-                  color: colors.muted,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Spacer(),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 4,
-                children: [
-                  if (task.priority != TaskPriority.none)
-                    IconButton(
-                      tooltip: 'Snooze 15 minutes',
-                      onPressed: onSnooze15,
-                      icon: const Icon(Icons.snooze_outlined),
+              const SizedBox(width: 12),
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onDoubleTap: onDoubleTap,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          task.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (task.note.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            task.note,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: colors.muted, fontSize: 13),
+                          ),
+                        ],
+                        const SizedBox(height: 5),
+                        Text(
+                          metadata,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
-                  IconButton(
-                    tooltip: 'Move to tomorrow',
-                    onPressed: onSnoozeTomorrow,
-                    icon: const Icon(Icons.next_plan_outlined),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton.filled(
+                    tooltip: 'Mark ${task.title} done',
+                    onPressed: onDoubleTap,
+                    style: IconButton.styleFrom(
+                      backgroundColor: colors.success,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.check),
+                  ),
+                  const SizedBox(height: 2),
+                  PopupMenuButton<String>(
+                    tooltip: 'More actions for ${task.title}',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'snooze':
+                          onSnooze15();
+                          break;
+                        case 'tomorrow':
+                          onSnoozeTomorrow();
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      if (task.priority != TaskPriority.none)
+                        const PopupMenuItem(
+                          value: 'snooze',
+                          child: ListTile(
+                            leading: Icon(Icons.snooze_outlined),
+                            title: Text('Snooze 15 minutes'),
+                          ),
+                        ),
+                      const PopupMenuItem(
+                        value: 'tomorrow',
+                        child: ListTile(
+                          leading: Icon(Icons.next_plan_outlined),
+                          title: Text('Move to tomorrow'),
+                        ),
+                      ),
+                    ],
+                    icon: const Icon(Icons.more_horiz),
                   ),
                 ],
               ),
@@ -2236,6 +2352,31 @@ class LibraryWorkRow extends StatelessWidget {
   final VoidCallback onSchedule;
   final VoidCallback onDelete;
 
+  Future<void> _confirmDelete(BuildContext context) async {
+    final colors = context.doodle;
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete task?'),
+        content: Text(
+          'Delete "${task.title}" and all of its scheduled dates? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: colors.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (shouldDelete == true) onDelete();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.doodle;
@@ -2299,10 +2440,21 @@ class LibraryWorkRow extends StatelessWidget {
                 onPressed: onAssignToday,
                 icon: const Icon(Icons.add_circle_outline),
               ),
-              IconButton(
-                tooltip: 'Delete',
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline),
+              PopupMenuButton<String>(
+                tooltip: 'More actions for ${task.title}',
+                onSelected: (value) {
+                  if (value == 'delete') _confirmDelete(context);
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: ListTile(
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('Delete task'),
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.more_horiz),
               ),
             ],
           ),
@@ -2412,8 +2564,50 @@ class CompactChipGrid extends StatelessWidget {
       spacing: 6,
       runSpacing: 6,
       children: [
-        for (final child in children) SizedBox(width: itemWidth, child: child),
+        for (final child in children)
+          SizedBox(width: itemWidth, height: 44, child: child),
       ],
+    );
+  }
+}
+
+class QuickAddDetection extends StatelessWidget {
+  const QuickAddDetection({super.key, required this.details});
+
+  final List<String> details;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.doodle;
+    final summary = details.join(' · ');
+    return Semantics(
+      label: 'Recognized quick add details: $summary',
+      child: Container(
+        key: const ValueKey('quick-add-detection'),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colors.soft,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome_outlined, color: colors.primary, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Detected: $summary',
+                style: TextStyle(
+                  color: colors.primary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2572,6 +2766,22 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   Widget build(BuildContext context) {
     final colors = context.doodle;
     final compact = MediaQuery.sizeOf(context).width < 430;
+    final parsed = parseQuickTask(_title.text);
+    final today = dateOnly(DateTime.now());
+    final tomorrow = today.add(const Duration(days: 1));
+    final detectedDetails = <String>[
+      if (parsed.dates.isNotEmpty)
+        if (isSameDay(parsed.dates.first, today))
+          'Today'
+        else if (isSameDay(parsed.dates.first, tomorrow))
+          'Tomorrow'
+        else
+          'Scheduled',
+      if (parsed.reminderTime != null) parsed.reminderTime!.format(context),
+      if (parsed.priority != null) priorityLabel(parsed.priority!),
+      if (parsed.estimateMinutes != null) '${parsed.estimateMinutes} min',
+      if (parsed.iconKind != null) taskIconLabel(parsed.iconKind!),
+    ];
     const weekdays = [
       (1, 'Mon'),
       (2, 'Tue'),
@@ -2635,7 +2845,12 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       : 'Example: Submit report tomorrow 9:00 !high ~45m #work',
                   prefixIcon: const Icon(Icons.task_alt_outlined),
                 ),
+                onChanged: (_) => setState(() => _error = null),
               ),
+              if (detectedDetails.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                QuickAddDetection(details: detectedDetails),
+              ],
               const SizedBox(height: 12),
               TextField(
                 key: const ValueKey('add-task-note-input'),
@@ -2660,8 +2875,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: Icon(taskIconData(iconKind), size: 13),
                         label: Text(taskIconLabel(iconKind)),
                         selected: _iconKind == iconKind,
@@ -2687,8 +2902,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                       (value) => value != TaskPriority.none,
                     ))
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: Icon(priorityIcon(priority), size: 13),
                         label: Text(priorityLabel(priority)),
                         selected: _priority == priority,
@@ -2709,8 +2924,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   children: [
                     for (final minutes in [15, 30, 45, 60])
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         label: Text('${minutes}m'),
                         selected: _estimateMinutes == minutes,
                         onSelected: (_) =>
@@ -2741,13 +2956,18 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   _scheduleLabel,
                   style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Choose upcoming dates, or leave this off to save only in All Tasks.',
+                  style: TextStyle(color: colors.muted, fontSize: 12),
+                ),
                 const SizedBox(height: 8),
                 CompactChipGrid(
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
@@ -2757,8 +2977,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                         onSelected: (_) => _toggleWeekdaySchedule(weekday),
                       ),
                     FilterChip(
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.standard,
+                      materialTapTargetSize: MaterialTapTargetSize.padded,
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
@@ -3095,8 +3315,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                   children: [
                     for (final iconKind in TaskIconKind.values)
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: Icon(taskIconData(iconKind), size: 13),
                         label: Text(taskIconLabel(iconKind)),
                         selected: _iconKind == iconKind,
@@ -3122,8 +3342,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                       (value) => value != TaskPriority.none,
                     ))
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: Icon(priorityIcon(priority), size: 13),
                         label: Text(priorityLabel(priority)),
                         selected: _priority == priority,
@@ -3144,8 +3364,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                   children: [
                     for (final minutes in [15, 30, 45, 60])
                       ChoiceChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         label: Text('${minutes}m'),
                         selected: _estimateMinutes == minutes,
                         onSelected: (_) =>
@@ -3176,13 +3396,18 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                   _scheduleLabel,
                   style: TextStyle(color: colors.muted, fontSize: 13),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'New dates are added. Existing schedules stay unchanged.',
+                  style: TextStyle(color: colors.muted, fontSize: 12),
+                ),
                 const SizedBox(height: 8),
                 CompactChipGrid(
                   children: [
                     for (final (weekday, label) in weekdays)
                       FilterChip(
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
                         avatar: const Icon(
                           Icons.event_repeat_outlined,
                           size: 13,
@@ -3192,8 +3417,8 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
                         onSelected: (_) => _toggleWeekdaySchedule(weekday),
                       ),
                     FilterChip(
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.standard,
+                      materialTapTargetSize: MaterialTapTargetSize.padded,
                       avatar: const Icon(Icons.today_outlined, size: 13),
                       label: const Text('Every day'),
                       selected: _scheduleKey == 'daily',
