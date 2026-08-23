@@ -10,6 +10,7 @@ import '../repositories/auth_service.dart';
 import '../repositories/backup_service.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
+import '../repositories/local_image_storage.dart';
 import '../repositories/sync_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
@@ -96,6 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _savingAccount = true);
     try {
+      final oldName = prefs.getString(_userKey)?.trim() ?? '';
       await BackendConfig.saveUrl(_backendCtrl.text);
       final savedName =
           await AuthService(
@@ -107,6 +109,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             newPassword: newPassword.isEmpty ? null : newPassword,
           );
       await prefs.setString(_userKey, savedName);
+      if (oldName.isNotEmpty && oldName != savedName) {
+        await CheckInRepository.moveUserData(oldName, savedName);
+        await LocalImageStorage.moveUserData(oldName, savedName);
+      }
       if (newPassword.isNotEmpty) {
         await prefs.setString(_passwordKey, newPassword);
       }

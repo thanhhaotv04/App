@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/checkin.dart';
 import 'auth_service.dart';
+import 'local_image_storage.dart';
 
 class SyncService {
   const SyncService({
@@ -99,11 +100,15 @@ class SyncService {
             'tags': jsonEncode(item.tags),
             if (item.photo.isNotEmpty) 'photoPath': item.photo,
           });
-    if (photoBytes != null && photoBytes.isNotEmpty) {
+    var bytes = photoBytes;
+    if ((bytes == null || bytes.isEmpty) && item.localPhoto.isNotEmpty) {
+      bytes = await LocalImageStorage.readImage(item.localPhoto);
+    }
+    if (bytes != null && bytes.isNotEmpty) {
       request.files.add(
         http.MultipartFile.fromBytes(
           'photo',
-          photoBytes,
+          bytes,
           filename: photoFileName ?? 'checkin-photo.jpg',
         ),
       );
@@ -119,26 +124,100 @@ class SyncService {
   Future<List<CheckIn>> syncTwoWay(List<CheckIn> localItems) async {
     if (!enabled) return localItems;
     final remoteBefore = await fetchRemote();
-    final remoteIds = remoteBefore.map((e) => e.id).toSet();
-    final pushed = <CheckIn>[];
+    final remoteById = {for (final item in remoteBefore) item.id: item};
+    final localById = {for (final item in localItems) item.id: item};
+    final pushed = <String, CheckIn>{};
     for (final item in localItems) {
-      if (!remoteIds.contains(item.id)) {
-        pushed.add(await push(item));
+      final remote = remoteById[item.id];
+      final shouldPush =
+          remote == null ||
+          !item.synced ||
+          (item.localPhoto.isNotEmpty && (remote.photo.isEmpty));
+      if (shouldPush) {
+        final uploaded = await push(item);
+        pushed[item.id] = uploaded.copyWith(
+          synced: true,
+          localPhoto: item.localPhoto.isEmpty
+              ? uploaded.localPhoto
+              : item.localPhoto,
+        );
       }
     }
     final remoteAfter = await fetchRemote();
     final byId = <String, CheckIn>{};
-    for (final item in [...remoteAfter, ...pushed, ...localItems]) {
-      final current = byId[item.id];
-      if (current == null ||
-          item.createdAt >= current.createdAt ||
-          item.photo.isNotEmpty) {
-        byId[item.id] = item.copyWith(synced: true);
+    for (final remote in remoteAfter) {
+      final local = localById[remote.id];
+      if (local != null &&
+          local.localPhoto.isNotEmpty &&
+          local.photo == remote.photo) {
+        byId[remote.id] = remote.copyWith(
+          synced: true,
+          localPhoto: local.localPhoto,
+        );
+      } else {
+        byId[remote.id] = await _hydrateRemotePhoto(remote);
       }
+    }
+    for (final local in localItems) {
+      final uploaded = pushed[local.id];
+      if (uploaded != null) {
+        byId[local.id] = uploaded;
+        continue;
+      }
+      final remote = byId[local.id];
+      if (remote == null) {
+        // This is only reachable if the backend accepted a write but did not
+        // return the item on the subsequent read. Keep the local record for a
+        // later retry instead of dropping it.
+        byId[local.id] = local;
+        continue;
+      }
+      if (remote.photo != local.photo && local.localPhoto.isNotEmpty) {
+        await LocalImageStorage.deleteImage(local.localPhoto);
+      }
+      byId[local.id] = remote.copyWith(
+        synced: true,
+        localPhoto: remote.photo.isEmpty ? '' : remote.localPhoto,
+      );
     }
     final merged = byId.values.toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return merged;
+  }
+
+  Future<CheckIn> _hydrateRemotePhoto(CheckIn item) async {
+    if (item.photo.isEmpty || item.localPhoto.isNotEmpty) {
+      return item.copyWith(synced: true);
+    }
+    try {
+      final response = await http.get(
+        _photoUri(item.photo),
+        headers: await _authHeaders(),
+      );
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final fileName = item.photo.split('/').last;
+        final localPhoto = await LocalImageStorage.saveImage(
+          bytes: response.bodyBytes,
+          originalName: fileName,
+          city: item.city,
+          createdAt: item.createdAt,
+        );
+        return item.copyWith(synced: true, localPhoto: localPhoto);
+      }
+    } catch (_) {
+      // The remote path remains available to CheckInPhoto if downloading
+      // locally is unavailable (for example on web or during a LAN outage).
+    }
+    return item.copyWith(synced: true);
+  }
+
+  Uri _photoUri(String photo) {
+    final value = photo.trim();
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Uri.parse(value);
+    }
+    final path = value.startsWith('/') ? value : '/$value';
+    return Uri.parse('$baseUrl$path');
   }
 
   Future<void> deleteCheckIn(String id) async {

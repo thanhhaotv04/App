@@ -270,7 +270,13 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
     const checkins = userCheckins(allCheckins, authenticated.account);
     const id = incomingId || randomUUID();
     const createdAt = Number(incomingCreatedAt) || Date.now();
-    let savedPhotoPath = photoPath || "";
+    const expectedPhotoPrefix = `user/Picture/${cleanSegment(authenticated.account.name)}/`;
+    const requestedPhotoPath = String(photoPath || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "");
+    let savedPhotoPath = requestedPhotoPath.startsWith(expectedPhotoPrefix)
+      ? requestedPhotoPath
+      : "";
 
     if (req.file) {
       const userFolder = cleanSegment(authenticated.account.name);
@@ -281,7 +287,7 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
       const fileName = `${createdAt}-${safeFileName(path.basename(req.file.originalname || "photo", path.extname(req.file.originalname || "")))}${ext}`;
       const fullPath = path.join(destDir, fileName);
       await fs.writeFile(fullPath, req.file.buffer);
-      savedPhotoPath = path.relative(__dirname, fullPath).replace(/\\/g, "/");
+      savedPhotoPath = `${expectedPhotoPrefix}${cityFolder}/${fileName}`;
     }
 
     const item = {
@@ -338,7 +344,12 @@ app.delete("/api/checkins/:id/photo", async (req, res) => {
   setUserCheckins(allCheckins, authenticated.account, checkins);
   await saveAllCheckins(allCheckins);
   if (previousPhoto) {
-    const absolutePhoto = path.resolve(__dirname, previousPhoto);
+    const photoRelativePath = previousPhoto.startsWith("user/Picture/")
+      ? previousPhoto.slice("user/Picture/".length)
+      : "";
+    const absolutePhoto = photoRelativePath
+      ? path.resolve(PHOTO_ROOT, photoRelativePath)
+      : path.resolve(__dirname, previousPhoto);
     const absoluteRoot = path.resolve(PHOTO_ROOT);
     if (absolutePhoto.startsWith(`${absoluteRoot}${path.sep}`)) {
       await fs.unlink(absolutePhoto).catch(() => {});

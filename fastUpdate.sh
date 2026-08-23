@@ -130,7 +130,7 @@ TARGET_CODE="${BASH_REMATCH[4]}"
 (( TARGET_CODE > MANIFEST_CODE )) || die "Target versionCode must be greater than backend manifest $MANIFEST_CODE"
 
 if [[ -z "$UPDATE_NOTES" ]]; then
-  UPDATE_NOTES="Adds province search, wishlist, 8-region coverage, travel rhythm, and a copyable travel recap."
+  UPDATE_NOTES="Adds province search, wishlist, 8-region coverage, travel rhythm, username-scoped sync, and image sync."
 fi
 
 BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vietnam-map-fast-update.XXXXXX")"
