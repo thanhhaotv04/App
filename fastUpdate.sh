@@ -15,9 +15,9 @@ HOST_IP="${HOST_IP:-127.0.0.1}"
 usage() {
   cat <<USAGE
 Usage:
-  ./update.sh
-  VERSION_NAME=1.0.5 VERSION_CODE=6 RELEASE_NOTES="Bug fixes" ./update.sh
-  ./update.sh --serve
+  ./fastUpdate.sh
+  VERSION_NAME=1.0.5 VERSION_CODE=6 RELEASE_NOTES="Bug fixes" ./fastUpdate.sh
+  ./fastUpdate.sh --serve
 
 Options:
   --serve      Start the backend after building so the app can check updates.

@@ -181,33 +181,53 @@ flutter build web
 
 nhưng phải để version/release giữ nguyên cho tới khi có yêu cầu cập nhật.
 
-## 9. Khi update phiên bản phải tăng version
+## 9. Quy tắc đặt tên phiên bản release
 
-Trong `pubspec.yaml`:
+Chỉ khi người dùng yêu cầu release/update APK, dùng nhãn phiên bản hiển thị:
 
-```yaml
-version: 1.0.1+2
+```text
+YYMMDD.N
 ```
 
-Trong đó:
+- `YYMMDD` là ngày phát hành theo múi giờ `Asia/Ho_Chi_Minh`.
+- `N` là số lần phát hành trong ngày, bắt đầu từ `1`, tăng thêm `1` cho mỗi
+  release thật và trở lại `1` khi sang ngày mới.
+- Không tăng `N` cho preview, test, hoặc chỉ sửa source/UI.
 
-- `1.0.1` là `versionName`.
-- `2` là `versionCode`.
+Ví dụ: release đầu tiên ngày 2026-08-23 là `260823.1`; release thứ hai cùng
+ngày là `260823.2`.
 
-Mỗi lần phát hành APK update, `versionCode` phải tăng. Nếu không tăng, Android
-hoặc hệ thống update có thể không nhận là bản mới.
+Flutter yêu cầu `pubspec.yaml` dùng semantic version có ba phần số, nên không
+ghi trực tiếp `version: 260823.1+...`. Với Android, truyền đúng nhãn hiển thị
+qua `--build-name` và giữ `versionCode` là số nguyên tăng liên tục, ví dụ:
 
-## 10. Dùng update.sh để phát hành bản mới
+```bash
+flutter build apk --release --build-name=260823.1 --build-number=26082301
+```
+
+Nếu cần đồng bộ metadata trong `pubspec.yaml`, dùng dạng hợp lệ như
+`260823.1.0+26082301`; manifest update vẫn dùng `versionName: "260823.1"` và
+`versionCode: 26082301`.
+
+Trước khi nói update trong app hoạt động, kiểm tra client đang so sánh đúng
+`versionName`/`versionCode` hiện tại, không dùng hằng số cũ bị hard-code.
+
+## 10. Cập nhật fastUpdate.sh trước khi dùng format mới
 
 Trong `task-reminder` đã có script:
 
 ```bash
-./update.sh
+./fastUpdate.sh
 ```
 
-Script này tự động:
+Hiện tại script này theo quy tắc cũ: tăng patch `x.y.z` và chỉ nhận
+`VERSION_NAME` dạng ba phần. Vì vậy không dùng `./fastUpdate.sh` cho format
+`YYMMDD.N` cho đến khi script được sửa và kiểm tra trong một yêu cầu release
+riêng.
 
-- Tăng patch version và `versionCode`.
+Khi script đã tương thích, nó cần tự động:
+
+- Tạo nhãn `YYMMDD.N` và tăng `versionCode`.
 - Cập nhật `backend/releases/latest.json`.
 - Chạy `flutter pub get`.
 - Chạy `dart format --set-exit-if-changed lib test`.
@@ -219,22 +239,17 @@ Script này tự động:
 - Copy APK vào `backend/releases/app-release-task-reminder.apk`.
 - Kiểm tra manifest và APK tồn tại.
 
-Nếu muốn tự đặt version/notes:
+Sau khi script đã được cập nhật và kiểm tra cho format `YYMMDD.N`, có thể thêm
+`--serve` để mở backend sau khi build:
 
 ```bash
-VERSION_NAME=1.0.6 VERSION_CODE=7 RELEASE_NOTES="Bug fixes" ./update.sh
-```
-
-Nếu muốn sau khi build xong mở backend để app check update:
-
-```bash
-./update.sh --serve
+./fastUpdate.sh --serve
 ```
 
 Nếu backend đã chạy trên port `3002`, `--serve` chỉ báo lại URL update thay vì
 crash vì trùng port.
 
-Không chạy `./update.sh` khi chỉ đang sửa UI hoặc kiểm tra chức năng, vì script
+Không chạy `./fastUpdate.sh` khi chỉ đang sửa UI hoặc kiểm tra chức năng, vì script
 sẽ tự tăng version và tạo APK release.
 
 ## 11. Manifest update phải trỏ đúng APK
@@ -249,8 +264,8 @@ Ví dụ:
 
 ```json
 {
-  "versionName": "1.0.1",
-  "versionCode": 2,
+  "versionName": "260823.1",
+  "versionCode": 26082301,
   "apkFile": "app-release-task-reminder.apk",
   "notes": "New app icon, no-priority tasks, and monthly multi-day scheduling."
 }
@@ -290,10 +305,10 @@ Chỉ khi đang release/update APK mới chạy:
 ./tools/build_release_apk.sh
 ```
 
-Hoặc dùng script tự động:
+Chỉ dùng script tự động sau khi nó đã hỗ trợ format `YYMMDD.N`:
 
 ```bash
-./update.sh
+./fastUpdate.sh
 ```
 
 Kiểm tra APK khi có build release:
