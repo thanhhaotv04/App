@@ -15,6 +15,8 @@ import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
 import '../repositories/local_image_storage.dart';
 import '../repositories/sync_service.dart';
+import '../repositories/vietnam_regions.dart';
+import '../repositories/wishlist_repository.dart';
 import '../theme/app_colors.dart';
 import '../widgets/checkin_photo.dart';
 
@@ -27,6 +29,7 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final _repo = CheckInRepository();
+  final _wishlistRepo = WishlistRepository();
   final _checkInFormKey = GlobalKey<FormState>();
   final _cityCtrl = TextEditingController();
   final _placeCtrl = TextEditingController();
@@ -36,6 +39,7 @@ class _MapScreenState extends State<MapScreen> {
   final _drawerCtrl = DraggableScrollableController();
 
   List<CheckIn> _items = [];
+  Set<String> _wishlist = <String>{};
   List<_ProvinceShape> _provinces = [];
   Rect? _geoBounds;
   String _sourceFilter = 'all';
@@ -60,7 +64,14 @@ class _MapScreenState extends State<MapScreen> {
     super.initState();
     _loadBackendUrl();
     _load();
+    _loadWishlist();
     _loadGeoJson();
+  }
+
+  Future<void> _loadWishlist() async {
+    final wishlist = await _wishlistRepo.load();
+    if (!mounted) return;
+    setState(() => _wishlist = wishlist);
   }
 
   Future<void> _loadBackendUrl() async {
@@ -748,27 +759,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   String _cleanName(String value) {
-    return _stripVietnameseMarks(value)
-        .trim()
-        .toLowerCase()
-        .replaceFirst(RegExp(r'^tp\.?\s*'), '')
-        .replaceFirst(RegExp(r'^thanh pho\s+'), '')
-        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-        .trim();
-  }
-
-  String _stripVietnameseMarks(String value) {
-    const from =
-        'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ'
-        'ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ';
-    const to =
-        'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd'
-        'AAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD';
-    var result = value;
-    for (var i = 0; i < from.length; i += 1) {
-      result = result.replaceAll(from[i], to[i]);
-    }
-    return result;
+    return VietnamRegions.normalize(value);
   }
 
   List<CheckIn> _provincePhotos(String provinceName) {
@@ -891,6 +882,38 @@ class _MapScreenState extends State<MapScreen> {
       return city == clean || city.contains(clean) || clean.contains(city);
     }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return items;
+  }
+
+  bool _isWishlisted(String provinceName) {
+    final clean = _cleanName(provinceName);
+    return _wishlist.any((item) => _cleanName(item) == clean);
+  }
+
+  Future<void> _toggleWishlist(String provinceName) async {
+    final clean = _cleanName(provinceName);
+    final next = _wishlist.where((item) => _cleanName(item) != clean).toSet();
+    final wasWishlisted = next.length != _wishlist.length;
+    if (!wasWishlisted) next.add(provinceName);
+    await _wishlistRepo.save(next);
+    if (!mounted) return;
+    setState(() => _wishlist = next);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            wasWishlisted
+                ? '$provinceName removed from wishlist.'
+                : '$provinceName added to wishlist.',
+          ),
+        ),
+      );
+  }
+
+  List<String> get _provinceNames {
+    final names = _provinces.map((province) => province.name).toSet().toList();
+    names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names;
   }
 
   Future<void> _toggleFavorite(CheckIn item) async {
@@ -1120,6 +1143,41 @@ class _MapScreenState extends State<MapScreen> {
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
+            Autocomplete<String>(
+              optionsBuilder: (value) {
+                final query = VietnamRegions.normalize(value.text);
+                if (query.isEmpty) return const Iterable<String>.empty();
+                return _provinceNames.where(
+                  (name) => VietnamRegions.normalize(name).contains(query),
+                );
+              },
+              onSelected: _openProvinceDetail,
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (value) {
+                        final query = VietnamRegions.normalize(value);
+                        if (query.isEmpty) return;
+                        final match = _provinceNames.cast<String?>().firstWhere(
+                          (name) =>
+                              name != null &&
+                              VietnamRegions.normalize(name).contains(query),
+                          orElse: () => null,
+                        );
+                        if (match != null) _openProvinceDetail(match);
+                      },
+                      decoration: const InputDecoration(
+                        labelText: 'Find a province or city',
+                        hintText: 'Type Đà Nẵng, Hà Nội...',
+                        prefixIcon: Icon(Icons.travel_explore_outlined),
+                      ),
+                    );
+                  },
+            ),
+            const SizedBox(height: 12),
             AspectRatio(
               aspectRatio: 0.78,
               child: Container(
@@ -1336,6 +1394,20 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                     IconButton(
+                      onPressed: () => _toggleWishlist(province),
+                      tooltip: _isWishlisted(province)
+                          ? 'Remove from wishlist'
+                          : 'Add to wishlist',
+                      icon: Icon(
+                        _isWishlisted(province)
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                        color: _isWishlisted(province)
+                            ? colors.accent
+                            : colors.muted,
+                      ),
+                    ),
+                    IconButton(
                       onPressed: () => setState(() => _selectedProvince = null),
                       tooltip: 'Close province details',
                       icon: const Icon(Icons.close),
@@ -1347,6 +1419,20 @@ class _MapScreenState extends State<MapScreen> {
                   onPressed: () => _openForm(province),
                   icon: const Icon(Icons.add),
                   label: const Text('Add check-in here'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _toggleWishlist(province),
+                  icon: Icon(
+                    _isWishlisted(province)
+                        ? Icons.bookmark_remove_outlined
+                        : Icons.bookmark_add_outlined,
+                  ),
+                  label: Text(
+                    _isWishlisted(province)
+                        ? 'Remove from wishlist'
+                        : 'Add to wishlist',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 if (provinceItems.isEmpty)

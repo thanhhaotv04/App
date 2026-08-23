@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import '../models/checkin.dart';
 import '../repositories/backup_service.dart';
 import '../repositories/checkin_repository.dart';
+import '../repositories/vietnam_regions.dart';
+import '../repositories/wishlist_repository.dart';
 import '../theme/app_colors.dart';
 
 class InsightsScreen extends StatefulWidget {
@@ -17,8 +19,10 @@ class InsightsScreen extends StatefulWidget {
 
 class _InsightsScreenState extends State<InsightsScreen> {
   final _repo = CheckInRepository();
+  final _wishlistRepo = WishlistRepository();
   final _backup = const BackupService();
   List<CheckIn> _items = [];
+  Set<String> _wishlist = <String>{};
 
   @override
   void initState() {
@@ -28,8 +32,12 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   Future<void> _load() async {
     final items = await _repo.load();
+    final wishlist = await _wishlistRepo.load();
     if (!mounted) return;
-    setState(() => _items = items);
+    setState(() {
+      _items = items;
+      _wishlist = wishlist;
+    });
   }
 
   Future<void> _copyExport() async {
@@ -38,6 +46,14 @@ class _InsightsScreenState extends State<InsightsScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(const SnackBar(content: Text('Export copied.')));
+  }
+
+  Future<void> _copyTravelRecap() async {
+    await Clipboard.setData(ClipboardData(text: _travelRecap()));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('Travel recap copied.')));
   }
 
   @override
@@ -54,6 +70,10 @@ class _InsightsScreenState extends State<InsightsScreen> {
     final topTags = _topTags(_items);
     final topProvince = _topProvince(_items);
     final achievements = _achievements(_items);
+    final regionProgress = _regionProgress(_items);
+    final monthlyCounts = _monthlyCounts(_items);
+    final activeDays = _activeDays(_items);
+    final currentStreak = _currentStreak(_items);
     final progress = (visited.length / 63).clamp(0.0, 1.0);
     final latest = _items.isEmpty
         ? null
@@ -164,6 +184,23 @@ class _InsightsScreenState extends State<InsightsScreen> {
                 const SizedBox(height: 16),
               ],
               _InsightCard(
+                icon: Icons.bookmark_added_outlined,
+                title: 'Wishlist',
+                child: _wishlist.isEmpty
+                    ? Text(
+                        'Tap a province on the map and save it here as your next destination.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _wishlist
+                            .map((province) => Chip(label: Text(province)))
+                            .toList(),
+                      ),
+              ),
+              const SizedBox(height: 16),
+              _InsightCard(
                 icon: Icons.map_outlined,
                 title: 'Vietnam coverage',
                 child: Column(
@@ -194,6 +231,26 @@ class _InsightsScreenState extends State<InsightsScreen> {
                       label: const Text('Explore the map'),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _InsightCard(
+                icon: Icons.public_outlined,
+                title: 'Progress by 8 regions',
+                child: Column(
+                  children: regionProgress
+                      .map((progress) => _RegionProgressRow(progress: progress))
+                      .toList(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _InsightCard(
+                icon: Icons.calendar_month_outlined,
+                title: 'Travel rhythm',
+                child: _TravelRhythm(
+                  monthlyCounts: monthlyCounts,
+                  activeDays: activeDays,
+                  currentStreak: currentStreak,
                 ),
               ),
               const SizedBox(height: 16),
@@ -294,6 +351,26 @@ class _InsightsScreenState extends State<InsightsScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 16),
+              _InsightCard(
+                icon: Icons.auto_stories_outlined,
+                title: 'Travel recap',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Create a short, privacy-friendly summary of your journey to paste into a message or note.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _items.isEmpty ? null : _copyTravelRecap,
+                      icon: const Icon(Icons.copy_outlined),
+                      label: const Text('Copy travel recap'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           );
         },
@@ -311,6 +388,85 @@ class _InsightsScreenState extends State<InsightsScreen> {
     final entries = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return entries.take(8).toList();
+  }
+
+  List<_RegionProgress> _regionProgress(List<CheckIn> items) {
+    return VietnamRegions.all.map((region) {
+      final visited = items
+          .where((item) => VietnamRegions.forProvince(item.city) == region.name)
+          .map((item) => VietnamRegions.normalize(item.city))
+          .toSet()
+          .length;
+      final checkins = items
+          .where((item) => VietnamRegions.forProvince(item.city) == region.name)
+          .length;
+      return _RegionProgress(
+        name: region.name,
+        visited: visited,
+        total: region.provinces.length,
+        checkins: checkins,
+      );
+    }).toList();
+  }
+
+  List<int> _monthlyCounts(List<CheckIn> items) {
+    final counts = List<int>.filled(12, 0);
+    for (final item in items) {
+      final month = DateTime.fromMillisecondsSinceEpoch(item.createdAt).month;
+      counts[month - 1] += 1;
+    }
+    return counts;
+  }
+
+  int _activeDays(List<CheckIn> items) => items
+      .map((item) {
+        final date = DateTime.fromMillisecondsSinceEpoch(item.createdAt);
+        return DateTime(date.year, date.month, date.day);
+      })
+      .toSet()
+      .length;
+
+  int _currentStreak(List<CheckIn> items) {
+    final dates =
+        items
+            .map((item) {
+              final date = DateTime.fromMillisecondsSinceEpoch(item.createdAt);
+              return DateTime(date.year, date.month, date.day);
+            })
+            .toSet()
+            .toList()
+          ..sort((a, b) => b.compareTo(a));
+    if (dates.isEmpty) return 0;
+    var streak = 1;
+    for (var index = 1; index < dates.length; index += 1) {
+      if (dates[index - 1].difference(dates[index]).inDays != 1) break;
+      streak += 1;
+    }
+    return streak;
+  }
+
+  String _travelRecap() {
+    if (_items.isEmpty) return 'VietNam Map Checkin\nNo memories yet.';
+    final sorted = _items.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final visited = _items
+        .map((item) => VietnamRegions.normalize(item.city))
+        .toSet()
+        .length;
+    final photos = _items.where((item) => item.hasPhoto).length;
+    final regions = _regionProgress(_items)
+      ..sort((a, b) => b.checkins.compareTo(a.checkins));
+    final latest = sorted.first;
+    final wishlist = _wishlist.take(5).join(', ');
+    return [
+      'VietNam Map Checkin - Travel recap',
+      '${_items.length} check-in(s) in $visited province(s)',
+      '$photos photo(s) saved · ${_items.where((item) => item.favorite).length} favorite(s)',
+      if (regions.first.checkins > 0)
+        'Most explored region: ${regions.first.name}',
+      if (wishlist.isNotEmpty) 'Next on the wishlist: $wishlist',
+      'Latest memory: ${latest.place}, ${latest.city}',
+    ].join('\n');
   }
 
   MapEntry<String, int>? _topProvince(List<CheckIn> items) {
@@ -362,6 +518,166 @@ class _InsightsScreenState extends State<InsightsScreen> {
       return 'Your highlight list is covered. Pick a province with no photos yet.';
     }
     return 'Try ${next.join(', ')} next to balance north, central, and south memories.';
+  }
+}
+
+class _RegionProgress {
+  const _RegionProgress({
+    required this.name,
+    required this.visited,
+    required this.total,
+    required this.checkins,
+  });
+
+  final String name;
+  final int visited;
+  final int total;
+  final int checkins;
+
+  double get value => total == 0 ? 0 : visited / total;
+}
+
+class _RegionProgressRow extends StatelessWidget {
+  const _RegionProgressRow({required this.progress});
+
+  final _RegionProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  progress.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '${progress.visited}/${progress.total} · ${progress.checkins} check-ins',
+                style: TextStyle(color: colors.muted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Semantics(
+            label:
+                '${progress.name}: ${progress.visited} of ${progress.total} provinces visited',
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress.value,
+                minHeight: 9,
+                backgroundColor: colors.panel2,
+                color: colors.accent,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TravelRhythm extends StatelessWidget {
+  const _TravelRhythm({
+    required this.monthlyCounts,
+    required this.activeDays,
+    required this.currentStreak,
+  });
+
+  final List<int> monthlyCounts;
+  final int activeDays;
+  final int currentStreak;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final maxCount = monthlyCounts.fold<int>(
+      0,
+      (maxValue, count) => count > maxValue ? count : maxValue,
+    );
+    const labels = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$activeDays active check-in days',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Text(
+              'Recent streak: $currentStreak day(s)',
+              style: TextStyle(color: colors.muted, fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 130,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: List.generate(monthlyCounts.length, (index) {
+              final count = monthlyCounts[index];
+              final height = maxCount == 0 ? 8.0 : 14 + 88 * count / maxCount;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        '$count',
+                        style: TextStyle(color: colors.muted, fontSize: 10),
+                      ),
+                      const SizedBox(height: 4),
+                      Semantics(
+                        label: '${labels[index]}: $count check-in(s)',
+                        child: Container(
+                          height: height,
+                          decoration: BoxDecoration(
+                            color: count == 0 ? colors.panel2 : colors.accent,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        labels[index],
+                        style: TextStyle(color: colors.muted, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
   }
 }
 

@@ -1,212 +1,148 @@
 # VietNam Map Checkin
 
-> APK recovery: the repository has been reconciled with recovered release
-> `1.0.14+21`. See
-> [`recovery/apk-1.0.14+21/README.md`](recovery/apk-1.0.14+21/README.md) for
-> persistent storage keys, sync/API contracts, map flow, signing constraints,
-> hashes, and recovery limitations.
+## Gioi Thieu Co Ban
 
-Flutter app for saving travel check-ins on a Vietnam province map. The app was migrated from the original web app at `D:\thanhhao_ws\App\App_VietNam_Map` and keeps the same core idea: map-first check-in, photos, history, sync, and local-first usage.
+VietNam Map Checkin la ung dung Flutter dung de luu ky niem du lich tren ban do
+Viet Nam. Ung dung cho phep tao check-in theo tinh/thanh, them dia diem, ghi
+chu, ngay gio, anh, diem danh gia, tag, yeu thich, xem lich su, thong ke,
+sao luu/khoi phuc du lieu va dong bo qua backend Node.js noi bo.
 
-## What The App Does
+Ung dung uu tien luu du lieu cuc bo truoc. Backend chi can khi muon dong bo du
+lieu, luu anh tren may tinh, hoac cho dien thoai kiem tra ban cap nhat APK qua
+LAN.
 
-- Shows an interactive Vietnam province map.
-- Click a province to open province detail.
-- Add check-ins with province, place, notes, date/time, and photo.
-- Hover/tap provinces to see recent check-in photos.
-- Colors provinces by check-in count:
-  - `0`: no check-in
-  - `1-2`
-  - `3-5`
-  - `6+`
-- Shows recent check-ins with thumbnails.
-- Shows check-in history grouped by city/province.
-- Supports light and dark themes.
-- Has login and app picker screens.
-- Has Settings for backend URL, data import/export, sync, and LAN app updates.
+## Tao APK
 
-## Privacy And Photo Storage
+Lay dependency:
 
-The Android app stores selected photos locally first.
-
-Android private image folder:
-
-```text
-/data/user/0/com.example.vietnam_map_01/files/vietnam_map_checkin_images
+```bash
+cd /home/thanhhao/thanhhao/Github/App/VietNam-map-checkin
+flutter pub get
 ```
 
-Windows local image folder:
+Build APK release cho dien thoai Android:
 
-```text
-%LOCALAPPDATA%\VietNamMapCheckin\vietnam_map_checkin_images
+```bash
+flutter build apk --release --target-platform android-arm64
 ```
 
-This folder only contains photos selected inside the app. On Android it is app-private storage, so normal apps cannot browse it directly. When a check-in is deleted, its local photo is deleted too.
+File APK sau khi build:
 
-Backend upload is optional. If the backend is running, the app also uploads a copy of the photo to the PC backend.
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
 
-## Backend
+## Chay Tren Web
 
-The included Node.js backend is local-first and file-based. It is useful for:
+Chay ban web preview:
 
-- Receiving uploaded photos from the app.
-- Serving photos back to Flutter.
-- Syncing check-ins between devices.
-- Serving APK update files over the same Wi-Fi.
+```bash
+cd /home/thanhhao/thanhhao/Github/App/VietNam-map-checkin
+flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080
+```
 
-Start backend:
+Mo tren may tinh:
 
-```powershell
-cd D:\thanhhao_ws\App\App_VietNam_Map_Flutter\vietnam_map_01
+```text
+http://127.0.0.1:8080
+```
+
+Mo tu dien thoai hoac may khac cung Wi-Fi:
+
+```text
+http://<PC_LAN_IP>:8080
+```
+
+Build web release:
+
+```bash
+flutter build web --release
+```
+
+Thu muc web sau khi build:
+
+```text
+build/web
+```
+
+## Cap Nhat Phien Ban Moi Nhat Va Check Update Qua LAN
+
+Cach nhanh tren Linux:
+
+```bash
+chmod +x fastUpdate.sh
+./fastUpdate.sh
+```
+
+Script se tu tang version, chay test/analyzer, build APK ARM64, cap nhat
+`backend/releases/latest.json`, mo backend va kiem tra endpoint update. Dung
+`./fastUpdate.sh --help` de xem tuy chon version, port va ghi chu cap nhat.
+
+Tang version trong `pubspec.yaml`, vi du:
+
+```yaml
+version: 1.1.4+26
+```
+
+Build APK moi:
+
+```bash
+flutter build apk --release --target-platform android-arm64
+```
+
+Copy APK moi vao backend release:
+
+```bash
+cp build/app/outputs/flutter-apk/app-release.apk backend/releases/app-release.apk
+```
+
+Sua `backend/releases/latest.json` cho khop version moi:
+
+```json
+{
+  "versionName": "1.1.4",
+  "versionCode": 26,
+  "apkFile": "app-release.apk",
+  "notes": "Mo ta noi dung cap nhat."
+}
+```
+
+Chay backend tren may tinh:
+
+```bash
+npm install
 npm run backend
 ```
 
-Default backend URL:
+Lay IP LAN cua may tinh:
 
-```text
-http://127.0.0.1:3000
+```bash
+hostname -I
 ```
 
-On Android phone, use the PC LAN IP instead:
+Tren dien thoai, vao app va dat Backend URL theo dang:
 
 ```text
 http://<PC_LAN_IP>:3000
 ```
 
-Example:
+Vi du minh hoa:
 
 ```text
-http://192.168.1.10:3000
+http://192.168.x.x:3000
 ```
 
-## Main Features
-
-### Map
-
-- GeoJSON-based Vietnam province map.
-- Province hover/tap detection.
-- Province tooltip with recent photos.
-- Province detail panel with all check-ins in that province.
-- Add check-in directly from a province.
-
-### Check-in Photo Flow
-
-1. User chooses a photo.
-2. App copies the photo into local private storage.
-3. If backend is reachable, app uploads a copy to backend.
-4. App displays local photo first, backend photo as fallback.
-
-### History
-
-- Grouped check-in list by province/city.
-- Thumbnail preview.
-- Full photo preview.
-- Works with local photos and backend photos.
-
-### Sync
-
-- Two-way sync with backend.
-- Pulls backend check-ins.
-- Pushes local-only check-ins.
-- Merges by check-in id.
-
-### Settings
-
-- Toggle theme.
-- Save Backend URL.
-- Import JSON.
-- Export JSON.
-- Load sample data.
-- Delete all local data.
-- Show private image storage folder.
-- Check for app updates over LAN.
-
-### LAN App Update
-
-Android cannot silently self-update normal sideloaded apps. This app supports a practical LAN update flow:
-
-1. PC runs backend.
-2. Backend exposes latest APK.
-3. Phone downloads APK over same Wi-Fi.
-4. Android asks the user to confirm installation.
-
-Backend update files:
+Endpoint de app kiem tra update:
 
 ```text
-backend\releases\latest.json
-backend\releases\app-release.apk
+http://<PC_LAN_IP>:3000/api/update/latest
 ```
 
-## Build And Run
-
-Install Flutter dependencies:
-
-```powershell
-flutter pub get
-```
-
-Run on Chrome:
-
-```powershell
-flutter run -d chrome
-```
-
-Run on Windows:
-
-```powershell
-flutter run -d windows
-```
-
-Build web release:
-
-```powershell
-flutter build web --release
-```
-
-Build Windows release:
-
-```powershell
-flutter build windows --release
-```
-
-Build Android APK for modern phones:
-
-```powershell
-flutter build apk --release --target-platform android-arm64
-```
-
-APK output:
+File APK duoc tai tu:
 
 ```text
-build\app\outputs\flutter-apk\app-release.apk
+http://<PC_LAN_IP>:3000/releases/app-release.apk
 ```
 
-## Android Notes
-
-- The APK is built for `android-arm64`.
-- Works on modern MediaTek Dimensity, Snapdragon, Exynos, and Tensor phones.
-- Tested build target is suitable for Android 16 phones.
-- Current APK uses debug signing for easy sideload testing.
-- For Play Store, create a real release signing key and change the package id.
-
-## Verification Commands
-
-```powershell
-flutter analyze
-flutter test
-node --check backend\server.js
-flutter build apk --release --target-platform android-arm64
-```
-
-## Important Files
-
-- Flutter entry: `lib/main.dart`
-- App router/gate: `lib/src/app.dart`
-- Map screen: `lib/src/screens/map_screen.dart`
-- History screen: `lib/src/screens/history_screen.dart`
-- Sync screen: `lib/src/screens/sync_screen.dart`
-- Settings screen: `lib/src/screens/settings_screen.dart`
-- Local image storage: `lib/src/repositories/local_image_storage*.dart`
-- Backend: `backend/server.js`
-- Android release notes: `ANDROID_RELEASE_PLAN.md`
-- Engineering notes: `EXPERIENCE.md`
+Luu y: khong dung `127.0.0.1` tren dien thoai, vi dia chi do tro ve chinh dien
+thoai chu khong phai may tinh dang chay backend.
