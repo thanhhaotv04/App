@@ -96,7 +96,13 @@ Future<void> _pumpPreview(WidgetTester tester) async {
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  await tester.pumpWidget(MoneyManagerApp(now: previewNow));
+  await tester.pumpWidget(
+    MoneyManagerApp(
+      now: previewNow,
+      previewVersionName: '1.0.8',
+      previewVersionCode: 9,
+    ),
+  );
   await tester.pumpAndSettle();
 }
 

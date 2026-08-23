@@ -29,12 +29,21 @@ abstract final class AppColors {
 }
 
 class MoneyManagerApp extends StatefulWidget {
-  const MoneyManagerApp({super.key, this.now});
+  const MoneyManagerApp({
+    super.key,
+    this.now,
+    this.previewVersionName,
+    this.previewVersionCode,
+  });
 
   static final themeMode = ValueNotifier(ThemeMode.light);
 
   /// Keeps visual previews deterministic without changing production time.
   final DateTime? now;
+
+  /// Keeps version text deterministic in visual previews.
+  final String? previewVersionName;
+  final int? previewVersionCode;
 
   @override
   State<MoneyManagerApp> createState() => _MoneyManagerAppState();
@@ -159,6 +168,8 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
                 userName: _userName!,
                 password: _password!,
                 now: widget.now,
+                versionName: widget.previewVersionName,
+                versionCode: widget.previewVersionCode,
                 onLogout: _logout,
                 onChangePassword: _changePassword,
               ),
@@ -514,6 +525,8 @@ class HomeScreen extends StatefulWidget {
     required this.userName,
     required this.password,
     this.now,
+    this.versionName,
+    this.versionCode,
     required this.onLogout,
     required this.onChangePassword,
   });
@@ -521,6 +534,8 @@ class HomeScreen extends StatefulWidget {
   final String userName;
   final String password;
   final DateTime? now;
+  final String? versionName;
+  final int? versionCode;
   final VoidCallback onLogout;
   final ChangePasswordCallback onChangePassword;
 
@@ -605,6 +620,8 @@ class _HomeScreenState extends State<HomeScreen> {
         recurring: _recurring,
         userName: widget.userName,
         password: widget.password,
+        versionName: widget.versionName,
+        versionCode: widget.versionCode,
         onReload: _load,
         onLogout: widget.onLogout,
         onChangePassword: widget.onChangePassword,
@@ -1865,6 +1882,8 @@ class AccountPage extends StatefulWidget {
     required this.recurring,
     required this.userName,
     required this.password,
+    this.versionName,
+    this.versionCode,
     required this.onReload,
     required this.onLogout,
     required this.onChangePassword,
@@ -1875,6 +1894,8 @@ class AccountPage extends StatefulWidget {
   final List<RecurringExpense> recurring;
   final String userName;
   final String password;
+  final String? versionName;
+  final int? versionCode;
   final Future<void> Function() onReload;
   final VoidCallback onLogout;
   final ChangePasswordCallback onChangePassword;
@@ -2159,9 +2180,10 @@ class _AccountPageState extends State<AccountPage> {
                 label: const Text('Check for update'),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Current 1.0.8+9',
-                style: TextStyle(
+              Text(
+                'Current ${widget.versionName ?? AppUpdateService.currentVersionName}+'
+                '${widget.versionCode ?? AppUpdateService.currentVersionCode}',
+                style: const TextStyle(
                   color: AppColors.muted,
                   fontWeight: FontWeight.w700,
                 ),
