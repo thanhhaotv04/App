@@ -15,16 +15,21 @@ class LocalImageStorage {
     required String originalName,
     required String city,
     required int createdAt,
+    String album = '',
   }) async {
     if (bytes.isEmpty) return '';
     final root = await _rootDirectory();
+    final albumSegment = _safeSegment(album);
+    final albumPath = album.trim().isEmpty
+        ? root.path
+        : '${root.path}${Platform.pathSeparator}$albumSegment';
     final cityDir = Directory(
-      '${root.path}${Platform.pathSeparator}${_safeSegment(city)}',
+      '$albumPath${Platform.pathSeparator}${_safeSegment(city)}',
     );
     await cityDir.create(recursive: true);
     final ext = _extension(originalName);
     final file = File(
-      '${cityDir.path}${Platform.pathSeparator}$createdAt-${_safeSegment(_baseName(originalName))}$ext',
+      '${cityDir.path}${Platform.pathSeparator}$createdAt-${DateTime.now().microsecondsSinceEpoch}-${_safeSegment(_baseName(originalName))}$ext',
     );
     await file.writeAsBytes(bytes, flush: true);
     return '$_prefix${file.path}';

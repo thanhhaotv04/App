@@ -34,72 +34,103 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   void _openPhoto(CheckIn item) {
     if (!item.hasPhoto) return;
+    final assets = item.photoItems;
     showDialog<void>(
       context: context,
-      builder: (context) => Dialog(
-        insetPadding: const EdgeInsets.all(18),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820, maxHeight: 720),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
+      builder: (context) {
+        var currentIndex = 0;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => Dialog(
+            insetPadding: const EdgeInsets.all(18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 820, maxHeight: 720),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.album.isEmpty
+                                ? item.place
+                                : '${item.album} · ${item.place}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: PageView.builder(
+                      itemCount: assets.length,
+                      onPageChanged: (index) =>
+                          setDialogState(() => currentIndex = index),
+                      itemBuilder: (context, index) {
+                        final asset = assets[index];
+                        final assetItem = item.copyWith(
+                          photo: asset.photo,
+                          localPhoto: asset.localPhoto,
+                          photos: const [],
+                        );
+                        return InteractiveViewer(
+                          child: CheckInPhoto(
+                            item: assetItem,
+                            remoteUrl: _photoUrl,
+                            fit: BoxFit.contain,
+                            errorText:
+                                'Photo not found locally or on the backend.',
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  if (assets.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        item.place,
-                        style: Theme.of(context).textTheme.titleMedium,
+                        '${assets.length} photos · swipe to browse',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _replacePhoto(item);
+                          },
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Change photo'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _deletePhotoAsset(item, assets[currentIndex]);
+                          },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Delete this photo'),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-              Flexible(
-                child: InteractiveViewer(
-                  child: CheckInPhoto(
-                    item: item,
-                    remoteUrl: _photoUrl,
-                    fit: BoxFit.contain,
-                    errorText: 'Photo not found locally or on the backend.',
                   ),
-                ),
+                ],
               ),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.of(context).pop();
-                        await _replacePhoto(item);
-                      },
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('Change photo'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.of(context).pop();
-                        await _deletePhoto(item);
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                      label: const Text('Delete photo'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -114,28 +145,49 @@ class _HistoryScreenState extends State<HistoryScreen> {
       bytes: bytes,
       originalName: picked.name,
       city: item.city,
+      album: item.album,
       createdAt: item.createdAt,
     );
-    var updated = item.copyWith(localPhoto: localPhoto, synced: false);
+    final replacement = CheckInPhotoAsset(
+      localPhoto: localPhoto,
+      name: picked.name,
+      createdAt: item.createdAt,
+    );
+    final nextPhotos = item.photoItems.isEmpty
+        ? [replacement]
+        : [replacement, ...item.photoItems.skip(1)];
+    var updated = item.copyWith(
+      photo: replacement.photo,
+      localPhoto: replacement.localPhoto,
+      photos: nextPhotos,
+      synced: false,
+    );
     try {
       final remote = await SyncService(
         baseUrl: _backendUrl,
       ).push(updated, photoBytes: bytes, photoFileName: picked.name);
-      updated = remote.copyWith(localPhoto: localPhoto, synced: true);
+      final sync = SyncService(baseUrl: _backendUrl);
+      updated = sync.mergeLocalPhotos(remote.copyWith(synced: true), updated);
     } catch (_) {
       // The local replacement remains available while offline.
     }
-    await LocalImageStorage.deleteImage(item.localPhoto);
+    for (final photo in item.photoItems) {
+      if (photo.localPhoto != replacement.localPhoto) {
+        await LocalImageStorage.deleteImage(photo.localPhoto);
+      }
+    }
     await _repo.update(updated);
     await _load();
   }
 
-  Future<void> _deletePhoto(CheckIn item) async {
+  Future<void> _deletePhotoAsset(CheckIn item, CheckInPhotoAsset asset) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete photo?'),
-        content: Text('Remove the photo from ${item.place}?'),
+        title: const Text('Delete this photo?'),
+        content: Text(
+          'Remove this photo from ${item.album.isEmpty ? item.place : item.album}?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -149,13 +201,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ),
     );
     if (confirmed != true) return;
-    await LocalImageStorage.deleteImage(item.localPhoto);
+    final remaining = item.photoItems.where((photo) => photo != asset).toList();
+    final primary = remaining.isEmpty ? null : remaining.first;
+    var updated = item.copyWith(
+      photo: primary?.photo ?? '',
+      localPhoto: primary?.localPhoto ?? '',
+      photos: remaining,
+      synced: false,
+    );
+    await LocalImageStorage.deleteImage(asset.localPhoto);
     try {
-      await SyncService(baseUrl: _backendUrl).deletePhoto(item.id);
+      if (asset.photo.isNotEmpty) {
+        final sync = SyncService(baseUrl: _backendUrl);
+        final remote = await sync.deletePhotoAsset(item.id, asset.photo);
+        updated = sync.mergeLocalPhotos(remote.copyWith(synced: true), updated);
+      }
     } catch (_) {
-      // Keep the local deletion and retry when the backend is available.
+      // Keep the local deletion and retry through two-way sync later.
     }
-    await _repo.deletePhoto(item.id);
+    await _repo.update(updated);
     await _load();
   }
 
@@ -683,6 +747,8 @@ class _HistoryEntryCard extends StatelessWidget {
     );
     if (item.rating > 0) details.write(' · ${item.rating}/5');
     if (item.tags.isNotEmpty) details.write(' · ${item.tagLine}');
+    if (item.album.isNotEmpty) details.write(' · Album: ${item.album}');
+    if (item.photoCount > 1) details.write(' · ${item.photoCount} photos');
 
     return Container(
       margin: const EdgeInsets.only(top: 8),

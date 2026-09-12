@@ -15,6 +15,7 @@ class LocalImageStorage {
     required String originalName,
     required String city,
     required int createdAt,
+    String album = '',
   }) async {
     if (bytes.isEmpty) return '';
     final prefs = await SharedPreferences.getInstance();

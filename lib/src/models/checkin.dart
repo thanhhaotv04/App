@@ -1,3 +1,49 @@
+class CheckInPhotoAsset {
+  const CheckInPhotoAsset({
+    this.photo = '',
+    this.localPhoto = '',
+    this.name = '',
+    this.createdAt = 0,
+  });
+
+  final String photo;
+  final String localPhoto;
+  final String name;
+  final int createdAt;
+
+  CheckInPhotoAsset copyWith({
+    String? photo,
+    String? localPhoto,
+    String? name,
+    int? createdAt,
+  }) {
+    return CheckInPhotoAsset(
+      photo: photo ?? this.photo,
+      localPhoto: localPhoto ?? this.localPhoto,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  bool get hasPhoto => photo.isNotEmpty || localPhoto.isNotEmpty;
+
+  factory CheckInPhotoAsset.fromJson(Map<String, dynamic> json) {
+    return CheckInPhotoAsset(
+      photo: json['photo']?.toString() ?? '',
+      localPhoto: json['localPhoto']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'photo': photo,
+    'localPhoto': localPhoto,
+    'name': name,
+    'createdAt': createdAt,
+  };
+}
+
 class CheckIn {
   const CheckIn({
     required this.id,
@@ -11,6 +57,8 @@ class CheckIn {
     required this.lng,
     required this.photo,
     this.localPhoto = '',
+    this.album = '',
+    this.photos = const [],
     this.favorite = false,
     this.rating = 0,
     this.tags = const [],
@@ -27,6 +75,8 @@ class CheckIn {
   final double lng;
   final String photo;
   final String localPhoto;
+  final String album;
+  final List<CheckInPhotoAsset> photos;
   final bool favorite;
   final int rating;
   final List<String> tags;
@@ -42,6 +92,8 @@ class CheckIn {
     double? lng,
     String? photo,
     String? localPhoto,
+    String? album,
+    List<CheckInPhotoAsset>? photos,
     bool? favorite,
     int? rating,
     List<String>? tags,
@@ -58,13 +110,30 @@ class CheckIn {
       lng: lng ?? this.lng,
       photo: photo ?? this.photo,
       localPhoto: localPhoto ?? this.localPhoto,
+      album: album ?? this.album,
+      photos: photos ?? this.photos,
       favorite: favorite ?? this.favorite,
       rating: rating ?? this.rating,
       tags: tags ?? this.tags,
     );
   }
 
-  bool get hasPhoto => localPhoto.isNotEmpty || photo.isNotEmpty;
+  List<CheckInPhotoAsset> get photoItems {
+    if (photos.isNotEmpty) return List.unmodifiable(photos);
+    if (localPhoto.isEmpty && photo.isEmpty) return const [];
+    return [
+      CheckInPhotoAsset(
+        photo: photo,
+        localPhoto: localPhoto,
+        createdAt: createdAt,
+      ),
+    ];
+  }
+
+  CheckInPhotoAsset? get primaryPhoto =>
+      photoItems.isEmpty ? null : photoItems.first;
+  int get photoCount => photoItems.length;
+  bool get hasPhoto => photoItems.isNotEmpty;
   bool get isRated => rating > 0;
   String get tagLine => tags.join(', ');
 
@@ -80,6 +149,8 @@ class CheckIn {
     lng: lng,
     photo: '',
     localPhoto: '',
+    album: album,
+    photos: const [],
     favorite: favorite,
     rating: rating,
     tags: tags,
@@ -87,6 +158,20 @@ class CheckIn {
 
   factory CheckIn.fromJson(Map<String, dynamic> json) {
     final rawTags = json['tags'];
+    final legacyPhoto = json['photo']?.toString() ?? '';
+    final legacyLocalPhoto = json['localPhoto']?.toString() ?? '';
+    final decodedPhotos = _readPhotos(json['photos']);
+    final photos = decodedPhotos.isNotEmpty
+        ? decodedPhotos
+        : (legacyPhoto.isEmpty && legacyLocalPhoto.isEmpty
+              ? const <CheckInPhotoAsset>[]
+              : [
+                  CheckInPhotoAsset(
+                    photo: legacyPhoto,
+                    localPhoto: legacyLocalPhoto,
+                  ),
+                ]);
+    final primary = photos.isEmpty ? null : photos.first;
     return CheckIn(
       id: json['id']?.toString() ?? '',
       city: json['city']?.toString() ?? '',
@@ -99,8 +184,12 @@ class CheckIn {
           DateTime.now().millisecondsSinceEpoch,
       lat: (json['lat'] as num?)?.toDouble() ?? 0,
       lng: (json['lng'] as num?)?.toDouble() ?? 0,
-      photo: json['photo']?.toString() ?? '',
-      localPhoto: json['localPhoto']?.toString() ?? '',
+      photo: legacyPhoto.isNotEmpty ? legacyPhoto : primary?.photo ?? '',
+      localPhoto: legacyLocalPhoto.isNotEmpty
+          ? legacyLocalPhoto
+          : primary?.localPhoto ?? '',
+      album: json['album']?.toString() ?? '',
+      photos: photos,
       favorite: json['favorite'] == true || json['favorite'] == 'true',
       rating: _readRating(json['rating']),
       tags: _readTags(rawTags),
@@ -132,6 +221,18 @@ class CheckIn {
     return const [];
   }
 
+  static List<CheckInPhotoAsset> _readPhotos(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              CheckInPhotoAsset.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .where((entry) => entry.hasPhoto)
+        .toList();
+  }
+
   static String _cleanTag(String value) =>
       value.trim().replaceAll(RegExp(r'\s+'), ' ');
 
@@ -147,6 +248,8 @@ class CheckIn {
     'lng': lng,
     'photo': photo,
     'localPhoto': localPhoto,
+    'album': album,
+    'photos': photoItems.map((entry) => entry.toJson()).toList(),
     'favorite': favorite,
     'rating': rating,
     'tags': tags,

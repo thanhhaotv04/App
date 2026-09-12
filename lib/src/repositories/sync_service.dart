@@ -7,6 +7,13 @@ import '../models/checkin.dart';
 import 'auth_service.dart';
 import 'local_image_storage.dart';
 
+class PhotoUpload {
+  const PhotoUpload({required this.bytes, required this.fileName});
+
+  final List<int> bytes;
+  final String fileName;
+}
+
 class SyncService {
   const SyncService({
     this.baseUrl = 'http://127.0.0.1:3000',
@@ -79,6 +86,7 @@ class SyncService {
     CheckIn item, {
     List<int>? photoBytes,
     String? photoFileName,
+    List<PhotoUpload>? photoUploads,
   }) async {
     if (!enabled) return item;
     await _ensureBackendAccount();
@@ -98,20 +106,58 @@ class SyncService {
             'favorite': item.favorite.toString(),
             'rating': item.rating.toString(),
             'tags': jsonEncode(item.tags),
+            'album': item.album,
+            'photos': jsonEncode(
+              item.photoItems
+                  .map(
+                    (entry) => {
+                      'photo': entry.photo,
+                      'name': entry.name,
+                      'createdAt': entry.createdAt,
+                    },
+                  )
+                  .toList(),
+            ),
             if (item.photo.isNotEmpty) 'photoPath': item.photo,
           });
-    var bytes = photoBytes;
-    if ((bytes == null || bytes.isEmpty) && item.localPhoto.isNotEmpty) {
-      bytes = await LocalImageStorage.readImage(item.localPhoto);
-    }
-    if (bytes != null && bytes.isNotEmpty) {
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'photo',
-          bytes,
-          filename: photoFileName ?? 'checkin-photo.jpg',
-        ),
-      );
+    if (photoUploads != null) {
+      for (final upload in photoUploads) {
+        if (upload.bytes.isEmpty) continue;
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'photos',
+            upload.bytes,
+            filename: upload.fileName,
+          ),
+        );
+      }
+    } else {
+      final pendingAssets = item.photoItems
+          .where((entry) => entry.photo.isEmpty && entry.localPhoto.isNotEmpty)
+          .toList();
+      if (photoBytes != null && photoBytes.isNotEmpty) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'photos',
+            photoBytes,
+            filename: photoFileName ?? 'checkin-photo.jpg',
+          ),
+        );
+      }
+      final assetsToRead = photoBytes != null && photoBytes.isNotEmpty
+          ? pendingAssets.skip(1)
+          : pendingAssets;
+      for (final asset in assetsToRead) {
+        final bytes = await LocalImageStorage.readImage(asset.localPhoto);
+        if (bytes == null || bytes.isEmpty) continue;
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'photos',
+            bytes,
+            filename: asset.name.isEmpty ? 'checkin-photo.jpg' : asset.name,
+          ),
+        );
+      }
     }
     final streamed = await request.send();
     final res = await http.Response.fromStream(streamed);
@@ -135,11 +181,9 @@ class SyncService {
           (item.localPhoto.isNotEmpty && (remote.photo.isEmpty));
       if (shouldPush) {
         final uploaded = await push(item);
-        pushed[item.id] = uploaded.copyWith(
-          synced: true,
-          localPhoto: item.localPhoto.isEmpty
-              ? uploaded.localPhoto
-              : item.localPhoto,
+        pushed[item.id] = mergeLocalPhotos(
+          uploaded.copyWith(synced: true),
+          item,
         );
       }
     }
@@ -147,12 +191,10 @@ class SyncService {
     final byId = <String, CheckIn>{};
     for (final remote in remoteAfter) {
       final local = localById[remote.id];
-      if (local != null &&
-          local.localPhoto.isNotEmpty &&
-          local.photo == remote.photo) {
-        byId[remote.id] = remote.copyWith(
-          synced: true,
-          localPhoto: local.localPhoto,
+      if (local != null && local.photoItems.isNotEmpty) {
+        byId[remote.id] = mergeLocalPhotos(
+          remote.copyWith(synced: true),
+          local,
         );
       } else {
         byId[remote.id] = await _hydrateRemotePhoto(remote);
@@ -175,10 +217,7 @@ class SyncService {
       if (remote.photo != local.photo && local.localPhoto.isNotEmpty) {
         await LocalImageStorage.deleteImage(local.localPhoto);
       }
-      byId[local.id] = remote.copyWith(
-        synced: true,
-        localPhoto: remote.photo.isEmpty ? '' : remote.localPhoto,
-      );
+      byId[local.id] = mergeLocalPhotos(remote.copyWith(synced: true), local);
     }
     final merged = byId.values.toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -211,6 +250,29 @@ class SyncService {
     return item.copyWith(synced: true);
   }
 
+  CheckIn mergeLocalPhotos(CheckIn remote, CheckIn local) {
+    final remoteAssets = remote.photoItems;
+    final localAssets = local.photoItems;
+    final localByRemotePath = {
+      for (final asset in localAssets)
+        if (asset.photo.isNotEmpty) asset.photo: asset.localPhoto,
+    };
+    final merged = [
+      for (var index = 0; index < remoteAssets.length; index++)
+        remoteAssets[index].copyWith(
+          localPhoto:
+              localByRemotePath[remoteAssets[index].photo] ??
+              (index < localAssets.length ? localAssets[index].localPhoto : ''),
+        ),
+    ];
+    final primary = merged.isEmpty ? null : merged.first;
+    return remote.copyWith(
+      photo: primary?.photo ?? '',
+      localPhoto: primary?.localPhoto ?? '',
+      photos: merged,
+    );
+  }
+
   Uri _photoUri(String photo) {
     final value = photo.trim();
     if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -239,6 +301,21 @@ class SyncService {
       Uri.parse('$baseUrl/api/checkins/$id/photo'),
       headers: await _authHeaders(),
     );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return CheckIn.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    }
+    throw Exception('Failed to delete photo: ${response.statusCode}');
+  }
+
+  Future<CheckIn> deletePhotoAsset(String id, String photo) async {
+    if (!enabled) throw Exception('Backend sync is disabled.');
+    await _ensureBackendAccount();
+    final uri = Uri.parse(
+      '$baseUrl/api/checkins/$id/photo',
+    ).replace(queryParameters: {'photo': photo});
+    final response = await http.delete(uri, headers: await _authHeaders());
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return CheckIn.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>,

@@ -10,7 +10,6 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/checkin.dart';
-import '../app.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
 import '../repositories/local_image_storage.dart';
@@ -19,6 +18,13 @@ import '../repositories/vietnam_regions.dart';
 import '../repositories/wishlist_repository.dart';
 import '../theme/app_colors.dart';
 import '../widgets/checkin_photo.dart';
+
+class _PickedPhoto {
+  const _PickedPhoto({required this.file, required this.bytes});
+
+  final XFile file;
+  final List<int> bytes;
+}
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -35,6 +41,7 @@ class _MapScreenState extends State<MapScreen> {
   final _placeCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   final _tagsCtrl = TextEditingController();
+  final _albumCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   final _drawerCtrl = DraggableScrollableController();
 
@@ -45,8 +52,7 @@ class _MapScreenState extends State<MapScreen> {
   String _sourceFilter = 'all';
   String _photoInfo = 'Temporary photo: web-safe mode';
   String _backendUrl = BackendConfig.defaultUrl;
-  XFile? _pickedPhoto;
-  List<int>? _pickedPhotoBytes;
+  List<_PickedPhoto> _pickedPhotos = [];
   double? _lat;
   double? _lng;
   int _rating = 0;
@@ -86,6 +92,7 @@ class _MapScreenState extends State<MapScreen> {
     _placeCtrl.dispose();
     _notesCtrl.dispose();
     _tagsCtrl.dispose();
+    _albumCtrl.dispose();
     _searchCtrl.dispose();
     _drawerCtrl.dispose();
     super.dispose();
@@ -174,8 +181,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _pickPhoto([ImageSource? source]) async {
-    final file = source == null
-        ? await openFile(
+    final cameraFile = source == null
+        ? null
+        : await ImagePicker().pickImage(source: source, imageQuality: 92);
+    final files = source == null
+        ? await openFiles(
             acceptedTypeGroups: const [
               XTypeGroup(
                 label: 'Images',
@@ -189,14 +199,17 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ],
           )
-        : await ImagePicker().pickImage(source: source, imageQuality: 92);
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
+        : cameraFile == null
+        ? <XFile>[]
+        : [cameraFile];
+    if (files.isEmpty) return;
+    final picked = [
+      for (final file in files)
+        _PickedPhoto(file: file, bytes: await file.readAsBytes()),
+    ];
     setState(() {
-      _pickedPhoto = file;
-      _pickedPhotoBytes = bytes;
-      _photoInfo =
-          '${file.name} · ${(bytes.length / 1024).toStringAsFixed(1)} KB';
+      _pickedPhotos = [..._pickedPhotos, ...picked];
+      _photoInfo = '${_pickedPhotos.length} new photo(s) selected';
       _takenAt = DateTime.now();
     });
   }
@@ -207,16 +220,27 @@ class _MapScreenState extends State<MapScreen> {
     final checkInAt =
         _takenAt ?? DateTime.fromMillisecondsSinceEpoch(original.createdAt);
     final createdAt = checkInAt.millisecondsSinceEpoch;
-    var localPhoto = original.localPhoto;
-    if (_pickedPhotoBytes != null) {
-      localPhoto = await LocalImageStorage.saveImage(
-        bytes: _pickedPhotoBytes!,
-        originalName: _pickedPhoto?.name ?? 'checkin-photo.jpg',
+    final photos = [...original.photoItems];
+    final uploads = <PhotoUpload>[];
+    for (var index = 0; index < _pickedPhotos.length; index += 1) {
+      final picked = _pickedPhotos[index];
+      final localPhoto = await LocalImageStorage.saveImage(
+        bytes: picked.bytes,
+        originalName: picked.file.name,
         city: city,
-        createdAt: createdAt,
+        album: _albumCtrl.text.trim(),
+        createdAt: createdAt + index,
       );
-      await LocalImageStorage.deleteImage(original.localPhoto);
+      photos.add(
+        CheckInPhotoAsset(
+          localPhoto: localPhoto,
+          name: picked.file.name,
+          createdAt: createdAt + index,
+        ),
+      );
+      uploads.add(PhotoUpload(bytes: picked.bytes, fileName: picked.file.name));
     }
+    final primary = photos.isEmpty ? null : photos.first;
     var updated = CheckIn(
       id: original.id,
       city: city,
@@ -227,8 +251,10 @@ class _MapScreenState extends State<MapScreen> {
       createdAt: createdAt,
       lat: original.lat,
       lng: original.lng,
-      photo: original.photo,
-      localPhoto: localPhoto,
+      photo: primary?.photo ?? '',
+      localPhoto: primary?.localPhoto ?? '',
+      album: _albumCtrl.text.trim(),
+      photos: photos,
       favorite: _favorite,
       rating: _rating,
       tags: _tagsFromInput(),
@@ -237,10 +263,9 @@ class _MapScreenState extends State<MapScreen> {
       final sync = SyncService(baseUrl: await BackendConfig.loadUrl());
       final remote = await sync.push(
         updated,
-        photoBytes: _pickedPhotoBytes,
-        photoFileName: _pickedPhoto?.name,
+        photoUploads: uploads.isEmpty ? null : uploads,
       );
-      updated = remote.copyWith(localPhoto: localPhoto, synced: true);
+      updated = sync.mergeLocalPhotos(remote.copyWith(synced: true), updated);
     } catch (_) {
       // Keep the edit locally and let two-way sync retry later.
     }
@@ -261,9 +286,9 @@ class _MapScreenState extends State<MapScreen> {
     _placeCtrl.clear();
     _notesCtrl.clear();
     _tagsCtrl.clear();
+    _albumCtrl.clear();
     _photoInfo = 'No metadata read yet';
-    _pickedPhoto = null;
-    _pickedPhotoBytes = null;
+    _pickedPhotos = [];
     _lat = null;
     _lng = null;
     _rating = 0;
@@ -312,12 +337,27 @@ class _MapScreenState extends State<MapScreen> {
     final city = _cityCtrl.text.trim();
     if (city.isEmpty) return;
     final createdAt = (_takenAt ?? DateTime.now()).millisecondsSinceEpoch;
-    final localPhoto = await LocalImageStorage.saveImage(
-      bytes: _pickedPhotoBytes ?? const [],
-      originalName: _pickedPhoto?.name ?? 'checkin-photo.jpg',
-      city: city,
-      createdAt: createdAt,
-    );
+    final photos = <CheckInPhotoAsset>[];
+    final uploads = <PhotoUpload>[];
+    for (var index = 0; index < _pickedPhotos.length; index += 1) {
+      final picked = _pickedPhotos[index];
+      final localPhoto = await LocalImageStorage.saveImage(
+        bytes: picked.bytes,
+        originalName: picked.file.name,
+        city: city,
+        album: _albumCtrl.text.trim(),
+        createdAt: createdAt + index,
+      );
+      photos.add(
+        CheckInPhotoAsset(
+          localPhoto: localPhoto,
+          name: picked.file.name,
+          createdAt: createdAt + index,
+        ),
+      );
+      uploads.add(PhotoUpload(bytes: picked.bytes, fileName: picked.file.name));
+    }
+    final primary = photos.isEmpty ? null : photos.first;
     final item = CheckIn(
       id: const Uuid().v4(),
       city: city,
@@ -328,8 +368,10 @@ class _MapScreenState extends State<MapScreen> {
       createdAt: createdAt,
       lat: _lat ?? 21.0285,
       lng: _lng ?? 105.8542,
-      photo: '',
-      localPhoto: localPhoto,
+      photo: primary?.photo ?? '',
+      localPhoto: primary?.localPhoto ?? '',
+      album: _albumCtrl.text.trim(),
+      photos: photos,
       favorite: _favorite,
       rating: _rating,
       tags: _tagsFromInput(),
@@ -340,10 +382,9 @@ class _MapScreenState extends State<MapScreen> {
     try {
       savedItem = await sync.push(
         item,
-        photoBytes: _pickedPhotoBytes,
-        photoFileName: _pickedPhoto?.name,
+        photoUploads: uploads.isEmpty ? null : uploads,
       );
-      savedItem = savedItem.copyWith(synced: true, localPhoto: localPhoto);
+      savedItem = sync.mergeLocalPhotos(savedItem.copyWith(synced: true), item);
     } catch (_) {
       savedItem = item.copyWith(synced: false);
     }
@@ -356,7 +397,9 @@ class _MapScreenState extends State<MapScreen> {
     await _load();
     if (!mounted) return;
     final savedOnline = savedItem.synced;
-    VietNamMapApp.navigatorKey.currentState?.pop();
+    // The form is a modal on the MapScreen navigator. Popping the GoRouter
+    // root navigator here can remove the entire /map route on mobile.
+    Navigator.of(context).pop();
     _openDetail(savedItem);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -379,10 +422,13 @@ class _MapScreenState extends State<MapScreen> {
       _placeCtrl.text = editing.place;
       _notesCtrl.text = editing.notes;
       _tagsCtrl.text = editing.tagLine;
+      _albumCtrl.text = editing.album;
       _rating = editing.rating;
       _favorite = editing.favorite;
       _takenAt = DateTime.fromMillisecondsSinceEpoch(editing.createdAt);
-      _photoInfo = editing.hasPhoto ? 'Current photo attached' : 'No photo';
+      _photoInfo = editing.hasPhoto
+          ? '${editing.photoCount} photo(s) in this album'
+          : 'No photo';
     } else if (city != null && city.isNotEmpty) {
       _cityCtrl.text = city;
       _placeCtrl.text = city;
@@ -514,6 +560,19 @@ class _MapScreenState extends State<MapScreen> {
                             'Photo, note, tags, favorite and rating',
                           ),
                           children: [
+                            TextFormField(
+                              controller: _albumCtrl,
+                              textCapitalization: TextCapitalization.words,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                labelText: 'Album / trip name',
+                                hintText: 'e.g. Đà Nẵng summer 2026',
+                                prefixIcon: Icon(Icons.photo_album_outlined),
+                                helperText:
+                                    'Photos are stored together by album, account and city.',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             Align(
                               alignment: Alignment.centerLeft,
                               child: Wrap(
@@ -528,11 +587,7 @@ class _MapScreenState extends State<MapScreen> {
                                     icon: const Icon(
                                       Icons.photo_library_outlined,
                                     ),
-                                    label: Text(
-                                      editing == null
-                                          ? 'Choose photo'
-                                          : 'Change photo',
-                                    ),
+                                    label: Text('Choose photos'),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: () async {
@@ -548,16 +603,26 @@ class _MapScreenState extends State<MapScreen> {
                               ),
                             ),
                             const SizedBox(height: 10),
-                            if (_pickedPhotoBytes != null)
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: SizedBox(
-                                  height: 160,
-                                  width: double.infinity,
-                                  child: Image.memory(
-                                    Uint8List.fromList(_pickedPhotoBytes!),
-                                    fit: BoxFit.cover,
-                                    semanticLabel: 'Selected check-in photo',
+                            if (_pickedPhotos.isNotEmpty)
+                              SizedBox(
+                                height: 104,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _pickedPhotos.length,
+                                  separatorBuilder: (_, _) =>
+                                      const SizedBox(width: 8),
+                                  itemBuilder: (context, index) => ClipRRect(
+                                    borderRadius: BorderRadius.circular(14),
+                                    child: Image.memory(
+                                      Uint8List.fromList(
+                                        _pickedPhotos[index].bytes,
+                                      ),
+                                      width: 104,
+                                      height: 104,
+                                      fit: BoxFit.cover,
+                                      semanticLabel:
+                                          'Selected album photo ${index + 1}',
+                                    ),
                                   ),
                                 ),
                               )
@@ -575,13 +640,13 @@ class _MapScreenState extends State<MapScreen> {
                                     SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
-                                        'Current photo will be kept unless you choose a replacement.',
+                                        'Current album photos will be kept. Choose more photos to add to it.',
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            if (_pickedPhotoBytes != null ||
+                            if (_pickedPhotos.isNotEmpty ||
                                 (editing?.hasPhoto ?? false)) ...[
                               const SizedBox(height: 8),
                               Text(
@@ -813,7 +878,9 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
     if (confirmed != true) return;
-    await LocalImageStorage.deleteImage(item.localPhoto);
+    for (final photo in item.photoItems) {
+      await LocalImageStorage.deleteImage(photo.localPhoto);
+    }
     try {
       await SyncService(
         baseUrl: await BackendConfig.loadUrl(),
@@ -849,7 +916,9 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
     if (confirmed != true) return;
-    await LocalImageStorage.deleteImage(item.localPhoto);
+    for (final photo in item.photoItems) {
+      await LocalImageStorage.deleteImage(photo.localPhoto);
+    }
     try {
       await SyncService(
         baseUrl: await BackendConfig.loadUrl(),
@@ -1554,7 +1623,11 @@ class _MapScreenState extends State<MapScreen> {
                     child: TextButton.icon(
                       onPressed: _deletePhoto,
                       icon: const Icon(Icons.delete_outline),
-                      label: const Text('Delete photo'),
+                      label: Text(
+                        item.photoCount > 1
+                            ? 'Delete ${item.photoCount} photos'
+                            : 'Delete photo',
+                      ),
                     ),
                   ),
                 if (!item.hasPhoto)
@@ -1572,6 +1645,17 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ),
                 const SizedBox(height: 12),
+                if (item.album.isNotEmpty) ...[
+                  _InfoCard(label: 'Album / trip', value: item.album),
+                  const SizedBox(height: 8),
+                ],
+                _InfoCard(
+                  label: 'Photos',
+                  value: item.photoCount == 0
+                      ? 'No photos yet'
+                      : '${item.photoCount} photo(s)',
+                ),
+                const SizedBox(height: 8),
                 _InfoCard(label: 'Place', value: item.place),
                 const SizedBox(height: 8),
                 _InfoCard(

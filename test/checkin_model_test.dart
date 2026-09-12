@@ -44,4 +44,30 @@ void main() {
     expect(item.tags, ['food', 'sunset']);
     expect(item.tagLine, 'food, sunset');
   });
+
+  test('keeps legacy photo fields and reads an album gallery', () {
+    final legacy = CheckIn.fromJson({
+      'id': 'legacy-photo',
+      'city': 'Hà Nội',
+      'place': 'Hồ Tây',
+      'photo': 'user/Picture/Alice/Hà Nội/photo.jpg',
+    });
+    expect(legacy.photoCount, 1);
+    expect(legacy.photoItems.single.photo, legacy.photo);
+
+    final album = CheckIn.fromJson({
+      'id': 'trip-1',
+      'city': 'Đà Nẵng',
+      'place': 'Biển Mỹ Khê',
+      'album': 'Đà Nẵng summer',
+      'photos': [
+        {'photo': 'user/Picture/Alice/Đà Nẵng summer/Đà Nẵng/a.jpg'},
+        {'photo': 'user/Picture/Alice/Đà Nẵng summer/Đà Nẵng/b.jpg'},
+      ],
+    });
+    expect(album.album, 'Đà Nẵng summer');
+    expect(album.photoCount, 2);
+    expect(album.toJson()['photo'], album.photoItems.first.photo);
+    expect((album.toJson()['photos'] as List).length, 2);
+  });
 }

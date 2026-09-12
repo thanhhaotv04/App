@@ -47,6 +47,31 @@ function parseTags(value) {
   return String(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function parsePhotoAssets(value) {
+  if (!value) return [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => ({
+      photo: String(item?.photo || "").replace(/\\/g, "/").replace(/^\/+/, ""),
+      name: String(item?.name || ""),
+      createdAt: Number(item?.createdAt) || 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function removeStoredPhoto(photo) {
+  const value = String(photo || "").replace(/\\/g, "/");
+  if (!value.startsWith("user/Picture/")) return;
+  const relative = value.slice("user/Picture/".length);
+  const absoluteRoot = path.resolve(PHOTO_ROOT);
+  const absolutePhoto = path.resolve(PHOTO_ROOT, relative);
+  if (!absolutePhoto.startsWith(`${absoluteRoot}${path.sep}`)) return;
+  await fs.unlink(absolutePhoto).catch(() => {});
+}
+
 async function loadAllCheckins() {
   try {
     const raw = await fs.readFile(CHECKINS_FILE, "utf8");
@@ -259,11 +284,17 @@ app.get("/releases/:file", async (req, res) => {
   res.download(path.join(RELEASES_DIR, fileName));
 });
 
-app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
+app.post(
+  "/api/checkins",
+  UPLOAD.fields([
+    { name: "photo", maxCount: 1 },
+    { name: "photos", maxCount: 24 },
+  ]),
+  async (req, res) => {
   try {
     const authenticated = await authenticate(req, res);
     if (!authenticated) return;
-    const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath, favorite, rating, tags } = req.body;
+    const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath, favorite, rating, tags, album } = req.body;
     if (!city) return res.status(400).json({ error: "city_required" });
 
     const allCheckins = await loadAllCheckins();
@@ -278,16 +309,61 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
       ? requestedPhotoPath
       : "";
 
-    if (req.file) {
-      const userFolder = cleanSegment(authenticated.account.name);
-      const cityFolder = cleanSegment(city);
-      const destDir = path.join(PHOTO_ROOT, userFolder, cityFolder);
+    const hasPhotoAlbum = Object.prototype.hasOwnProperty.call(req.body, "photos");
+    const previous = checkins.find((entry) => entry.id === id);
+    const previousPhotos = Array.isArray(previous?.photos)
+      ? previous.photos.map((entry) => String(entry.photo || "")).filter(Boolean)
+      : previous?.photo
+        ? [previous.photo]
+        : [];
+    const uploadedPhotos = req.files?.photos || [];
+    const legacyFile = req.files?.photo?.[0];
+    const photoAssets = parsePhotoAssets(req.body.photos);
+    const savedPhotos = [];
+    const userFolder = cleanSegment(authenticated.account.name);
+    const albumFolder = String(album || "").trim()
+      ? `${cleanSegment(album)}/`
+      : "";
+    const cityFolder = cleanSegment(city);
+    const destDir = path.join(PHOTO_ROOT, userFolder, albumFolder, cityFolder);
+    const saveUploaded = async (file, name, assetCreatedAt) => {
       await ensureDir(destDir);
-      const ext = path.extname(req.file.originalname || "").slice(0, 10) || ".jpg";
-      const fileName = `${createdAt}-${safeFileName(path.basename(req.file.originalname || "photo", path.extname(req.file.originalname || "")))}${ext}`;
-      const fullPath = path.join(destDir, fileName);
-      await fs.writeFile(fullPath, req.file.buffer);
-      savedPhotoPath = `${expectedPhotoPrefix}${cityFolder}/${fileName}`;
+      const ext = path.extname(file.originalname || "").slice(0, 10) || ".jpg";
+      const baseName = safeFileName(
+        path.basename(file.originalname || name || "photo", path.extname(file.originalname || "")),
+      );
+      const fileName = `${assetCreatedAt || createdAt}-${Date.now()}-${randomUUID().slice(0, 8)}-${baseName}${ext}`;
+      await fs.writeFile(path.join(destDir, fileName), file.buffer);
+      return `${expectedPhotoPrefix}${albumFolder}${cityFolder}/${fileName}`;
+    };
+
+    if (hasPhotoAlbum) {
+      let uploadIndex = 0;
+      for (const asset of photoAssets) {
+        let photo = asset.photo.startsWith(expectedPhotoPrefix) ? asset.photo : "";
+        if (!photo && uploadIndex < uploadedPhotos.length) {
+          const file = uploadedPhotos[uploadIndex++];
+          photo = await saveUploaded(file, asset.name, asset.createdAt);
+        }
+        if (photo) savedPhotos.push({ photo, name: asset.name, createdAt: asset.createdAt || createdAt });
+      }
+      while (uploadIndex < uploadedPhotos.length) {
+        const file = uploadedPhotos[uploadIndex++];
+        const photo = await saveUploaded(file, file.originalname, createdAt);
+        savedPhotos.push({ photo, name: file.originalname || "photo", createdAt });
+      }
+    } else {
+      if (legacyFile) {
+        savedPhotoPath = await saveUploaded(legacyFile, legacyFile.originalname, createdAt);
+      }
+      if (savedPhotoPath) savedPhotos.push({ photo: savedPhotoPath, name: legacyFile?.originalname || "", createdAt });
+    }
+
+    if (previous && hasPhotoAlbum) {
+      const nextPaths = new Set(savedPhotos.map((entry) => entry.photo));
+      for (const oldPhoto of previousPhotos) {
+        if (!nextPaths.has(oldPhoto)) await removeStoredPhoto(oldPhoto);
+      }
     }
 
     const item = {
@@ -300,7 +376,9 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
       createdAt,
       lat: Number(lat) || 0,
       lng: Number(lng) || 0,
-      photo: savedPhotoPath,
+      photo: savedPhotos[0]?.photo || savedPhotoPath || "",
+      photos: savedPhotos,
+      album: String(album || "").trim(),
       favorite: favorite === "true" || favorite === true,
       rating: Math.max(0, Math.min(5, Number(rating) || 0)),
       tags: parseTags(tags),
@@ -308,7 +386,13 @@ app.post("/api/checkins", UPLOAD.single("photo"), async (req, res) => {
 
     const existingIndex = checkins.findIndex((x) => x.id === id);
     if (existingIndex >= 0) {
-      checkins[existingIndex] = { ...checkins[existingIndex], ...item, photo: savedPhotoPath || checkins[existingIndex].photo || "" };
+      checkins[existingIndex] = {
+        ...checkins[existingIndex],
+        ...item,
+        photo: hasPhotoAlbum ? item.photo : savedPhotoPath || checkins[existingIndex].photo || "",
+        photos: hasPhotoAlbum ? savedPhotos : (savedPhotos.length ? savedPhotos : checkins[existingIndex].photos || []),
+        album: hasPhotoAlbum ? item.album : checkins[existingIndex].album || item.album,
+      };
     } else {
       checkins.unshift(item);
     }
@@ -325,9 +409,16 @@ app.delete("/api/checkins/:id", async (req, res) => {
   if (!authenticated) return;
   const allCheckins = await loadAllCheckins();
   const checkins = userCheckins(allCheckins, authenticated.account);
+  const removed = checkins.find((item) => item.id === req.params.id);
   const next = checkins.filter((item) => item.id !== req.params.id);
   setUserCheckins(allCheckins, authenticated.account, next);
   await saveAllCheckins(allCheckins);
+  const removedPhotos = Array.isArray(removed?.photos)
+    ? removed.photos.map((entry) => entry.photo).filter(Boolean)
+    : removed?.photo
+      ? [removed.photo]
+      : [];
+  for (const photo of removedPhotos) await removeStoredPhoto(photo);
   res.json({ ok: true });
 });
 
@@ -338,23 +429,31 @@ app.delete("/api/checkins/:id/photo", async (req, res) => {
   const checkins = userCheckins(allCheckins, authenticated.account);
   const item = checkins.find((entry) => entry.id === req.params.id);
   if (!item) return res.status(404).json({ error: "not_found" });
-  const previousPhoto = item.photo;
-  item.photo = "";
+  const previousPhotos = Array.isArray(item.photos)
+    ? item.photos.map((entry) => entry.photo).filter(Boolean)
+    : item.photo
+      ? [item.photo]
+      : [];
+  const requestedPhoto = String(req.query.photo || "").replace(/\\/g, "/");
+  if (requestedPhoto) {
+    const remaining = previousPhotos.filter((photo) => photo !== requestedPhoto);
+    if (remaining.length === previousPhotos.length) {
+      return res.status(404).json({ error: "photo_not_found" });
+    }
+    const existingAssets = Array.isArray(item.photos) ? item.photos : [];
+    item.photos = existingAssets.filter((entry) => entry.photo !== requestedPhoto);
+    item.photo = item.photos[0]?.photo || remaining[0] || "";
+    await removeStoredPhoto(requestedPhoto);
+  } else {
+    item.photo = "";
+    item.photos = [];
+    for (const previousPhoto of previousPhotos) {
+      await removeStoredPhoto(previousPhoto);
+    }
+  }
   item.synced = true;
   setUserCheckins(allCheckins, authenticated.account, checkins);
   await saveAllCheckins(allCheckins);
-  if (previousPhoto) {
-    const photoRelativePath = previousPhoto.startsWith("user/Picture/")
-      ? previousPhoto.slice("user/Picture/".length)
-      : "";
-    const absolutePhoto = photoRelativePath
-      ? path.resolve(PHOTO_ROOT, photoRelativePath)
-      : path.resolve(__dirname, previousPhoto);
-    const absoluteRoot = path.resolve(PHOTO_ROOT);
-    if (absolutePhoto.startsWith(`${absoluteRoot}${path.sep}`)) {
-      await fs.unlink(absolutePhoto).catch(() => {});
-    }
-  }
   res.json(item);
 });
 
@@ -362,8 +461,17 @@ app.delete("/api/checkins", async (req, res) => {
   const authenticated = await authenticate(req, res);
   if (!authenticated) return;
   const allCheckins = await loadAllCheckins();
+  const existing = userCheckins(allCheckins, authenticated.account);
   setUserCheckins(allCheckins, authenticated.account, []);
   await saveAllCheckins(allCheckins);
+  for (const item of existing) {
+    const photos = Array.isArray(item.photos)
+      ? item.photos.map((entry) => entry.photo).filter(Boolean)
+      : item.photo
+        ? [item.photo]
+        : [];
+    for (const photo of photos) await removeStoredPhoto(photo);
+  }
   res.json({ ok: true });
 });
 
