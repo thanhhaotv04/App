@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
 
 import '../app_version.dart';
 
@@ -13,6 +14,7 @@ class UpdateInfo {
     required this.versionCode,
     required this.apkUrl,
     required this.notes,
+    required this.sha256,
   });
 
   final bool available;
@@ -20,6 +22,7 @@ class UpdateInfo {
   final int versionCode;
   final String apkUrl;
   final String notes;
+  final String sha256;
 }
 
 class AppUpdateService {
@@ -44,6 +47,7 @@ class AppUpdateService {
       versionCode: remoteCode,
       apkUrl: apkUrl,
       notes: json['notes']?.toString() ?? '',
+      sha256: json['sha256']?.toString().toLowerCase() ?? '',
     );
   }
 
@@ -52,8 +56,14 @@ class AppUpdateService {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('APK download failed: ${res.statusCode}');
     }
+    final digest = sha256.convert(res.bodyBytes).toString();
+    if (info.sha256.length != 64 || digest != info.sha256) {
+      throw Exception('APK integrity check failed. The download was rejected.');
+    }
     final dir = await _downloadDir();
-    final file = File('${dir.path}${Platform.pathSeparator}vietnam-map-checkin-${info.versionCode}.apk');
+    final file = File(
+      '${dir.path}${Platform.pathSeparator}vietnam-map-checkin-${info.versionCode}.apk',
+    );
     await file.writeAsBytes(res.bodyBytes, flush: true);
     return file.path;
   }
@@ -68,7 +78,9 @@ class AppUpdateService {
   Future<Directory> _downloadDir() async {
     final base = Platform.isAndroid
         ? Directory('/data/user/0/com.example.vietnam_map_01/cache')
-        : Directory('${Platform.environment['LOCALAPPDATA'] ?? Directory.current.path}${Platform.pathSeparator}VietNamMapCheckin');
+        : Directory(
+            '${Platform.environment['LOCALAPPDATA'] ?? Directory.current.path}${Platform.pathSeparator}VietNamMapCheckin',
+          );
     final dir = Directory('${base.path}${Platform.pathSeparator}updates');
     await dir.create(recursive: true);
     return dir;

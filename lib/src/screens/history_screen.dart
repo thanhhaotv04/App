@@ -7,12 +7,15 @@ import '../models/checkin.dart';
 import '../repositories/backend_config.dart';
 import '../repositories/checkin_repository.dart';
 import '../repositories/local_image_storage.dart';
+import '../repositories/photo_export.dart';
 import '../repositories/sync_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/checkin_photo.dart';
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  const HistoryScreen({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -109,6 +112,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         OutlinedButton.icon(
                           onPressed: () async {
                             Navigator.of(context).pop();
+                            await _savePhotoAsset(assets[currentIndex]);
+                          },
+                          icon: const Icon(Icons.download_outlined),
+                          label: const Text('Save to device'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            Navigator.of(context).pop();
                             await _replacePhoto(item);
                           },
                           icon: const Icon(Icons.photo_library_outlined),
@@ -132,6 +143,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
         );
       },
     );
+  }
+
+  Future<void> _savePhotoAsset(CheckInPhotoAsset asset) async {
+    try {
+      final saved = await PhotoExport.save(
+        localPhoto: asset.localPhoto,
+        remotePhoto: asset.photo,
+        baseUrl: _backendUrl,
+        fileName: asset.name,
+      );
+      if (saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Photo saved to your device.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not save photo: $error')));
+      }
+    }
   }
 
   Future<void> _replacePhoto(CheckIn item) async {
@@ -209,16 +242,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
       photos: remaining,
       synced: false,
     );
-    await LocalImageStorage.deleteImage(asset.localPhoto);
     try {
       if (asset.photo.isNotEmpty) {
         final sync = SyncService(baseUrl: _backendUrl);
         final remote = await sync.deletePhotoAsset(item.id, asset.photo);
         updated = sync.mergeLocalPhotos(remote.copyWith(synced: true), updated);
       }
-    } catch (_) {
-      // Keep the local deletion and retry through two-way sync later.
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Connect to the backend before deleting this photo: $error',
+            ),
+          ),
+        );
+      }
+      return;
     }
+    await LocalImageStorage.deleteImage(asset.localPhoto);
     await _repo.update(updated);
     await _load();
   }
@@ -370,6 +412,67 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
     final cities = _orderedCities(grouped);
 
+    final content = <Widget>[
+      _SectionHeader(
+        title: 'Check-in history',
+        action: TextButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Reload'),
+          style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+        ),
+      ),
+      const SizedBox(height: 18),
+      _HistoryTools(
+        query: _query,
+        queryController: _queryController,
+        filter: _filter,
+        sort: _sort,
+        total: visible.length,
+        hasActiveFilters: _hasActiveFilters,
+        onQueryChanged: (value) => setState(() => _query = value),
+        onFilterChanged: (value) => setState(() => _filter = value ?? 'all'),
+        onSortChanged: (value) => setState(() => _sort = value ?? 'newest'),
+        onClearFilters: _clearFilters,
+      ),
+      const SizedBox(height: 14),
+      if (cities.isEmpty)
+        _EmptyHistoryCard(
+          icon: _items.isEmpty
+              ? Icons.add_location_alt_outlined
+              : Icons.search_off_outlined,
+          title: _items.isEmpty ? 'Start your travel story' : 'No matches yet',
+          text: _items.isEmpty
+              ? 'Add a first check-in. It will appear here by province.'
+              : 'Try a different search term or remove the current filters.',
+          actionLabel: _items.isEmpty ? 'Open Checkin' : 'Clear filters',
+          actionIcon: _items.isEmpty
+              ? Icons.add_location_alt_outlined
+              : Icons.filter_alt_off_outlined,
+          onAction: _items.isEmpty
+              ? () => context.go('/checkin')
+              : _clearFilters,
+          colors: colors,
+        ),
+      for (var index = 0; index < cities.length; index += 1)
+        _ProvinceHistoryGroup(
+          city: cities[index],
+          summary: _groupSummary(grouped[cities[index]]!),
+          items: grouped[cities[index]]!,
+          initiallyExpanded: index == 0,
+          colors: colors,
+          photoUrl: _photoUrl,
+          onOpenPhoto: _openPhoto,
+        ),
+    ];
+
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: content,
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -389,62 +492,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               : 18,
           32,
         ),
-        children: [
-          _SectionHeader(
-            title: 'Check-in history',
-            action: TextButton.icon(
-              onPressed: _load,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Reload'),
-              style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-            ),
-          ),
-          const SizedBox(height: 18),
-          _HistoryTools(
-            query: _query,
-            queryController: _queryController,
-            filter: _filter,
-            sort: _sort,
-            total: visible.length,
-            hasActiveFilters: _hasActiveFilters,
-            onQueryChanged: (value) => setState(() => _query = value),
-            onFilterChanged: (value) =>
-                setState(() => _filter = value ?? 'all'),
-            onSortChanged: (value) => setState(() => _sort = value ?? 'newest'),
-            onClearFilters: _clearFilters,
-          ),
-          const SizedBox(height: 14),
-          if (cities.isEmpty)
-            _EmptyHistoryCard(
-              icon: _items.isEmpty
-                  ? Icons.add_location_alt_outlined
-                  : Icons.search_off_outlined,
-              title: _items.isEmpty
-                  ? 'Start your travel story'
-                  : 'No matches yet',
-              text: _items.isEmpty
-                  ? 'Add a first memory from the map. It will appear here by province.'
-                  : 'Try a different search term or remove the current filters.',
-              actionLabel: _items.isEmpty ? 'Open map' : 'Clear filters',
-              actionIcon: _items.isEmpty
-                  ? Icons.map_outlined
-                  : Icons.filter_alt_off_outlined,
-              onAction: _items.isEmpty
-                  ? () => context.go('/map')
-                  : _clearFilters,
-              colors: colors,
-            ),
-          for (var index = 0; index < cities.length; index += 1)
-            _ProvinceHistoryGroup(
-              city: cities[index],
-              summary: _groupSummary(grouped[cities[index]]!),
-              items: grouped[cities[index]]!,
-              initiallyExpanded: index == 0,
-              colors: colors,
-              photoUrl: _photoUrl,
-              onOpenPhoto: _openPhoto,
-            ),
-        ],
+        children: content,
       ),
     );
   }
@@ -690,38 +738,41 @@ class _ProvinceHistoryGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Material(
         color: colors.panel,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: colors.line),
-      ),
-      child: ExpansionTile(
-        key: PageStorageKey('history-province-$city'),
-        initiallyExpanded: initiallyExpanded,
-        iconColor: colors.accent,
-        collapsedIconColor: colors.muted,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        minTileHeight: 84,
-        title: Text(city, style: Theme.of(context).textTheme.titleMedium),
-        subtitle: Text(
-          summary,
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: colors.muted),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(color: colors.line),
         ),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        children: items
-            .map(
-              (item) => _HistoryEntryCard(
-                item: item,
-                colors: colors,
-                photoUrl: photoUrl,
-                onOpenPhoto: () => onOpenPhoto(item),
-              ),
-            )
-            .toList(),
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          key: PageStorageKey('history-province-$city'),
+          initiallyExpanded: initiallyExpanded,
+          iconColor: colors.accent,
+          collapsedIconColor: colors.muted,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          minTileHeight: 84,
+          title: Text(city, style: Theme.of(context).textTheme.titleMedium),
+          subtitle: Text(
+            summary,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.muted),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          children: items
+              .map(
+                (item) => _HistoryEntryCard(
+                  item: item,
+                  colors: colors,
+                  photoUrl: photoUrl,
+                  onOpenPhoto: () => onOpenPhoto(item),
+                ),
+              )
+              .toList(),
+        ),
       ),
     );
   }
@@ -750,38 +801,44 @@ class _HistoryEntryCard extends StatelessWidget {
     if (item.album.isNotEmpty) details.write(' · Album: ${item.album}');
     if (item.photoCount > 1) details.write(' · ${item.photoCount} photos');
 
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Material(
         color: colors.panel2,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.line),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        minLeadingWidth: 52,
-        minVerticalPadding: 10,
-        isThreeLine: true,
-        leading: _HistoryThumbnail(
-          item: item,
-          photoUrl: photoUrl,
-          onTap: onOpenPhoto,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: colors.line),
         ),
-        title: Text(
-          item.place,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 6,
+          ),
+          minLeadingWidth: 52,
+          minVerticalPadding: 10,
+          isThreeLine: true,
+          leading: _HistoryThumbnail(
+            item: item,
+            photoUrl: photoUrl,
+            onTap: onOpenPhoto,
+          ),
+          title: Text(
+            item.place,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            details.toString(),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          trailing: _HistoryStatus(item: item, colors: colors),
         ),
-        subtitle: Text(
-          details.toString(),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        trailing: _HistoryStatus(item: item, colors: colors),
       ),
     );
   }

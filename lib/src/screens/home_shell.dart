@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../theme/app_theme.dart';
 import '../theme/app_colors.dart';
 
 class HomeShell extends StatelessWidget {
@@ -11,19 +10,19 @@ class HomeShell extends StatelessWidget {
 
   int _indexForLocation(BuildContext context) {
     final path = GoRouterState.of(context).uri.path;
-    if (path.startsWith('/history')) return 1;
-    if (path.startsWith('/insights')) return 2;
-    if (path.startsWith('/sync')) return 3;
-    if (path.startsWith('/settings')) return 4;
+    if (path.startsWith('/album')) return 1;
+    if (path.startsWith('/map')) return 2;
+    if (path.startsWith('/insights')) return 3;
+    if (path.startsWith('/account')) return 4;
     return 0;
   }
 
   void _navigate(BuildContext context, int index) {
-    if (index == 1) return context.go('/history');
-    if (index == 2) return context.go('/insights');
-    if (index == 3) return context.go('/sync');
-    if (index == 4) return context.go('/settings');
-    context.go('/map');
+    if (index == 1) return context.go('/album');
+    if (index == 2) return context.go('/map');
+    if (index == 3) return context.go('/insights');
+    if (index == 4) return context.go('/account');
+    context.go('/checkin');
   }
 
   @override
@@ -76,24 +75,6 @@ class HomeShell extends StatelessWidget {
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            onPressed: AppTheme.toggleTheme,
-            icon: ValueListenableBuilder<ThemeMode>(
-              valueListenable: AppTheme.themeMode,
-              builder: (context, mode, _) {
-                return Icon(
-                  mode == ThemeMode.dark
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
-                  size: 34,
-                );
-              },
-            ),
-            tooltip: 'Theme',
-          ),
-          const SizedBox(width: 14),
-        ],
       ),
       body: child,
       bottomNavigationBar: NavigationBar(
@@ -102,23 +83,20 @@ class HomeShell extends StatelessWidget {
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.location_on_outlined),
-            label: 'Map',
+            label: 'Checkin',
           ),
           NavigationDestination(
-            icon: Icon(Icons.timeline_outlined),
-            label: 'History',
+            icon: Icon(Icons.photo_album_outlined),
+            label: 'Album',
           ),
+          NavigationDestination(icon: Icon(Icons.map_outlined), label: 'Map'),
           NavigationDestination(
             icon: Icon(Icons.insights_outlined),
             label: 'Insights',
           ),
           NavigationDestination(
-            icon: Icon(Icons.sync_alt_outlined),
-            label: 'Sync',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            label: 'Settings',
+            icon: Icon(Icons.person_outline),
+            label: 'Account',
           ),
         ],
       ),

@@ -2,7 +2,8 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs/promises";
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
+import https from "https";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,11 +14,21 @@ const preferredPort = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "server-data");
 const CHECKINS_FILE = path.join(DATA_DIR, "checkins.json");
 const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+const ALBUMS_FILE = path.join(DATA_DIR, "albums.json");
 const PHOTO_ROOT = process.env.PHOTO_ROOT || path.join(__dirname, "user", "Picture");
 const LEGACY_CHECKINS_KEY = "__legacy";
 const RELEASES_DIR = path.join(__dirname, "releases");
 const UPDATE_MANIFEST = path.join(RELEASES_DIR, "latest.json");
-const UPLOAD = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
+const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
+const MAX_ACCOUNT_PHOTO_BYTES = Number(process.env.MAX_ACCOUNT_PHOTO_BYTES || 500 * 1024 * 1024);
+const TLS_CERT_FILE = String(process.env.TLS_CERT_FILE || "");
+const TLS_KEY_FILE = String(process.env.TLS_KEY_FILE || "");
+const UPLOAD = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PHOTO_BYTES, files: 24, fields: 64 },
+});
+const configuredOrigins = String(process.env.CORS_ORIGINS || "http://localhost:8080,http://127.0.0.1:8080")
+  .split(",").map((value) => value.trim()).filter(Boolean);
 
 const ensureDir = async (dir) => {
   await fs.mkdir(dir, { recursive: true });
@@ -72,6 +83,28 @@ async function removeStoredPhoto(photo) {
   await fs.unlink(absolutePhoto).catch(() => {});
 }
 
+async function directorySize(directory) {
+  let total = 0;
+  try {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const value = path.join(directory, entry.name);
+      total += entry.isDirectory() ? await directorySize(value) : (await fs.stat(value)).size;
+    }
+  } catch {
+    return total;
+  }
+  return total;
+}
+
+async function ensurePhotoQuota(account, incomingBytes) {
+  const usedBytes = await directorySize(path.join(PHOTO_ROOT, cleanSegment(account.id)));
+  if (usedBytes + incomingBytes > MAX_ACCOUNT_PHOTO_BYTES) {
+    const error = new Error("photo_quota_exceeded");
+    error.statusCode = 413;
+    throw error;
+  }
+}
+
 async function loadAllCheckins() {
   try {
     const raw = await fs.readFile(CHECKINS_FILE, "utf8");
@@ -107,6 +140,95 @@ async function saveAccounts(items) {
   await fs.rename(tempFile, ACCOUNTS_FILE);
 }
 
+let accountWriteQueue = Promise.resolve();
+function runAccountWrite(res, action) {
+  const result = accountWriteQueue.then(action);
+  accountWriteQueue = result.catch(() => {});
+  return result.catch((error) => {
+    console.error("Account write failed:", error);
+    if (!res.headersSent) res.status(500).json({ error: "account_write_failed" });
+  });
+}
+
+async function loadAllAlbums() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(ALBUMS_FILE, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveAllAlbums(albums) {
+  await ensureDir(DATA_DIR);
+  const tempFile = `${ALBUMS_FILE}.tmp`;
+  await fs.writeFile(tempFile, JSON.stringify(albums, null, 2), "utf8");
+  await fs.rename(tempFile, ALBUMS_FILE);
+}
+
+const validAlbumId = (value) => /^[a-zA-Z0-9_-]{1,100}$/.test(String(value || ""));
+
+function albumPhotos(value, accountName, albumId) {
+  const prefixes = Array.isArray(accountName) ? accountName : [accountName];
+  if (!Array.isArray(value)) return [];
+  return value.filter((photo) => validAlbumId(photo?.id))
+    .map((photo) => ({
+      id: String(photo.id),
+      photo: String(photo.photo || "").replace(/\\/g, "/"),
+      name: String(photo.name || "").slice(0, 200),
+      place: String(photo.place || "").slice(0, 200),
+      note: String(photo.note || "").slice(0, 4000),
+      createdAt: Number(photo.createdAt) || 0,
+    }))
+    .filter((photo) => prefixes.some((prefix) => photo.photo.startsWith(`user/Picture/${cleanSegment(prefix)}/albums/${albumId}/`)));
+}
+
+function imageType(file) {
+  const bytes = file?.buffer;
+  if (!bytes || bytes.length < 4) return null;
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { extension: ".jpg", mime: "image/jpeg" };
+  }
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return { extension: ".png", mime: "image/png" };
+  }
+  if (bytes.subarray(0, 6).toString("ascii") === "GIF87a" || bytes.subarray(0, 6).toString("ascii") === "GIF89a") {
+    return { extension: ".gif", mime: "image/gif" };
+  }
+  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
+    return { extension: ".webp", mime: "image/webp" };
+  }
+  return null;
+}
+
+function validatePhoto(file) {
+  const type = imageType(file);
+  if (!type) {
+    const error = new Error("invalid_image_file");
+    error.statusCode = 415;
+    throw error;
+  }
+  return type;
+}
+
+function cleanText(value, maxLength) {
+  return String(value || "").normalize("NFC").trim().slice(0, maxLength);
+}
+
+function tokenHash(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function issueSession(account) {
+  const token = randomBytes(32).toString("base64url");
+  const hashed = tokenHash(token);
+  const existing = Array.isArray(account.tokenHashes) ? account.tokenHashes : [];
+  account.tokenHashes = [...existing, hashed].slice(-10);
+  account.tokenHash = hashed;
+  account.tokenUpdatedAt = Date.now();
+  return token;
+}
+
 function hashPassword(password, salt = randomBytes(16).toString("hex")) {
   return `${salt}:${scryptSync(String(password), salt, 32).toString("hex")}`;
 }
@@ -130,6 +252,14 @@ function findAccount(accounts, name) {
 
 async function authenticate(req, res) {
   const accounts = await loadAccounts();
+  const authorization = String(req.get("Authorization") || "");
+  const bearer = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (bearer) {
+    const hashed = tokenHash(bearer);
+    const account = accounts.find((item) =>
+      item.tokenHash === hashed || (Array.isArray(item.tokenHashes) && item.tokenHashes.includes(hashed)));
+    if (account) return { account, accounts };
+  }
   const name =
     req.get("X-User-Name") ||
     req.body?.name ||
@@ -170,14 +300,89 @@ function setUserCheckins(allCheckins, account, items) {
 }
 
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.get("Origin");
+  if (origin && configuredOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-User-Name, X-Password");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-User-Name, X-Password");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 app.use(express.json({ limit: "2mb" }));
-app.use("/user/Picture", express.static(PHOTO_ROOT));
+
+let dataMutationQueue = Promise.resolve();
+function serializeDataMutation(req, res, next) {
+  if (req.method === "GET" || req.method === "OPTIONS") return next();
+  const previous = dataMutationQueue;
+  let release;
+  dataMutationQueue = new Promise((resolve) => { release = resolve; });
+  previous.then(() => {
+    let released = false;
+    const done = () => {
+      if (released) return;
+      released = true;
+      release();
+    };
+    res.once("finish", done);
+    res.once("close", done);
+    next();
+  });
+}
+app.use("/api/checkins", serializeDataMutation);
+app.use("/api/albums", serializeDataMutation);
+app.use("/api/account", serializeDataMutation);
+
+const authAttempts = new Map();
+function authRateLimit(req, res, next) {
+  const now = Date.now();
+  const name = normalizedName(req.body?.name || req.body?.userName || req.body?.username).toLocaleLowerCase("vi");
+  const key = `${req.ip}:${name}`;
+  const recent = (authAttempts.get(key) || []).filter((time) => now - time < 15 * 60 * 1000);
+  if (recent.length >= 20) {
+    res.setHeader("Retry-After", "900");
+    return res.status(429).json({ error: "too_many_attempts", message: "Too many attempts. Try again later." });
+  }
+  recent.push(now);
+  authAttempts.set(key, recent);
+  res.once("finish", () => {
+    if (res.statusCode < 400) authAttempts.delete(key);
+  });
+  next();
+}
+
+async function accountOwnsPhoto(account, logicalPath) {
+  const checkins = userCheckins(await loadAllCheckins(), account);
+  for (const item of checkins) {
+    const paths = Array.isArray(item.photos) ? item.photos.map((photo) => photo.photo) : [item.photo];
+    if (paths.includes(logicalPath)) return true;
+  }
+  const albums = await loadAllAlbums();
+  return (albums[account.id] || []).some((album) =>
+    (album.photos || []).some((photo) => photo.photo === logicalPath));
+}
+
+app.get(/^\/user\/Picture\/(.+)$/, async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const relative = String(req.params[0] || "").replace(/\\/g, "/");
+  const logicalPath = `user/Picture/${relative}`;
+  if (!await accountOwnsPhoto(authenticated.account, logicalPath)) {
+    return res.status(404).json({ error: "photo_not_found" });
+  }
+  const absoluteRoot = path.resolve(PHOTO_ROOT);
+  const absolutePhoto = path.resolve(PHOTO_ROOT, relative);
+  if (!absolutePhoto.startsWith(`${absoluteRoot}${path.sep}`)) {
+    return res.status(400).json({ error: "invalid_photo_path" });
+  }
+  res.sendFile(absolutePhoto, (error) => {
+    if (error && !res.headersSent) res.status(error.statusCode || 404).json({ error: "photo_not_found" });
+  });
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "vietnam-map-backend" });
@@ -189,76 +394,234 @@ app.get("/api/checkins", async (req, res) => {
   res.json(userCheckins(await loadAllCheckins(), authenticated.account));
 });
 
-app.post("/api/auth/register", async (req, res) => {
+app.get("/api/albums", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const allAlbums = await loadAllAlbums();
+  res.json(Array.isArray(allAlbums[authenticated.account.id]) ? allAlbums[authenticated.account.id] : []);
+});
+
+app.get("/api/account/storage", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const usedBytes = await directorySize(path.join(PHOTO_ROOT, cleanSegment(authenticated.account.id)));
+  res.json({ usedBytes, limitBytes: MAX_ACCOUNT_PHOTO_BYTES });
+});
+
+app.delete("/api/account", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const confirmation = normalizedName(req.body?.confirmation);
+  if (confirmation.toLocaleLowerCase("vi") !== normalizedName(authenticated.account.name).toLocaleLowerCase("vi")) {
+    return res.status(400).json({ error: "confirmation_required" });
+  }
+  const allCheckins = await loadAllCheckins();
+  const allAlbums = await loadAllAlbums();
+  const checkins = userCheckins(allCheckins, authenticated.account);
+  const albums = allAlbums[authenticated.account.id] || [];
+  const photos = new Set();
+  for (const item of checkins) {
+    for (const photo of Array.isArray(item.photos) ? item.photos : [{ photo: item.photo }]) {
+      if (photo?.photo) photos.add(photo.photo);
+    }
+  }
+  for (const album of albums) {
+    for (const photo of album.photos || []) if (photo?.photo) photos.add(photo.photo);
+  }
+  delete allCheckins[authenticated.account.id];
+  delete allAlbums[authenticated.account.id];
+  await saveAllCheckins(allCheckins);
+  await saveAllAlbums(allAlbums);
+  await saveAccounts(authenticated.accounts.filter((item) => item.id !== authenticated.account.id));
+  for (const photo of photos) await removeStoredPhoto(photo);
+  await fs.rm(path.join(PHOTO_ROOT, cleanSegment(authenticated.account.id)), { recursive: true, force: true });
+  res.json({ ok: true });
+});
+
+app.post("/api/albums", async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const id = String(req.body?.id || "");
+  const name = String(req.body?.name || "").trim();
+  if (!validAlbumId(id) || !name || name.length > 120) {
+    return res.status(400).json({ error: "invalid_album" });
+  }
+  const allAlbums = await loadAllAlbums();
+  const albums = Array.isArray(allAlbums[authenticated.account.id]) ? allAlbums[authenticated.account.id] : [];
+  const index = albums.findIndex((album) => album.id === id);
+  const previous = index < 0 ? null : albums[index];
+  const isDeleted = previous?.isDeleted === true || req.body.isDeleted === true;
+  const ownedCheckins = new Set(userCheckins(await loadAllCheckins(), authenticated.account).map((item) => item.id));
+  const deletedPhotoIds = new Set([...(previous?.deletedPhotoIds || []), ...(Array.isArray(req.body.deletedPhotoIds) ? req.body.deletedPhotoIds : [])]
+    .map(String).filter(validAlbumId));
+  const incomingExclusions = Array.isArray(req.body.excludedCheckInIds) ? req.body.excludedCheckInIds : null;
+  const excludedCheckInIds = new Set(((Number(req.body.updatedAt) || 0) >= (previous?.updatedAt || 0) && incomingExclusions !== null
+    ? incomingExclusions
+    : previous?.excludedCheckInIds || [])
+    .map(String).filter((value) => ownedCheckins.has(value)));
+  const incomingIds = Array.isArray(req.body.checkInIds) ? req.body.checkInIds : [];
+  const checkInIds = [...new Set([...(previous?.checkInIds || []), ...incomingIds]
+    .map((value) => String(value)).filter((value) => ownedCheckins.has(value) && !excludedCheckInIds.has(value)))];
+  const removedPhotos = (previous?.photos || []).filter((photo) => isDeleted || deletedPhotoIds.has(photo.id));
+  const photos = new Map((previous?.photos || []).filter((photo) => !deletedPhotoIds.has(photo.id)).map((photo) => [photo.id, photo]));
+  for (const photo of albumPhotos(req.body.photos, [authenticated.account.id, authenticated.account.name], id)) {
+    if (!deletedPhotoIds.has(photo.id)) photos.set(photo.id, photo);
+  }
+  let orderedPhotos = [...photos.values()];
+  if ((Number(req.body.updatedAt) || 0) >= (previous?.updatedAt || 0) && Array.isArray(req.body.photos)) {
+    const order = new Map(req.body.photos.map((photo, position) => [String(photo?.id || ""), position]));
+    orderedPhotos.sort((left, right) =>
+      (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER));
+  }
+  const album = {
+    id,
+    name: (Number(req.body.updatedAt) || 0) >= (previous?.updatedAt || 0) ? name : previous.name,
+    createdAt: previous?.createdAt || Number(req.body.createdAt) || Date.now(),
+    updatedAt: Math.max(previous?.updatedAt || 0, Number(req.body.updatedAt) || 0),
+    checkInIds: isDeleted ? [] : checkInIds,
+    photos: isDeleted ? [] : orderedPhotos,
+    deletedPhotoIds: [...deletedPhotoIds],
+    excludedCheckInIds: [...excludedCheckInIds],
+    isDeleted,
+    coverPhotoId: validAlbumId(req.body.coverPhotoId) ? String(req.body.coverPhotoId) : previous?.coverPhotoId || "",
+    localOnly: false,
+  };
+  if (index < 0) albums.push(album);
+  else albums[index] = album;
+  allAlbums[authenticated.account.id] = albums;
+  await saveAllAlbums(allAlbums);
+  for (const photo of removedPhotos) await removeStoredPhoto(photo.photo);
+  res.json(album);
+});
+
+app.post("/api/albums/:id/photos", UPLOAD.single("photo"), async (req, res) => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const id = String(req.params.id || "");
+  const photoId = String(req.body.photoId || "");
+  if (!validAlbumId(id) || !validAlbumId(photoId) || !req.file) {
+    return res.status(400).json({ error: "invalid_album_photo" });
+  }
+  const allAlbums = await loadAllAlbums();
+  const album = (allAlbums[authenticated.account.id] || []).find((item) => item.id === id);
+  if (!album) return res.status(404).json({ error: "album_not_found" });
+  if (album.isDeleted) return res.status(409).json({ error: "album_was_deleted" });
+  const existing = album.photos.find((photo) => photo.id === photoId);
+  if (existing) return res.json(existing);
+  if ((album.deletedPhotoIds || []).includes(photoId)) {
+    return res.status(409).json({ error: "photo_was_deleted" });
+  }
+  const userFolder = cleanSegment(authenticated.account.id);
+  const directory = path.join(PHOTO_ROOT, userFolder, "albums", id);
+  await ensureDir(directory);
+  const type = imageType(req.file);
+  if (!type) return res.status(415).json({ error: "invalid_image_file" });
+  try {
+    await ensurePhotoQuota(authenticated.account, req.file.buffer.length);
+  } catch (error) {
+    return res.status(error.statusCode || 413).json({ error: "photo_quota_exceeded" });
+  }
+  const fileName = `${Date.now()}-${randomUUID().slice(0, 8)}${type.extension}`;
+  await fs.writeFile(path.join(directory, fileName), req.file.buffer);
+  const photo = {
+    id: photoId,
+    photo: `user/Picture/${userFolder}/albums/${id}/${fileName}`,
+    name: String(req.file.originalname || "photo").slice(0, 200),
+    place: String(req.body.place || "").slice(0, 200),
+    note: String(req.body.note || "").slice(0, 4000),
+    createdAt: Number(req.body.createdAt) || Date.now(),
+  };
+  album.photos.push(photo);
+  album.updatedAt = Math.max(album.updatedAt || 0, Date.now());
+  await saveAllAlbums(allAlbums);
+  res.json(photo);
+});
+
+app.post("/api/auth/register", authRateLimit, (req, res) => runAccountWrite(res, async () => {
   const name = normalizedName(req.body.name || req.body.userName || req.body.username);
   const password = String(req.body.password || "");
-  if (!name || password.length < 4) {
-    return res.status(400).json({ error: "invalid_account", message: "Enter a name and a password with at least 4 characters." });
+  if (!/^[\p{L}\p{N}_. -]{3,40}$/u.test(name) || password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: "invalid_account", message: "Use a 3-40 character user name and a password with at least 8 characters." });
   }
   const accounts = await loadAccounts();
   if (findAccount(accounts, name)) {
-    return res.status(409).json({ error: "account_exists", message: "This device already has an account. Sign in or reset password." });
+    return res.status(409).json({ error: "account_exists", message: "This user name is already registered. Sign in or choose another name." });
   }
-  accounts.push({ id: randomUUID(), name, passwordHash: hashPassword(password), updatedAt: Date.now() });
+  const account = { id: randomUUID(), name, passwordHash: hashPassword(password), updatedAt: Date.now() };
+  const token = issueSession(account);
+  accounts.push(account);
   await saveAccounts(accounts);
-  res.status(201).json({ ok: true, name });
-});
+  res.status(201).json({ ok: true, name, token });
+}));
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authRateLimit, async (req, res) => {
   const name = normalizedName(req.body.name || req.body.userName || req.body.username);
-  const account = findAccount(await loadAccounts(), name);
-  if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found. Please register first." });
+  const accounts = await loadAccounts();
+  const account = findAccount(accounts, name);
+  if (!account) return res.status(401).json({ error: "invalid_credentials", message: "Incorrect user name or password." });
   if (!passwordMatches(req.body.password, account.passwordHash)) {
-    return res.status(401).json({ error: "incorrect_password", message: "Incorrect password for this user name." });
+    return res.status(401).json({ error: "invalid_credentials", message: "Incorrect user name or password." });
   }
-  res.json({ ok: true, name: account.name });
+  const token = issueSession(account);
+  await saveAccounts(accounts);
+  res.json({ ok: true, name: account.name, token });
 });
 
-app.post("/api/auth/reset-password", async (req, res) => {
+app.post("/api/auth/reset-password", authRateLimit, (req, res) => runAccountWrite(res, async () => {
   const accounts = await loadAccounts();
   const account = findAccount(accounts, req.body.name || req.body.userName || req.body.username);
   const newPassword = String(req.body.newPassword || req.body.password || "");
   if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found." });
-  if (newPassword.length < 4) {
-    return res.status(400).json({ error: "weak_password", message: "New password must have at least 4 characters." });
+  if (!passwordMatches(req.get("X-Password") || req.body.currentPassword, account.passwordHash)) {
+    return res.status(401).json({ error: "incorrect_password", message: "Current password is incorrect." });
+  }
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: "weak_password", message: "New password must have at least 8 characters." });
   }
   account.passwordHash = hashPassword(newPassword);
+  const token = issueSession(account);
   account.updatedAt = Date.now();
   await saveAccounts(accounts);
-  res.json({ ok: true, name: account.name });
-});
+  res.json({ ok: true, name: account.name, token });
+}));
 
-app.post("/api/auth/update", async (req, res) => {
-  const accounts = await loadAccounts();
-  const account = findAccount(accounts, req.body.name || req.body.userName || req.body.username);
+app.post("/api/auth/update", authRateLimit, (req, res) => runAccountWrite(res, async () => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const { accounts, account } = authenticated;
   const currentPassword = String(req.get("X-Password") || req.body.currentPassword || "");
-  if (!account) return res.status(404).json({ error: "account_not_found", message: "Account not found." });
-  if (!passwordMatches(currentPassword, account.passwordHash)) {
+  if (!req.get("Authorization") && !passwordMatches(currentPassword, account.passwordHash)) {
     return res.status(401).json({ error: "incorrect_password", message: "Current password is incorrect." });
   }
   const newName = normalizedName(req.body.newName);
   const newPassword = String(req.body.newPassword || "");
+  if (newName && !/^[\p{L}\p{N}_. -]{3,40}$/u.test(newName)) {
+    return res.status(400).json({ error: "invalid_name", message: "User name must contain 3-40 safe characters." });
+  }
   if (newName && findAccount(accounts.filter((item) => item.id !== account.id), newName)) {
     return res.status(409).json({ error: "account_exists", message: "An account with that name already exists." });
   }
-  if (newPassword && newPassword.length < 4) {
-    return res.status(400).json({ error: "weak_password", message: "New password must have at least 4 characters." });
+  if (newPassword && (newPassword.length < 8 || newPassword.length > 128)) {
+    return res.status(400).json({ error: "weak_password", message: "New password must have at least 8 characters." });
   }
-  const oldName = account.name;
-  if (newName) account.name = newName;
-  if (newPassword) account.passwordHash = hashPassword(newPassword);
-  account.updatedAt = Date.now();
-  await saveAccounts(accounts);
-  if (newName) {
-    const oldDir = path.join(PHOTO_ROOT, cleanSegment(oldName));
-    const newDir = path.join(PHOTO_ROOT, cleanSegment(newName));
-    if (oldDir !== newDir) {
-      await ensureDir(PHOTO_ROOT);
-      await fs.rename(oldDir, newDir).catch(() => {});
+  if (newName && newName !== account.name) {
+    const allCheckins = await loadAllCheckins();
+    if (!Array.isArray(allCheckins[account.id])) {
+      const legacy = userCheckins(allCheckins, account);
+      if (legacy.length > 0) {
+        allCheckins[account.id] = legacy;
+        await saveAllCheckins(allCheckins);
+      }
     }
   }
-  res.json({ ok: true, name: account.name });
-});
+  if (newName) account.name = newName;
+  if (newPassword) account.passwordHash = hashPassword(newPassword);
+  const token = issueSession(account);
+  account.updatedAt = Date.now();
+  await saveAccounts(accounts);
+  // Keep existing photo paths valid after a rename. New uploads use the new name.
+  res.json({ ok: true, name: account.name, token });
+}));
 
 app.get("/api/update/latest", async (req, res) => {
   try {
@@ -267,11 +630,13 @@ app.get("/api/update/latest", async (req, res) => {
     const apkFile = manifest.apkFile || "app-release.apk";
     const apkPath = path.join(RELEASES_DIR, apkFile);
     await fs.access(apkPath);
+    const sha256 = createHash("sha256").update(await fs.readFile(apkPath)).digest("hex");
     res.json({
       versionName: manifest.versionName || "1.0.0",
       versionCode: Number(manifest.versionCode) || 1,
       notes: manifest.notes || "",
       apkUrl: `/releases/${encodeURIComponent(apkFile)}`,
+      sha256,
     });
   } catch (err) {
     res.status(404).json({ error: "no_update_release_found" });
@@ -294,45 +659,63 @@ app.post(
   try {
     const authenticated = await authenticate(req, res);
     if (!authenticated) return;
-    const { id: incomingId, city, place, notes, source = "gps", synced, createdAt: incomingCreatedAt, lat, lng, photoPath, favorite, rating, tags, album } = req.body;
+    const { id: incomingId, source = "gps", synced, createdAt: incomingCreatedAt, favorite, rating, tags, photoPath } = req.body;
+    const city = cleanText(req.body.city, 120);
+    const place = cleanText(req.body.place, 200);
+    const notes = cleanText(req.body.notes, 4000);
+    const album = cleanText(req.body.album, 120);
+    const lat = Number(req.body.lat);
+    const lng = Number(req.body.lng);
     if (!city) return res.status(400).json({ error: "city_required" });
+    if (incomingId && !/^[a-zA-Z0-9_-]{1,100}$/.test(String(incomingId))) {
+      return res.status(400).json({ error: "invalid_checkin_id" });
+    }
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: "invalid_coordinates" });
+    }
 
     const allCheckins = await loadAllCheckins();
     const checkins = userCheckins(allCheckins, authenticated.account);
     const id = incomingId || randomUUID();
     const createdAt = Number(incomingCreatedAt) || Date.now();
-    const expectedPhotoPrefix = `user/Picture/${cleanSegment(authenticated.account.name)}/`;
-    const requestedPhotoPath = String(photoPath || "")
-      .replace(/\\/g, "/")
-      .replace(/^\/+/, "");
-    let savedPhotoPath = requestedPhotoPath.startsWith(expectedPhotoPrefix)
-      ? requestedPhotoPath
-      : "";
-
-    const hasPhotoAlbum = Object.prototype.hasOwnProperty.call(req.body, "photos");
+    const expectedPhotoPrefix = `user/Picture/${cleanSegment(authenticated.account.id)}/`;
+    const legacyPhotoPrefix = `user/Picture/${cleanSegment(authenticated.account.name)}/`;
     const previous = checkins.find((entry) => entry.id === id);
+    const baseUpdatedAt = Number(req.body.baseUpdatedAt) || 0;
+    if (previous && req.body.force !== "true" && baseUpdatedAt > 0 && Number(previous.updatedAt || previous.createdAt || 0) > baseUpdatedAt) {
+      return res.status(409).json({ error: "sync_conflict", remote: previous });
+    }
     const previousPhotos = Array.isArray(previous?.photos)
       ? previous.photos.map((entry) => String(entry.photo || "")).filter(Boolean)
       : previous?.photo
         ? [previous.photo]
         : [];
+    const requestedPhotoPath = String(photoPath || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "");
+    let savedPhotoPath = requestedPhotoPath.startsWith(expectedPhotoPrefix) || requestedPhotoPath.startsWith(legacyPhotoPrefix) || previousPhotos.includes(requestedPhotoPath)
+      ? requestedPhotoPath
+      : "";
+
+    const hasPhotoAlbum = Object.prototype.hasOwnProperty.call(req.body, "photos");
     const uploadedPhotos = req.files?.photos || [];
     const legacyFile = req.files?.photo?.[0];
     const photoAssets = parsePhotoAssets(req.body.photos);
     const savedPhotos = [];
-    const userFolder = cleanSegment(authenticated.account.name);
+    const userFolder = cleanSegment(authenticated.account.id);
     const albumFolder = String(album || "").trim()
       ? `${cleanSegment(album)}/`
       : "";
     const cityFolder = cleanSegment(city);
     const destDir = path.join(PHOTO_ROOT, userFolder, albumFolder, cityFolder);
     const saveUploaded = async (file, name, assetCreatedAt) => {
+      await ensurePhotoQuota(authenticated.account, file.buffer.length);
       await ensureDir(destDir);
-      const ext = path.extname(file.originalname || "").slice(0, 10) || ".jpg";
+      const type = validatePhoto(file);
       const baseName = safeFileName(
         path.basename(file.originalname || name || "photo", path.extname(file.originalname || "")),
       );
-      const fileName = `${assetCreatedAt || createdAt}-${Date.now()}-${randomUUID().slice(0, 8)}-${baseName}${ext}`;
+      const fileName = `${assetCreatedAt || createdAt}-${Date.now()}-${randomUUID().slice(0, 8)}-${baseName}${type.extension}`;
       await fs.writeFile(path.join(destDir, fileName), file.buffer);
       return `${expectedPhotoPrefix}${albumFolder}${cityFolder}/${fileName}`;
     };
@@ -340,7 +723,9 @@ app.post(
     if (hasPhotoAlbum) {
       let uploadIndex = 0;
       for (const asset of photoAssets) {
-        let photo = asset.photo.startsWith(expectedPhotoPrefix) ? asset.photo : "";
+        let photo = asset.photo.startsWith(expectedPhotoPrefix) || asset.photo.startsWith(legacyPhotoPrefix) || previousPhotos.includes(asset.photo)
+          ? asset.photo
+          : "";
         if (!photo && uploadIndex < uploadedPhotos.length) {
           const file = uploadedPhotos[uploadIndex++];
           photo = await saveUploaded(file, asset.name, asset.createdAt);
@@ -374,14 +759,17 @@ app.post(
       source,
       synced: synced === "true" || synced === true,
       createdAt,
-      lat: Number(lat) || 0,
-      lng: Number(lng) || 0,
+      updatedAt: Date.now(),
+      lat,
+      lng,
       photo: savedPhotos[0]?.photo || savedPhotoPath || "",
       photos: savedPhotos,
       album: String(album || "").trim(),
       favorite: favorite === "true" || favorite === true,
       rating: Math.max(0, Math.min(5, Number(rating) || 0)),
       tags: parseTags(tags),
+      localOnly: false,
+      hideLocation: req.body.hideLocation === "true" || req.body.hideLocation === true,
     };
 
     const existingIndex = checkins.findIndex((x) => x.id === id);
@@ -400,7 +788,8 @@ app.post(
     await saveAllCheckins(allCheckins);
     res.json(existingIndex >= 0 ? checkins[existingIndex] : item);
   } catch (err) {
-    res.status(500).json({ error: err.message || "server_error" });
+    console.error("Check-in write failed:", err);
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : "server_error" });
   }
 });
 
@@ -535,18 +924,22 @@ app.post("/api/checkins/:id/synced", async (req, res) => {
   res.json(item);
 });
 
-app.use(async (req, res, next) => {
-  if (req.path.startsWith("/api/")) return next();
-  if (req.path === "/") {
-    res.sendFile(path.join(__dirname, "index.html"));
-    return;
+app.use((error, _req, res, _next) => {
+  if (error instanceof multer.MulterError) {
+    return res.status(413).json({ error: "upload_limit_exceeded" });
   }
-  next();
+  console.error("Unhandled request error:", error);
+  return res.status(error?.statusCode || 500).json({ error: "server_error" });
 });
 
 async function startServer(port) {
+  const tls = TLS_CERT_FILE && TLS_KEY_FILE
+    ? { cert: await fs.readFile(TLS_CERT_FILE), key: await fs.readFile(TLS_KEY_FILE) }
+    : null;
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, "0.0.0.0", () => resolve(server));
+    const server = tls
+      ? https.createServer(tls, app).listen(port, "0.0.0.0", () => resolve(server))
+      : app.listen(port, "0.0.0.0", () => resolve(server));
     server.on("error", reject);
   });
 }
@@ -555,7 +948,8 @@ async function boot() {
   for (let port = preferredPort; port < preferredPort + 20; port += 1) {
     try {
       await startServer(port);
-      console.log(`Server running at http://localhost:${port}`);
+      const protocol = TLS_CERT_FILE && TLS_KEY_FILE ? "https" : "http";
+      console.log(`Server running at ${protocol}://localhost:${port}`);
 
       return;
     } catch (err) {

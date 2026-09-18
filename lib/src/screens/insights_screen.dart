@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 
 import '../models/checkin.dart';
-import '../repositories/backup_service.dart';
 import '../repositories/checkin_repository.dart';
 import '../repositories/vietnam_regions.dart';
-import '../repositories/wishlist_repository.dart';
 import '../theme/app_colors.dart';
 
 class InsightsScreen extends StatefulWidget {
@@ -19,10 +16,7 @@ class InsightsScreen extends StatefulWidget {
 
 class _InsightsScreenState extends State<InsightsScreen> {
   final _repo = CheckInRepository();
-  final _wishlistRepo = WishlistRepository();
-  final _backup = const BackupService();
   List<CheckIn> _items = [];
-  Set<String> _wishlist = <String>{};
 
   @override
   void initState() {
@@ -32,20 +26,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   Future<void> _load() async {
     final items = await _repo.load();
-    final wishlist = await _wishlistRepo.load();
     if (!mounted) return;
-    setState(() {
-      _items = items;
-      _wishlist = wishlist;
-    });
-  }
-
-  Future<void> _copyExport() async {
-    await Clipboard.setData(ClipboardData(text: _backup.encode(_items)));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('Export copied.')));
+    setState(() => _items = items);
   }
 
   Future<void> _copyTravelRecap() async {
@@ -59,26 +41,16 @@ class _InsightsScreenState extends State<InsightsScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    final visited = _items.map((item) => item.city).toSet();
-    final favorites = _items.where((item) => item.favorite).length;
-    final waiting = _items.where((item) => !item.synced).length;
-    final rated = _items.where((item) => item.rating > 0).toList();
-    final averageRating = rated.isEmpty
-        ? 0.0
-        : rated.map((item) => item.rating).reduce((a, b) => a + b) /
-              rated.length;
-    final topTags = _topTags(_items);
-    final topProvince = _topProvince(_items);
-    final achievements = _achievements(_items);
+    final visited = _items
+        .map((item) => VietnamRegions.normalize(item.city))
+        .where((name) => name.isNotEmpty)
+        .toSet();
     final regionProgress = _regionProgress(_items);
     final monthlyCounts = _monthlyCounts(_items);
     final activeDays = _activeDays(_items);
     final currentStreak = _currentStreak(_items);
     final progress = (visited.length / 63).clamp(0.0, 1.0);
-    final latest = _items.isEmpty
-        ? null
-        : (_items.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
-              .first;
+    final remaining = (63 - visited.length).clamp(0, 63);
 
     return Container(
       decoration: BoxDecoration(
@@ -122,84 +94,12 @@ class _InsightsScreenState extends State<InsightsScreen> {
                 ],
               ),
               const SizedBox(height: 18),
-              LayoutBuilder(
-                builder: (context, metricsConstraints) {
-                  final columns = metricsConstraints.maxWidth >= 620 ? 4 : 2;
-                  final width =
-                      (metricsConstraints.maxWidth - (columns - 1) * 12) /
-                      columns;
-                  return Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _MetricCard(
-                        width: width,
-                        icon: Icons.bookmark_added_outlined,
-                        label: 'Check-ins',
-                        value: '${_items.length}',
-                      ),
-                      _MetricCard(
-                        width: width,
-                        icon: Icons.map_outlined,
-                        label: 'Provinces',
-                        value: '${visited.length}/63',
-                      ),
-                      _MetricCard(
-                        width: width,
-                        icon: Icons.favorite_outline,
-                        label: 'Favorites',
-                        value: '$favorites',
-                      ),
-                      _MetricCard(
-                        width: width,
-                        icon: Icons.cloud_upload_outlined,
-                        label: 'Waiting sync',
-                        value: '$waiting',
-                      ),
-                    ],
-                  );
-                },
+              OutlinedButton.icon(
+                onPressed: () => context.push('/timeline'),
+                icon: const Icon(Icons.timeline_outlined),
+                label: const Text('Open travel timeline'),
               ),
-              const SizedBox(height: 16),
-              if (_items.isEmpty) ...[
-                _InsightCard(
-                  icon: Icons.add_location_alt_outlined,
-                  title: 'Start your travel story',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Add your first place from the map. You can save it offline and enrich it with photos later.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: () => context.go('/map'),
-                        icon: const Icon(Icons.map_outlined),
-                        label: const Text('Open map'),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-              _InsightCard(
-                icon: Icons.bookmark_added_outlined,
-                title: 'Wishlist',
-                child: _wishlist.isEmpty
-                    ? Text(
-                        'Tap a province on the map and save it here as your next destination.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      )
-                    : Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _wishlist
-                            .map((province) => Chip(label: Text(province)))
-                            .toList(),
-                      ),
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               _InsightCard(
                 icon: Icons.map_outlined,
                 title: 'Vietnam coverage',
@@ -221,7 +121,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      '${(progress * 100).toStringAsFixed(1)}% complete · ${63 - visited.length} province(s) left',
+                      '${(progress * 100).toStringAsFixed(1)}% complete · $remaining province(s) left',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 12),
@@ -255,104 +155,6 @@ class _InsightsScreenState extends State<InsightsScreen> {
               ),
               const SizedBox(height: 16),
               _InsightCard(
-                icon: Icons.star_outline,
-                title: 'Memory score',
-                child: Text(
-                  rated.isEmpty
-                      ? 'No rated memories yet.'
-                      : 'Average ${averageRating.toStringAsFixed(1)}/5 from ${rated.length} rated check-in(s).',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.sell_outlined,
-                title: 'Top tags',
-                child: topTags.isEmpty
-                    ? Text(
-                        'No tags yet.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      )
-                    : Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: topTags
-                            .map(
-                              (entry) => Chip(
-                                label: Text('${entry.key} (${entry.value})'),
-                              ),
-                            )
-                            .toList(),
-                      ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.emoji_events_outlined,
-                title: 'Achievements',
-                child: achievements.isEmpty
-                    ? Text(
-                        'Create a check-in, add a photo, rate a memory, or mark a favorite to unlock achievements.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      )
-                    : Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: achievements
-                            .map(
-                              (achievement) => Chip(
-                                avatar: Icon(achievement.icon, size: 18),
-                                label: Text(achievement.label),
-                              ),
-                            )
-                            .toList(),
-                      ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.place_outlined,
-                title: 'Most visited province',
-                child: Text(
-                  topProvince == null
-                      ? 'No province data yet.'
-                      : '${topProvince.key} leads with ${topProvince.value} check-in(s).',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.route_outlined,
-                title: 'Next trip idea',
-                child: Text(
-                  _nextTripIdea(visited),
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.history,
-                title: 'Latest memory',
-                child: Text(
-                  latest == null
-                      ? 'Create your first check-in from the map.'
-                      : '${latest.place}, ${latest.city} · ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(latest.createdAt))}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
-                icon: Icons.ios_share_outlined,
-                title: 'Portable backup',
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton.icon(
-                    onPressed: _items.isEmpty ? null : _copyExport,
-                    icon: const Icon(Icons.copy_all_outlined),
-                    label: const Text('Copy JSON export'),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              _InsightCard(
                 icon: Icons.auto_stories_outlined,
                 title: 'Travel recap',
                 child: Column(
@@ -376,18 +178,6 @@ class _InsightsScreenState extends State<InsightsScreen> {
         },
       ),
     );
-  }
-
-  List<MapEntry<String, int>> _topTags(List<CheckIn> items) {
-    final counts = <String, int>{};
-    for (final item in items) {
-      for (final tag in item.tags) {
-        counts[tag] = (counts[tag] ?? 0) + 1;
-      }
-    }
-    final entries = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries.take(8).toList();
   }
 
   List<_RegionProgress> _regionProgress(List<CheckIn> items) {
@@ -457,67 +247,14 @@ class _InsightsScreenState extends State<InsightsScreen> {
     final regions = _regionProgress(_items)
       ..sort((a, b) => b.checkins.compareTo(a.checkins));
     final latest = sorted.first;
-    final wishlist = _wishlist.take(5).join(', ');
     return [
       'VietNam Map Checkin - Travel recap',
       '${_items.length} check-in(s) in $visited province(s)',
-      '$photos photo(s) saved · ${_items.where((item) => item.favorite).length} favorite(s)',
+      '$photos photo(s) saved',
       if (regions.first.checkins > 0)
         'Most explored region: ${regions.first.name}',
-      if (wishlist.isNotEmpty) 'Next on the wishlist: $wishlist',
       'Latest memory: ${latest.place}, ${latest.city}',
     ].join('\n');
-  }
-
-  MapEntry<String, int>? _topProvince(List<CheckIn> items) {
-    final counts = <String, int>{};
-    for (final item in items) {
-      counts[item.city] = (counts[item.city] ?? 0) + 1;
-    }
-    if (counts.isEmpty) return null;
-    final entries = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries.first;
-  }
-
-  List<_Achievement> _achievements(List<CheckIn> items) {
-    final visited = items.map((item) => item.city).toSet().length;
-    return [
-      if (items.isNotEmpty)
-        const _Achievement(Icons.flag_outlined, 'First memory'),
-      if (visited >= 5) const _Achievement(Icons.map_outlined, '5 provinces'),
-      if (visited >= 15)
-        const _Achievement(Icons.explore_outlined, 'Regional explorer'),
-      if (items.any((item) => item.hasPhoto))
-        const _Achievement(Icons.photo_camera_outlined, 'Photo keeper'),
-      if (items.any((item) => item.favorite))
-        const _Achievement(Icons.favorite_outline, 'Favorite curator'),
-      if (items.any((item) => item.rating >= 5))
-        const _Achievement(Icons.star_outline, 'Five-star moment'),
-      if (items.any((item) => !item.synced))
-        const _Achievement(Icons.cloud_off_outlined, 'Offline ready'),
-    ];
-  }
-
-  String _nextTripIdea(Set<String> visited) {
-    const ideas = [
-      'Hà Giang',
-      'Lào Cai',
-      'Quảng Ninh',
-      'Huế',
-      'Đà Nẵng',
-      'Lâm Đồng',
-      'Kiên Giang',
-      'Cần Thơ',
-    ];
-    final next = ideas
-        .where((city) => !visited.contains(city))
-        .take(3)
-        .toList();
-    if (next.isEmpty) {
-      return 'Your highlight list is covered. Pick a province with no photos yet.';
-    }
-    return 'Try ${next.join(', ')} next to balance north, central, and south memories.';
   }
 }
 
@@ -642,7 +379,6 @@ class _TravelRhythm extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(monthlyCounts.length, (index) {
               final count = monthlyCounts[index];
-              final height = maxCount == 0 ? 8.0 : 14 + 88 * count / maxCount;
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 3),
@@ -654,14 +390,34 @@ class _TravelRhythm extends StatelessWidget {
                         style: TextStyle(color: colors.muted, fontSize: 10),
                       ),
                       const SizedBox(height: 4),
-                      Semantics(
-                        label: '${labels[index]}: $count check-in(s)',
-                        child: Container(
-                          height: height,
-                          decoration: BoxDecoration(
-                            color: count == 0 ? colors.panel2 : colors.accent,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final height = maxCount == 0
+                                ? 8.0
+                                : 8 +
+                                      (constraints.maxHeight - 8) *
+                                          count /
+                                          maxCount;
+                            return Semantics(
+                              label: '${labels[index]}: $count check-in(s)',
+                              child: Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  height: height.clamp(
+                                    0.0,
+                                    constraints.maxHeight,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: count == 0
+                                        ? colors.panel2
+                                        : colors.accent,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: 5),
@@ -677,58 +433,6 @@ class _TravelRhythm extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _Achievement {
-  const _Achievement(this.icon, this.label);
-
-  final IconData icon;
-  final String label;
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.width,
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final double width;
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    return SizedBox(
-      width: width,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: colors.panel,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colors.line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: colors.accent, size: 22),
-            const SizedBox(height: 12),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            Text(value, style: Theme.of(context).textTheme.headlineMedium),
-          ],
-        ),
-      ),
     );
   }
 }

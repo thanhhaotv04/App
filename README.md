@@ -1,206 +1,53 @@
 # VietNam Map Checkin
 
-## Gioi Thieu Co Ban
+Ứng dụng Flutter lưu hành trình tại Việt Nam theo tài khoản. Giao diện có đúng năm mục:
 
-VietNam Map Checkin la ung dung Flutter dung de luu ky niem du lich tren ban do
-Viet Nam. Ung dung cho phep tao check-in theo tinh/thanh, them dia diem, ghi
-chu, ngay gio, anh, diem danh gia, tag, yeu thich, xem lich su, thong ke,
-sao luu/khoi phuc du lieu va dong bo qua backend Node.js noi bo.
+- **Checkin:** lưu điểm bất kỳ theo tỉnh/thành và địa điểm, ngày giờ, ghi chú, nhiều ảnh; form thêm không còn Tags, Favorite place hay Memory score. Có thể xem, sửa, lưu ảnh ra máy và xóa từng ảnh.
+- **Album:** tạo, đổi tên, tìm kiếm và chia sẻ album ZIP; chọn ảnh bìa, đổi thứ tự ảnh, chọn nhiều ảnh hoặc chụp ảnh, ghi Place và Note, sao chép ảnh từ Checkin hoặc gắn check-in đã có. Xóa album hay ảnh sao chép không xóa Checkin gốc.
+- **Map:** bản đồ Việt Nam, số tỉnh/thành đã đi, lịch sử check-in theo tỉnh với tìm kiếm, lọc và sắp xếp.
+- **Insights:** Vietnam coverage, Progress by 8 regions, Travel rhythm, Travel recap và Timeline tự nhóm chuyến đi cách nhau tối đa 48 giờ.
+- **Account:** tài khoản, giao diện, Backend URL, Sync Center, backup mã hóa, lịch backup tự động, chế độ riêng tư, dung lượng ảnh, xóa tài khoản và Update.
 
-Ung dung uu tien luu du lieu cuc bo truoc. Backend chi can khi muon dong bo du
-lieu, luu anh tren may tinh, hoac cho dien thoai kiem tra ban cap nhat APK qua
-LAN.
+Check-in và ảnh được lưu trên thiết bị trước, rồi đồng bộ hai chiều khi backend khả dụng. Dữ liệu của các tên đăng nhập được tách riêng. Đăng nhập cùng tên và mật khẩu của tài khoản hiện có để lấy lại check-in và album từ backend. Tài khoản đã lưu trên thiết bị có thể đăng nhập offline; sau đó mở **Account**, đặt Backend URL và chọn **Sync now** nếu địa chỉ máy chủ thay đổi. Không gỡ hoặc xóa dữ liệu của ứng dụng cũ trước khi dữ liệu trên backend đã được kiểm tra. Để cập nhật tại chỗ, giữ nguyên Android application ID và khóa ký của bản đang cài.
 
-## Tao APK
+Màn hình đầu có **Register** cho người chưa có tài khoản và **Sign in** cho người đã đăng ký; không hiển thị Backend URL tại đây. Sau khi đăng nhập hoặc đăng ký thành công, lần mở app tiếp theo vào thẳng tài khoản đang dùng, kể cả khi backend tạm ngắt. Chọn **Account → Sign out** để đổi tài khoản; sau khi thoát, app yêu cầu đăng nhập lại. Việc tạo tài khoản mới cần kết nối backend theo địa chỉ mặc định hoặc địa chỉ đã lưu trên thiết bị. Username không được trùng với tài khoản đã có, kể cả khác chữ hoa/thường hoặc khoảng trắng ở hai đầu. Nếu backend tạm ngắt, chỉ tài khoản đã lưu trên thiết bị mới có thể đăng nhập offline bằng đúng mật khẩu cũ; đăng nhập không tự tạo tài khoản mới. Sau khi đăng nhập, có thể đổi Backend URL trong **Account**.
 
-Lay dependency:
+Album và ảnh đã xóa được đánh dấu theo tài khoản để không xuất hiện lại sau khi Sync.
+
+## Chức năng dữ liệu và bảo mật
+
+- **GPS:** nút Use current location xin quyền vị trí, lưu tọa độ và tự nhận diện tỉnh/thành từ GeoJSON ngoại tuyến.
+- **Sync Center:** hiển thị thao tác đang chờ, số lần thử/lỗi; xóa offline không bị tải lại từ server; xung đột cho phép chọn bản local hoặc server.
+- **Privacy:** Local only không upload bản ghi mới; Hide exact coordinates không gửi tọa độ lên server và loại tọa độ khỏi file chia sẻ.
+- **Backup:** file `.vmcbackup` dùng PBKDF2-SHA256 và AES-256-GCM, có thể gồm ảnh; backup tự động lưu hàng ngày/hàng tuần trong thư mục dữ liệu ứng dụng.
+- **Ảnh:** kiểm tra chữ ký JPEG/PNG/GIF/WebP ở backend, giới hạn 12 MB/file, quota mặc định 500 MB/tài khoản, ảnh lớn được thu nhỏ tối đa 2048 px và nén trước khi lưu.
+- **Phiên đăng nhập:** token được lưu bằng secure storage; backend giới hạn thử đăng nhập, cho phép nhiều thiết bị, chặn truy cập ảnh của tài khoản khác và không còn public static ảnh.
+- **Update:** APK được kiểm tra SHA-256 do backend cung cấp trước khi chuyển cho Android cài đặt.
+
+## Chạy và kiểm tra
 
 ```bash
-cd /home/thanhhao/thanhhao/Github/App/VietNam-map-checkin
 flutter pub get
-```
-
-Build APK release cho dien thoai Android:
-
-```bash
-flutter build apk --release --target-platform android-arm64
-```
-
-File APK sau khi build:
-
-```text
-build/app/outputs/flutter-apk/app-release.apk
-```
-
-## Chay Tren Web
-
-Chay ban web preview:
-
-```bash
-cd /home/thanhhao/thanhhao/Github/App/VietNam-map-checkin
-flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080
-```
-
-Mo tren may tinh:
-
-```text
-http://127.0.0.1:8080
-```
-
-Mo tu dien thoai hoac may khac cung Wi-Fi:
-
-```text
-http://<PC_LAN_IP>:8080
-```
-
-Build web release:
-
-```bash
-flutter build web --release
-```
-
-Thu muc web sau khi build:
-
-```text
-build/web
-```
-
-## Cap Nhat Phien Ban Moi Nhat Va Check Update Qua LAN
-
-Cach nhanh tren Linux:
-
-```bash
-chmod +x fastUpdate.sh
-./fastUpdate.sh
-```
-
-Script se tu tang version, chay test/analyzer, build APK ARM64, cap nhat
-`backend/releases/latest.json`, mo backend va kiem tra endpoint update. Dung
-`./fastUpdate.sh --help` de xem tuy chon version, port va ghi chu cap nhat.
-
-Tang version trong `pubspec.yaml`, vi du:
-
-```yaml
-version: 1.1.4+26
-```
-
-Build APK moi:
-
-```bash
-flutter build apk --release --target-platform android-arm64
-```
-
-Copy APK moi vao backend release:
-
-```bash
-cp build/app/outputs/flutter-apk/app-release.apk backend/releases/app-release.apk
-```
-
-Sua `backend/releases/latest.json` cho khop version moi:
-
-```json
-{
-  "versionName": "1.1.4",
-  "versionCode": 26,
-  "apkFile": "app-release.apk",
-  "notes": "Mo ta noi dung cap nhat."
-}
-```
-
-Chay backend tren may tinh:
-
-```bash
+flutter analyze
 npm install
+flutter test
+node --test test/backend_auth_test.mjs test/backend_album_test.mjs
+npm audit --audit-level=moderate
 npm run backend
 ```
 
-Lay IP LAN cua may tinh:
+Backend mặc định chạy cổng 3000. Trên điện thoại, đặt Backend URL trong **Account** là `http://<IP-LAN-của-máy-tính>:3000`, không dùng `127.0.0.1`. Kiểm tra backend bằng `curl http://127.0.0.1:3000/api/health` trên máy tính. Có thể chạy web preview bằng `flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080` hoặc build APK bằng `flutter build apk --release --target-platform android-arm64`.
 
-```bash
-hostname -I
-```
+HTTP chỉ phù hợp để thử nghiệm trong LAN tin cậy. Khi triển khai thật, đặt `TLS_CERT_FILE`, `TLS_KEY_FILE` và `CORS_ORIGINS` trước khi chạy backend, rồi dùng Backend URL `https://...`; backend sẽ tự chuyển sang HTTPS khi có đủ certificate/key. Không đưa mật khẩu qua Wi-Fi công cộng bằng URL HTTP.
 
-Tren dien thoai, vao app va dat Backend URL theo dang:
+`npm run backend` **chỉ phục vụ bản phát hành đang có** trong `backend/releases/`; lệnh này không build hoặc thay APK. `flutter build apk` cũng chỉ tạo APK trong `build/app/outputs/flutter-apk/`. Bản đang phát hành là `1.2.3+32`: `backend/releases/latest.json` trỏ tới `app-release.apk`; APK `app-1.2.0-29.apk` vẫn được giữ để dự phòng. Để phát hành bản tiếp theo qua nút **Check for update**, dùng `./fastUpdate.sh` sau khi đã duyệt bản phát hành; script tăng versionCode, build, kiểm tra phiên bản/chữ ký bên trong APK, rồi cập nhật APK và `latest.json`. Nếu tự thay file, phải kiểm tra `versionName`/`versionCode` bên trong APK khớp `latest.json`; chỉ sửa `latest.json` sẽ khiến Android tải lại APK cũ và báo đã cài.
 
-```text
-http://<PC_LAN_IP>:3000
-```
+## Quy tắc phiên bản
 
-Vi du minh hoa:
+- Phiên bản hiển thị dùng `MAJOR.MINOR.PATCH`: tăng MAJOR khi thay đổi không tương thích, MINOR khi thêm tính năng tương thích, PATCH khi sửa lỗi. Ví dụ lần tổ chức lại năm mục của app là `1.2.0`.
+- Android `versionCode` là số build nội bộ, luôn tăng sau mỗi lần phát hành; bản `1.2.3` dùng build `32`. Trong `pubspec.yaml` ghi `1.2.3+32`; màn hình Account hiển thị `v1.2.3 (build 32)`.
+- Trước khi công bố Update, kiểm tra `versionName`/`versionCode` **bên trong APK** khớp với `backend/releases/latest.json`, và APK có cùng application ID, chữ ký với bản đang cài. Không sửa nội dung APK của một phiên bản đã công bố; mỗi APK thay đổi phải có versionCode mới.
 
-```text
-http://192.168.x.x:3000
-```
+## Dữ liệu cần giữ khi cập nhật
 
-Endpoint de app kiem tra update:
-
-```text
-http://<PC_LAN_IP>:3000/api/update/latest
-```
-
-File APK duoc tai tu:
-
-```text
-http://<PC_LAN_IP>:3000/releases/app-release.apk
-```
-
-Luu y: khong dung `127.0.0.1` tren dien thoai, vi dia chi do tro ve chinh dien
-thoai chu khong phai may tinh dang chay backend.
-
-### Dong Bo Du Lieu
-
-Ung dung luu check-in va anh cuc bo truoc. Khi backend khong co san, du lieu
-van dung duoc va cac check-in chua dong bo se nam trong `Sync queue`.
-
-Khoi dong backend tren may tinh:
-
-```bash
-cd /home/thanhhao/thanhhao/Github/App/VietNam-map-checkin
-npm install
-npm run backend
-```
-
-Hoac dung `./fastUpdate.sh`; script se mo backend sau khi build APK.
-
-Kiem tra backend tren may tinh:
-
-```bash
-curl http://127.0.0.1:3000/api/health
-```
-
-Tren dien thoai hoac may khac cung Wi-Fi:
-
-1. Dang nhap app bang tai khoan cua ban.
-2. Mo tab `Sync`.
-3. Dat `Backend URL` thanh `http://<PC_LAN_IP>:3000`.
-4. Nhan `Sync now`.
-
-Vi du:
-
-```text
-http://192.168.x.x:3000
-```
-
-Dong bo hai chieu se:
-
-- Tai check-in tu backend ve may hien tai.
-- Day check-in cuc bo chua co tren backend len may tinh.
-- Gop du lieu theo `check-in id` va giu trang thai `synced`.
-- Luu du lieu local theo username dang dang nhap, khong dung chung giua cac tai khoan.
-- Gui kem anh dang cho trong may khi day len backend; anh tren backend nam tai
-  `user/Picture/<username>/<city>/`.
-- Tren Android/desktop anh nam trong thu muc rieng cua username; tren web anh
-  offline nam trong bo nho trinh duyet cung username de co the retry upload.
-- Khi nhan check-in co anh tu backend, tai mot ban sao ve app de xem offline.
-- Neu anh bi doi hoac xoa tren backend, ban local cu cung duoc thay the hoac xoa
-  de hai ben hien thi cung mot trang thai.
-- Tiep tuc cho phep tao du lieu offline neu Wi-Fi/backend mat ket noi.
-
-Moi request check-in deu gui `X-User-Name` va `X-Password`. Backend xac thuc
-username nay, luu ban ghi theo `account.id`, va chi tra ve du lieu cua dung tai
-khoan do. Neu doi username trong Settings, check-in va thu muc anh local cung
-duoc chuyen sang username moi.
-
-Neu hien `Sync error`, kiem tra hai thiet bi cung Wi-Fi, backend dang chay,
-firewall cho phep cong 3000, va dien thoai dang dung IP LAN cua may tinh thay
-vi `127.0.0.1`.
+Backend sử dụng `backend/server-data/accounts.json`, `backend/server-data/checkins.json`, `backend/server-data/albums.json` và toàn bộ `backend/user/Picture/`. Các file/thư mục này bị Git bỏ qua và **không được xóa khi dọn hoặc cập nhật mã nguồn**. Giữ `backend/releases/latest.json` và APK trong `backend/releases/` nếu tiếp tục dùng Update. Ảnh/check-in cục bộ trên điện thoại nằm trong dữ liệu của ứng dụng Android, không nằm trong thư mục mã nguồn. Chức năng Update chỉ cài APK khi có bản phát hành mới trên backend.

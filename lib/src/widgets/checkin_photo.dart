@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../models/checkin.dart';
 import '../repositories/local_image_storage.dart';
+import '../repositories/credential_store.dart';
 import '../theme/app_colors.dart';
 
-class CheckInPhoto extends StatelessWidget {
+class CheckInPhoto extends StatefulWidget {
   const CheckInPhoto({
     super.key,
     required this.item,
@@ -23,41 +24,66 @@ class CheckInPhoto extends StatelessWidget {
   final String? errorText;
 
   @override
+  State<CheckInPhoto> createState() => _CheckInPhotoState();
+}
+
+class _CheckInPhotoState extends State<CheckInPhoto> {
+  Future<Uint8List?>? _localFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareLocal();
+  }
+
+  @override
+  void didUpdateWidget(covariant CheckInPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.primaryPhoto?.localPhoto !=
+        widget.item.primaryPhoto?.localPhoto) {
+      _prepareLocal();
+    }
+  }
+
+  void _prepareLocal() {
+    final ref = widget.item.primaryPhoto?.localPhoto ?? '';
+    _localFuture = ref.isEmpty ? null : LocalImageStorage.readImage(ref);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final asset = item.primaryPhoto;
+    final asset = widget.item.primaryPhoto;
     if (asset?.localPhoto.isNotEmpty == true) {
       return FutureBuilder<Uint8List?>(
-        future: LocalImageStorage.readImage(asset!.localPhoto),
+        future: _localFuture,
         builder: (context, snapshot) {
           final bytes = snapshot.data;
           if (bytes != null && bytes.isNotEmpty) {
-            return Image.memory(bytes, fit: fit);
+            return Image.memory(bytes, fit: widget.fit);
           }
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+            return Icon(
+              Icons.image_outlined,
+              size: widget.emptyIconSize,
+              color: AppColors.of(context).muted,
             );
           }
           return _RemoteOrFallback(
-            item: item,
-            remoteUrl: remoteUrl,
-            fit: fit,
-            emptyIconSize: emptyIconSize,
-            errorText: errorText,
+            item: widget.item,
+            remoteUrl: widget.remoteUrl,
+            fit: widget.fit,
+            emptyIconSize: widget.emptyIconSize,
+            errorText: widget.errorText,
           );
         },
       );
     }
     return _RemoteOrFallback(
-      item: item,
-      remoteUrl: remoteUrl,
-      fit: fit,
-      emptyIconSize: emptyIconSize,
-      errorText: errorText,
+      item: widget.item,
+      remoteUrl: widget.remoteUrl,
+      fit: widget.fit,
+      emptyIconSize: widget.emptyIconSize,
+      errorText: widget.errorText,
     );
   }
 }
@@ -88,26 +114,85 @@ class _RemoteOrFallback extends StatelessWidget {
         color: colors.muted,
       );
     }
-    return Image.network(
-      remoteUrl(asset.photo),
+    return _AuthenticatedNetworkImage(
+      url: remoteUrl(asset.photo),
       fit: fit,
-      errorBuilder: (context, error, stackTrace) {
-        if (errorText != null) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                errorText!,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colors.muted),
-              ),
-            ),
+      semanticLabel: asset.name.isEmpty ? 'Travel photo' : asset.name,
+      emptyIconSize: emptyIconSize,
+      errorText: errorText,
+    );
+  }
+}
+
+class _AuthenticatedNetworkImage extends StatefulWidget {
+  const _AuthenticatedNetworkImage({
+    required this.url,
+    required this.fit,
+    required this.semanticLabel,
+    required this.emptyIconSize,
+    required this.errorText,
+  });
+
+  final String url;
+  final BoxFit fit;
+  final String semanticLabel;
+  final double emptyIconSize;
+  final String? errorText;
+
+  @override
+  State<_AuthenticatedNetworkImage> createState() =>
+      _AuthenticatedNetworkImageState();
+}
+
+class _AuthenticatedNetworkImageState
+    extends State<_AuthenticatedNetworkImage> {
+  late final Future<Map<String, String>> _headers = const CredentialStore()
+      .authHeaders();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return FutureBuilder<Map<String, String>>(
+      future: _headers,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Icon(
+            Icons.broken_image_outlined,
+            size: widget.emptyIconSize,
+            color: colors.muted,
           );
         }
-        return Icon(
-          Icons.broken_image_outlined,
-          size: emptyIconSize,
-          color: colors.muted,
+        if (!snapshot.hasData) {
+          return Icon(
+            Icons.image_outlined,
+            size: widget.emptyIconSize,
+            color: colors.muted,
+          );
+        }
+        return Image.network(
+          widget.url,
+          headers: snapshot.data,
+          fit: widget.fit,
+          semanticLabel: widget.semanticLabel,
+          errorBuilder: (context, error, stackTrace) {
+            if (widget.errorText != null) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    widget.errorText!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: colors.muted),
+                  ),
+                ),
+              );
+            }
+            return Icon(
+              Icons.broken_image_outlined,
+              size: widget.emptyIconSize,
+              color: colors.muted,
+            );
+          },
         );
       },
     );

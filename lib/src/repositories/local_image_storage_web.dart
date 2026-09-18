@@ -70,12 +70,38 @@ class LocalImageStorage {
       if (value != null && prefs.getString(newKey) == null) {
         await prefs.setString(newKey, value);
       }
-      await prefs.remove(oldKey);
     }
+  }
+
+  /// Rewrites a local photo reference only after its copied value is present.
+  static Future<String> movedRef(
+    String ref,
+    String oldName,
+    String newName,
+  ) async {
+    if (!isLocalRef(ref)) return ref;
+    final oldPrefix = '$_storagePrefix${_accountTokenFor(oldName)}_';
+    final newPrefix = '$_storagePrefix${_accountTokenFor(newName)}_';
+    final oldKey = ref.substring(_prefix.length);
+    if (!oldKey.startsWith(oldPrefix)) return ref;
+    final newKey = '$newPrefix${oldKey.substring(oldPrefix.length)}';
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(newKey) == null ? ref : '$_prefix$newKey';
   }
 
   static Future<String> folderPath() async {
     return 'Local image folder is only available on Android and Windows builds.';
+  }
+
+  static Future<int> usageBytes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = '$_storagePrefix${await _accountToken(prefs)}_';
+    var total = 0;
+    for (final key in prefs.getKeys().where((key) => key.startsWith(prefix))) {
+      final value = prefs.getString(key);
+      if (value != null) total += base64Decode(value).length;
+    }
+    return total;
   }
 
   static Future<String> _accountToken(SharedPreferences prefs) async {

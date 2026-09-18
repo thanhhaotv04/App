@@ -56,12 +56,16 @@ class CheckIn {
     required this.lat,
     required this.lng,
     required this.photo,
+    this.updatedAt = 0,
+    this.syncedAt = 0,
     this.localPhoto = '',
     this.album = '',
     this.photos = const [],
     this.favorite = false,
     this.rating = 0,
     this.tags = const [],
+    this.localOnly = false,
+    this.hideLocation = false,
   });
 
   final String id;
@@ -74,12 +78,16 @@ class CheckIn {
   final double lat;
   final double lng;
   final String photo;
+  final int updatedAt;
+  final int syncedAt;
   final String localPhoto;
   final String album;
   final List<CheckInPhotoAsset> photos;
   final bool favorite;
   final int rating;
   final List<String> tags;
+  final bool localOnly;
+  final bool hideLocation;
 
   CheckIn copyWith({
     String? city,
@@ -91,12 +99,16 @@ class CheckIn {
     double? lat,
     double? lng,
     String? photo,
+    int? updatedAt,
+    int? syncedAt,
     String? localPhoto,
     String? album,
     List<CheckInPhotoAsset>? photos,
     bool? favorite,
     int? rating,
     List<String>? tags,
+    bool? localOnly,
+    bool? hideLocation,
   }) {
     return CheckIn(
       id: id,
@@ -109,12 +121,16 @@ class CheckIn {
       lat: lat ?? this.lat,
       lng: lng ?? this.lng,
       photo: photo ?? this.photo,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncedAt: syncedAt ?? this.syncedAt,
       localPhoto: localPhoto ?? this.localPhoto,
       album: album ?? this.album,
       photos: photos ?? this.photos,
       favorite: favorite ?? this.favorite,
       rating: rating ?? this.rating,
       tags: tags ?? this.tags,
+      localOnly: localOnly ?? this.localOnly,
+      hideLocation: hideLocation ?? this.hideLocation,
     );
   }
 
@@ -136,6 +152,7 @@ class CheckIn {
   bool get hasPhoto => photoItems.isNotEmpty;
   bool get isRated => rating > 0;
   String get tagLine => tags.join(', ');
+  int get effectiveUpdatedAt => updatedAt > 0 ? updatedAt : createdAt;
 
   CheckIn withoutPhoto() => CheckIn(
     id: id,
@@ -148,12 +165,16 @@ class CheckIn {
     lat: lat,
     lng: lng,
     photo: '',
+    updatedAt: DateTime.now().millisecondsSinceEpoch,
+    syncedAt: syncedAt,
     localPhoto: '',
     album: album,
     photos: const [],
     favorite: favorite,
     rating: rating,
     tags: tags,
+    localOnly: localOnly,
+    hideLocation: hideLocation,
   );
 
   factory CheckIn.fromJson(Map<String, dynamic> json) {
@@ -172,19 +193,24 @@ class CheckIn {
                   ),
                 ]);
     final primary = photos.isEmpty ? null : photos.first;
+    final createdAt =
+        (json['createdAt'] as num?)?.toInt() ??
+        DateTime.now().millisecondsSinceEpoch;
+    final updatedAt = (json['updatedAt'] as num?)?.toInt() ?? createdAt;
+    final synced = json['synced'] == true || json['synced'] == 'true';
     return CheckIn(
       id: json['id']?.toString() ?? '',
       city: json['city']?.toString() ?? '',
       place: json['place']?.toString() ?? '',
       notes: json['notes']?.toString() ?? '',
       source: json['source']?.toString() ?? 'manual',
-      synced: json['synced'] == true || json['synced'] == 'true',
-      createdAt:
-          (json['createdAt'] as num?)?.toInt() ??
-          DateTime.now().millisecondsSinceEpoch,
+      synced: synced,
+      createdAt: createdAt,
       lat: (json['lat'] as num?)?.toDouble() ?? 0,
       lng: (json['lng'] as num?)?.toDouble() ?? 0,
       photo: legacyPhoto.isNotEmpty ? legacyPhoto : primary?.photo ?? '',
+      updatedAt: updatedAt,
+      syncedAt: (json['syncedAt'] as num?)?.toInt() ?? (synced ? updatedAt : 0),
       localPhoto: legacyLocalPhoto.isNotEmpty
           ? legacyLocalPhoto
           : primary?.localPhoto ?? '',
@@ -193,6 +219,9 @@ class CheckIn {
       favorite: json['favorite'] == true || json['favorite'] == 'true',
       rating: _readRating(json['rating']),
       tags: _readTags(rawTags),
+      localOnly: json['localOnly'] == true || json['localOnly'] == 'true',
+      hideLocation:
+          json['hideLocation'] == true || json['hideLocation'] == 'true',
     );
   }
 
@@ -247,11 +276,15 @@ class CheckIn {
     'lat': lat,
     'lng': lng,
     'photo': photo,
+    'updatedAt': effectiveUpdatedAt,
+    'syncedAt': syncedAt,
     'localPhoto': localPhoto,
     'album': album,
     'photos': photoItems.map((entry) => entry.toJson()).toList(),
     'favorite': favorite,
     'rating': rating,
     'tags': tags,
+    'localOnly': localOnly,
+    'hideLocation': hideLocation,
   };
 }

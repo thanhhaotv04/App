@@ -1,6 +1,6 @@
 {
-  "versionName": "1.1.6",
-  "versionCode": 28,
+  "versionName": "260918.1",
+  "versionCode": 26091801,
   "apkFile": "app-release.apk",
-  "notes": "Adds province search, wishlist, 8-region coverage, travel rhythm, username-scoped sync, and image sync."
+  "notes": "Bổ sung Sync Center, xử lý xung đột, Timeline, GPS nhận diện tỉnh, album nâng cao, backup mã hóa, quyền riêng tư, quota ảnh và tăng cường bảo mật."
 }

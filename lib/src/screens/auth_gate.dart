@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 
+enum AuthMode { signIn, register }
+
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
@@ -11,7 +13,8 @@ class AuthScreen extends StatefulWidget {
   });
 
   final bool hasAccount;
-  final Future<String?> Function(String name, String password) onSubmit;
+  final Future<String?> Function(AuthMode mode, String name, String password)
+  onSubmit;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -20,14 +23,23 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _nameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  late AuthMode _mode;
   bool _obscure = true;
   bool _loading = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _mode = widget.hasAccount ? AuthMode.signIn : AuthMode.register;
+  }
+
+  @override
   void dispose() {
     _nameCtrl.dispose();
     _passwordCtrl.dispose();
+    _confirmCtrl.dispose();
     super.dispose();
   }
 
@@ -41,11 +53,21 @@ class _AuthScreenState extends State<AuthScreen> {
       );
       return;
     }
+    if (_mode == AuthMode.register && password != _confirmCtrl.text) {
+      setState(() => _error = 'The passwords do not match.');
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
-    final error = await widget.onSubmit(name, password);
+    String? error;
+    try {
+      error = await widget.onSubmit(_mode, name, password);
+    } catch (_) {
+      error =
+          'Could not connect to the backend. Check your connection and try again.';
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -65,236 +87,174 @@ class _AuthScreenState extends State<AuthScreen> {
             colors: [colors.bg, colors.bg2],
           ),
         ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: Card(
-              margin: const EdgeInsets.all(20),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.asset(
-                            'assets/App_VietNamMap_Logo_no_background.png',
-                            width: 48,
-                            height: 48,
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Card(
+                    margin: const EdgeInsets.all(20),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
                             children: [
-                              Text(
-                                'VietNam Map Checkin',
-                                style: Theme.of(context).textTheme.titleLarge,
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Image.asset(
+                                  'assets/App_VietNamMap_Logo_no_background.png',
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.contain,
+                                ),
                               ),
-                              Text(
-                                widget.hasAccount
-                                    ? 'Sign in to continue'
-                                    : 'Create a local account',
-                                style: Theme.of(context).textTheme.bodySmall,
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'VietNam Map Checkin',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleLarge,
+                                    ),
+                                    Text(
+                                      _mode == AuthMode.signIn
+                                          ? 'Sign in to restore your memories'
+                                          : 'Register to save your memories',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: AppTheme.toggleTheme,
+                                icon: ValueListenableBuilder<ThemeMode>(
+                                  valueListenable: AppTheme.themeMode,
+                                  builder: (context, mode, _) {
+                                    return Icon(
+                                      mode == ThemeMode.dark
+                                          ? Icons.light_mode_outlined
+                                          : Icons.dark_mode_outlined,
+                                    );
+                                  },
+                                ),
+                                tooltip: 'Toggle theme',
                               ),
                             ],
                           ),
-                        ),
-                        IconButton(
-                          onPressed: AppTheme.toggleTheme,
-                          icon: ValueListenableBuilder<ThemeMode>(
-                            valueListenable: AppTheme.themeMode,
-                            builder: (context, mode, _) {
-                              return Icon(
-                                mode == ThemeMode.dark
-                                    ? Icons.light_mode_outlined
-                                    : Icons.dark_mode_outlined,
-                              );
-                            },
+                          const SizedBox(height: 26),
+                          SegmentedButton<AuthMode>(
+                            segments: const [
+                              ButtonSegment(
+                                value: AuthMode.signIn,
+                                label: Text('Sign in'),
+                                icon: Icon(Icons.login_outlined),
+                              ),
+                              ButtonSegment(
+                                value: AuthMode.register,
+                                label: Text('Register'),
+                                icon: Icon(Icons.person_add_alt_1_outlined),
+                              ),
+                            ],
+                            selected: {_mode},
+                            onSelectionChanged: _loading
+                                ? null
+                                : (selected) => setState(() {
+                                    _mode = selected.first;
+                                    _error = null;
+                                  }),
                           ),
-                          tooltip: 'Toggle theme',
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 26),
-                    TextField(
-                      controller: _nameCtrl,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(labelText: 'User name'),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: _passwordCtrl,
-                      obscureText: _obscure,
-                      onSubmitted: (_) => _submit(),
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        suffixIcon: IconButton(
-                          onPressed: () => setState(() => _obscure = !_obscure),
-                          icon: Icon(
-                            _obscure
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined,
-                          ),
-                          tooltip: _obscure ? 'Show password' : 'Hide password',
-                        ),
-                      ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: Color(0xFFE85D5D),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 22),
-                    FilledButton.icon(
-                      onPressed: _loading ? null : _submit,
-                      icon: _loading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.login_outlined),
-                      label: Text(
-                        widget.hasAccount ? 'Sign in' : 'Create and sign in',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class AppPickerScreen extends StatelessWidget {
-  const AppPickerScreen({
-    super.key,
-    required this.userName,
-    required this.onOpenApp,
-    required this.onLogout,
-  });
-
-  final String userName;
-  final VoidCallback onOpenApp;
-  final VoidCallback onLogout;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [colors.bg, colors.bg2],
-          ),
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Choose an app',
-                              style: Theme.of(context).textTheme.headlineMedium,
+                          const SizedBox(height: 18),
+                          TextField(
+                            controller: _nameCtrl,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'User name',
                             ),
-                            Text(
-                              'Hello $userName, choose a workspace to continue.',
-                              style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: _passwordCtrl,
+                            obscureText: _obscure,
+                            textInputAction: _mode == AuthMode.register
+                                ? TextInputAction.next
+                                : TextInputAction.done,
+                            onSubmitted: (_) {
+                              if (_mode == AuthMode.signIn) _submit();
+                            },
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              suffixIcon: IconButton(
+                                onPressed: () =>
+                                    setState(() => _obscure = !_obscure),
+                                icon: Icon(
+                                  _obscure
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
+                                tooltip: _obscure
+                                    ? 'Show password'
+                                    : 'Hide password',
+                              ),
+                            ),
+                          ),
+                          if (_mode == AuthMode.register) ...[
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _confirmCtrl,
+                              obscureText: _obscure,
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) => _submit(),
+                              decoration: const InputDecoration(
+                                labelText: 'Confirm password',
+                              ),
                             ),
                           ],
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: AppTheme.toggleTheme,
-                        icon: const Icon(Icons.brightness_6_outlined),
-                        tooltip: 'Toggle theme',
-                      ),
-                      TextButton(
-                        onPressed: onLogout,
-                        child: const Text('Sign out'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(24),
-                    onTap: onOpenApp,
-                    child: Ink(
-                      padding: const EdgeInsets.all(22),
-                      decoration: BoxDecoration(
-                        color: colors.panel,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: colors.line),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 24,
-                            offset: const Offset(0, 12),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(18),
-                            child: Image.asset(
-                              'assets/App_VietNamMap_Logo_no_background.png',
-                              width: 58,
-                              height: 58,
-                              fit: BoxFit.contain,
+                          if (_error != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              _error!,
+                              style: const TextStyle(
+                                color: Color(0xFFE85D5D),
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'VietNam Map Checkin',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                Text(
-                                  'Province map, check-in history, and backend sync.',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
+                          ],
+                          const SizedBox(height: 22),
+                          FilledButton.icon(
+                            onPressed: _loading ? null : _submit,
+                            icon: _loading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Icon(
+                                    _mode == AuthMode.signIn
+                                        ? Icons.login_outlined
+                                        : Icons.person_add_alt_1_outlined,
+                                  ),
+                            label: Text(
+                              _mode == AuthMode.signIn
+                                  ? 'Sign in'
+                                  : 'Create account',
                             ),
-                          ),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            color: colors.accent,
                           ),
                         ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),

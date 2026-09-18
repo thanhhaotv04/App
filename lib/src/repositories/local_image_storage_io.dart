@@ -64,39 +64,50 @@ class LocalImageStorage {
     final oldRoot = await _rootDirectory(userName: oldName, create: false);
     if (!await oldRoot.exists()) return;
     final newRoot = await _rootDirectory(userName: newName, create: false);
-    if (!await newRoot.exists()) {
-      await newRoot.parent.create(recursive: true);
-      await oldRoot.rename(newRoot.path);
-      return;
-    }
+    if (oldRoot.path == newRoot.path) return;
     await newRoot.create(recursive: true);
-    await for (final entry in oldRoot.list()) {
-      final target =
-          '${newRoot.path}${Platform.pathSeparator}${entry.uri.pathSegments.last}';
-      try {
-        await entry.rename(target);
-      } catch (_) {
-        // Keep the source file if a same-name target already exists.
-      }
-    }
-    var hasRemainingEntries = false;
-    if (await oldRoot.exists()) {
-      await for (final _ in oldRoot.list()) {
-        hasRemainingEntries = true;
-        break;
-      }
-    }
-    if (!hasRemainingEntries && await oldRoot.exists()) {
-      try {
-        await oldRoot.delete(recursive: true);
-      } catch (_) {
-        // The source folder can be cleaned up on a later account migration.
+    await for (final entry in oldRoot.list(recursive: true)) {
+      final relative = entry.path.substring(oldRoot.path.length + 1);
+      final target = '${newRoot.path}${Platform.pathSeparator}$relative';
+      if (entry is Directory) {
+        await Directory(target).create(recursive: true);
+      } else if (entry is File && !await File(target).exists()) {
+        await File(target).parent.create(recursive: true);
+        await entry.copy(target);
       }
     }
   }
 
+  /// Rewrites a local photo reference only after its copied file is present.
+  static Future<String> movedRef(
+    String ref,
+    String oldName,
+    String newName,
+  ) async {
+    if (!isLocalRef(ref)) return ref;
+    final oldRoot = await _rootDirectory(userName: oldName, create: false);
+    final newRoot = await _rootDirectory(userName: newName, create: false);
+    if (oldRoot.path == newRoot.path) return ref;
+    final oldPath = ref.substring(_prefix.length);
+    final prefix = '${oldRoot.path}${Platform.pathSeparator}';
+    if (!oldPath.startsWith(prefix)) return ref;
+    final newPath =
+        '${newRoot.path}${Platform.pathSeparator}${oldPath.substring(prefix.length)}';
+    return await File(newPath).exists() ? '$_prefix$newPath' : ref;
+  }
+
   static Future<String> folderPath() async {
     return (await _rootDirectory()).path;
+  }
+
+  static Future<int> usageBytes() async {
+    final root = await _rootDirectory(create: false);
+    if (!await root.exists()) return 0;
+    var total = 0;
+    await for (final entry in root.list(recursive: true)) {
+      if (entry is File) total += await entry.length();
+    }
+    return total;
   }
 
   static Future<Directory> _allUsersRootDirectory() async {

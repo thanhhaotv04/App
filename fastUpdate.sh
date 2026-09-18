@@ -28,12 +28,13 @@ Usage:
   ./fastUpdate.sh [options]
 
 Options:
-  --version 1.1.4+26  Use an explicit version instead of auto-incrementing.
+  --version 260918.1+26091801
+                         Use an explicit YYMMDD.N release and build number.
   --port 3000         Start or reuse the backend from this port.
   --notes "..."       Notes shown in the in-app update dialog.
   -h, --help          Show this help.
 
-The default flow increments the patch version and versionCode, runs checks,
+The default flow selects the next YYMMDD.N release in Asia/Ho_Chi_Minh, runs checks,
 builds an Android ARM64 APK, publishes it to backend/releases, starts the LAN
 backend, and verifies /api/update/latest.
 EOF
@@ -51,7 +52,7 @@ require_command() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
-      [[ $# -ge 2 ]] || die "--version needs a value such as 1.1.4+26"
+      [[ $# -ge 2 ]] || die "--version needs a value such as 260918.1+26091801"
       TARGET_VERSION="$2"
       shift 2
       ;;
@@ -95,7 +96,11 @@ APP_VERSION_CODE="$(sed -nE 's/.*versionCode = ([0-9]+);/\1/p' "$APP_VERSION_FIL
 
 PUBSPEC_NAME="${PUBSPEC_VERSION%+*}"
 PUBSPEC_CODE="${PUBSPEC_VERSION##*+}"
-[[ "$PUBSPEC_NAME" == "$APP_VERSION_NAME" && "$PUBSPEC_CODE" == "$APP_VERSION_CODE" ]] || \
+PUBSPEC_LABEL="$PUBSPEC_NAME"
+if [[ "$PUBSPEC_NAME" =~ ^([0-9]{6}\.[0-9]+)\.0$ ]]; then
+  PUBSPEC_LABEL="${BASH_REMATCH[1]}"
+fi
+[[ "$PUBSPEC_LABEL" == "$APP_VERSION_NAME" && "$PUBSPEC_CODE" == "$APP_VERSION_CODE" ]] || \
   die "Version mismatch: pubspec=$PUBSPEC_VERSION, AppVersion=$APP_VERSION_NAME+$APP_VERSION_CODE"
 
 MANIFEST_CODE="$(node -e '
@@ -110,27 +115,32 @@ try {
 ' "$MANIFEST_FILE")"
 
 if [[ -z "$TARGET_VERSION" ]]; then
-  IFS='.' read -r major minor patch <<< "$PUBSPEC_NAME"
-  [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]] || \
-    die "Version must use major.minor.patch"
-  next_code=$((PUBSPEC_CODE + 1))
-  if (( MANIFEST_CODE >= next_code )); then
-    next_code=$((MANIFEST_CODE + 1))
+  RELEASE_DATE="$(TZ=Asia/Ho_Chi_Minh date +%y%m%d)"
+  MANIFEST_NAME="$(node -e '
+const fs = require("fs");
+const json = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(json.versionName || ""));
+' "$MANIFEST_FILE")"
+  DAILY_NUMBER=1
+  if [[ "$MANIFEST_NAME" =~ ^${RELEASE_DATE}\.([0-9]+)$ ]]; then
+    DAILY_NUMBER=$((BASH_REMATCH[1] + 1))
   fi
-  TARGET_VERSION="$major.$minor.$((patch + 1))+$next_code"
+  TARGET_CODE="${RELEASE_DATE}$(printf '%02d' "$DAILY_NUMBER")"
+  TARGET_VERSION="${RELEASE_DATE}.${DAILY_NUMBER}+${TARGET_CODE}"
 fi
 
-if [[ ! "$TARGET_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\+([0-9]+)$ ]]; then
-  die "Invalid version: $TARGET_VERSION (expected major.minor.patch+code)"
+if [[ ! "$TARGET_VERSION" =~ ^([0-9]{6})\.([0-9]+)\+([0-9]+)$ ]]; then
+  die "Invalid version: $TARGET_VERSION (expected YYMMDD.N+buildNumber)"
 fi
-TARGET_NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-TARGET_CODE="${BASH_REMATCH[4]}"
+TARGET_NAME="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+TARGET_CODE="${BASH_REMATCH[3]}"
+TARGET_PUBSPEC_VERSION="${TARGET_NAME}.0+${TARGET_CODE}"
 
 (( TARGET_CODE > PUBSPEC_CODE )) || die "Target versionCode must be greater than $PUBSPEC_CODE"
 (( TARGET_CODE > MANIFEST_CODE )) || die "Target versionCode must be greater than backend manifest $MANIFEST_CODE"
 
 if [[ -z "$UPDATE_NOTES" ]]; then
-  UPDATE_NOTES="Adds province search, wishlist, 8-region coverage, travel rhythm, username-scoped sync, and image sync."
+  UPDATE_NOTES="Improvements and bug fixes."
 fi
 
 BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vietnam-map-fast-update.XXXXXX")"
@@ -164,7 +174,7 @@ restore_on_failure() {
 trap restore_on_failure EXIT
 
 echo "Current version: $PUBSPEC_VERSION"
-echo "New version:     $TARGET_VERSION"
+echo "New version:     $TARGET_NAME+$TARGET_CODE"
 
 if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
   echo "Installing backend dependencies..."
@@ -175,7 +185,7 @@ echo "Running backend syntax check..."
 node --check backend/server.js
 
 echo "Updating local version files..."
-sed -i -E "s/^version: [^[:space:]]+/version: $TARGET_VERSION/" "$PUBSPEC_FILE"
+sed -i -E "s/^version: [^[:space:]]+/version: $TARGET_PUBSPEC_VERSION/" "$PUBSPEC_FILE"
 sed -i -E "s/(versionName = ')[^']+('.*)/\1$TARGET_NAME\2/" "$APP_VERSION_FILE"
 sed -i -E "s/(versionCode = )[0-9]+(;.*)/\1$TARGET_CODE\2/" "$APP_VERSION_FILE"
 
@@ -189,8 +199,37 @@ echo "Running Flutter tests..."
 flutter test
 
 echo "Building Android ARM64 release APK..."
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --target-platform android-arm64 \
+  --build-name="$TARGET_NAME" --build-number="$TARGET_CODE"
 [[ -s "$BUILD_APK" ]] || die "Flutter build did not produce $BUILD_APK"
+
+# The update manifest must describe the APK that Android will actually install.
+SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+if [[ -z "$SDK_DIR" && -f android/local.properties ]]; then
+  SDK_DIR="$(sed -n 's/^sdk.dir=//p' android/local.properties | sed -n '1p')"
+fi
+AAPT_BIN="$(command -v aapt || true)"
+if [[ -z "$AAPT_BIN" && -d "$SDK_DIR/build-tools" ]]; then
+  AAPT_BIN="$(find "$SDK_DIR/build-tools" -mindepth 2 -maxdepth 2 -type f -name aapt | sort -V | tail -n 1)"
+fi
+[[ -n "$AAPT_BIN" ]] || die "Cannot find Android aapt to verify the APK version"
+APK_PACKAGE_LINE="$("$AAPT_BIN" dump badging "$BUILD_APK" | sed -n '1p')"
+APK_CODE="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<< "$APK_PACKAGE_LINE")"
+APK_NAME="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$APK_PACKAGE_LINE")"
+[[ "$APK_NAME" == "$TARGET_NAME" && "$APK_CODE" == "$TARGET_CODE" ]] || \
+  die "Built APK is $APK_NAME+$APK_CODE, expected $TARGET_VERSION"
+EXPECTED_PACKAGE="$(sed -n 's/.*applicationId = "\([^"]*\)".*/\1/p' android/app/build.gradle.kts | sed -n '1p')"
+[[ -z "$EXPECTED_PACKAGE" || "$APK_PACKAGE_LINE" == *"name='$EXPECTED_PACKAGE'"* ]] || \
+  die "Built APK has the wrong application ID: $APK_PACKAGE_LINE"
+
+if [[ -f "$RELEASE_APK" ]]; then
+  APKSIGNER_BIN="$(dirname "$AAPT_BIN")/apksigner"
+  [[ -x "$APKSIGNER_BIN" ]] || die "Cannot find Android apksigner to verify update signing"
+  old_signer="$("$APKSIGNER_BIN" verify --print-certs "$RELEASE_APK" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | sed -n '1p')"
+  new_signer="$("$APKSIGNER_BIN" verify --print-certs "$BUILD_APK" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | sed -n '1p')"
+  [[ -n "$old_signer" && "$old_signer" == "$new_signer" ]] || \
+    die "Built APK signing certificate does not match the published APK"
+fi
 
 port_is_listening() {
   if command -v ss >/dev/null 2>&1; then
@@ -271,6 +310,11 @@ if (payload.versionName !== process.env.VERSION_NAME || Number(payload.versionCo
 if (!payload.apkUrl) throw new Error('Update endpoint did not return apkUrl');
 NODE
 
+curl -fsS --max-time 30 "http://127.0.0.1:$SERVER_PORT/releases/app-release.apk" -o "$BACKUP_DIR/served.apk" || \
+  die "Published APK cannot be downloaded"
+cmp -s "$RELEASE_APK" "$BACKUP_DIR/served.apk" || \
+  die "Backend is serving an APK different from the published file"
+
 COMMIT_DONE=1
 SHA256="$(sha256sum "$RELEASE_APK" | awk '{print $1}')"
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -287,7 +331,7 @@ echo "Update check:  http://127.0.0.1:$SERVER_PORT/api/update/latest"
 echo "Phone backend: http://$LAN_IP:$SERVER_PORT"
 echo "APK download:  http://$LAN_IP:$SERVER_PORT/releases/app-release.apk"
 echo
-echo "On the phone: Settings > Backend URL > http://$LAN_IP:$SERVER_PORT > Check for update."
+echo "On the phone: Account > Backend URL > http://$LAN_IP:$SERVER_PORT > Check for update."
 echo "Backend log:  $SERVER_LOG"
 if (( SERVER_STARTED == 1 )); then
   echo "Backend PID:   $SERVER_PID"

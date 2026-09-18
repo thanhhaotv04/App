@@ -1,5 +1,6 @@
 package com.example.vietnam_map_01
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
@@ -10,6 +11,9 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channel = "vietnam_map_checkin/update"
+    private val photoChannel = "vietnam_map_checkin/photos"
+    private val savePhotoRequestCode = 9373
+    private var pendingPhotoSave: Pair<ByteArray, MethodChannel.Result>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -30,6 +34,53 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, photoChannel).setMethodCallHandler { call, result ->
+            if (call.method != "saveImage") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val bytes = call.argument<ByteArray>("bytes")
+            if (bytes == null || bytes.isEmpty()) {
+                result.error("empty_photo", "Photo has no data", null)
+                return@setMethodCallHandler
+            }
+            if (pendingPhotoSave != null) {
+                result.error("save_busy", "Another photo is being saved", null)
+                return@setMethodCallHandler
+            }
+            pendingPhotoSave = bytes to result
+            try {
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = call.argument<String>("mimeType") ?: "image/jpeg"
+                    putExtra(Intent.EXTRA_TITLE, call.argument<String>("name") ?: "memory.jpg")
+                }
+                startActivityForResult(intent, savePhotoRequestCode)
+            } catch (error: Exception) {
+                pendingPhotoSave = null
+                result.error("save_failed", error.message, null)
+            }
+        }
+    }
+
+    @Deprecated("Handled by the Android document picker")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != savePhotoRequestCode) return
+        val pending = pendingPhotoSave ?: return
+        pendingPhotoSave = null
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            pending.second.success(false)
+            return
+        }
+        try {
+            val stream = contentResolver.openOutputStream(data.data!!)
+                ?: throw IllegalStateException("Could not open the selected location")
+            stream.use { it.write(pending.first) }
+            pending.second.success(true)
+        } catch (error: Exception) {
+            pending.second.error("save_failed", error.message, null)
         }
     }
 

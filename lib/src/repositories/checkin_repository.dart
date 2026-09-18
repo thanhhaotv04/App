@@ -1,9 +1,10 @@
 import 'dart:convert';
 
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/checkin.dart';
+import 'local_image_storage.dart';
+import 'sync_queue_repository.dart';
 
 class CheckInRepository {
   static const _legacyStorageKey = 'vnm_checkins';
@@ -29,11 +30,8 @@ class CheckInRepository {
       await _saveTo(prefs, key, _cache!);
       return _cache!;
     }
-    final seed = await rootBundle.loadString('assets/seeds/checkins_seed.json');
-    final decoded = (jsonDecode(seed) as List).cast<Map<String, dynamic>>();
-    _cache = decoded.map(CheckIn.fromJson).map(_repairLegacyItem).toList();
+    _cache = <CheckIn>[];
     _cacheKey = key;
-    await _saveTo(prefs, key, _cache!);
     return _cache!;
   }
 
@@ -65,12 +63,19 @@ class CheckInRepository {
     final items = await load();
     items.insert(0, item);
     await save(items);
+    if (!item.localOnly) {
+      await SyncQueueRepository(userName: userName).enqueueUpsert(item.id);
+    }
   }
 
   Future<void> remove(String id) async {
     final items = await load();
+    final removed = items.where((item) => item.id == id).firstOrNull;
     items.removeWhere((e) => e.id == id);
     await save(items);
+    if (removed?.localOnly != true) {
+      await SyncQueueRepository(userName: userName).enqueueDelete(id);
+    }
   }
 
   Future<void> update(CheckIn item) async {
@@ -82,6 +87,9 @@ class CheckInRepository {
       items[index] = item;
     }
     await save(items);
+    if (!item.localOnly) {
+      await SyncQueueRepository(userName: userName).enqueueUpsert(item.id);
+    }
   }
 
   Future<void> updateAll(List<CheckIn> items) => save(items);
@@ -100,6 +108,7 @@ class CheckInRepository {
     if (index >= 0) {
       items[index] = items[index].copyWith(synced: true);
       await save(items);
+      await SyncQueueRepository(userName: userName).completeForCheckIn(id);
     }
   }
 
@@ -110,14 +119,53 @@ class CheckInRepository {
     if (oldKey == newKey) return;
     final prefs = await SharedPreferences.getInstance();
     final oldRaw = prefs.getString(oldKey);
-    if (oldRaw != null && prefs.getString(newKey) == null) {
-      await prefs.setString(newKey, oldRaw);
+    if (oldRaw != null) {
+      List<CheckIn> decode(String raw) => (jsonDecode(raw) as List)
+          .cast<Map<String, dynamic>>()
+          .map(CheckIn.fromJson)
+          .toList();
+
+      final migrated = <CheckIn>[];
+      for (final item in decode(oldRaw)) {
+        final photos = <CheckInPhotoAsset>[];
+        for (final asset in item.photoItems) {
+          photos.add(
+            asset.copyWith(
+              localPhoto: await LocalImageStorage.movedRef(
+                asset.localPhoto,
+                oldName,
+                newName,
+              ),
+            ),
+          );
+        }
+        migrated.add(
+          item.copyWith(
+            localPhoto: await LocalImageStorage.movedRef(
+              item.localPhoto,
+              oldName,
+              newName,
+            ),
+            photos: photos,
+          ),
+        );
+      }
+      final existingRaw = prefs.getString(newKey);
+      final byId = <String, CheckIn>{
+        if (existingRaw != null)
+          for (final item in decode(existingRaw)) item.id: item,
+        for (final item in migrated) item.id: item,
+      };
+      await prefs.setString(
+        newKey,
+        jsonEncode(byId.values.map((item) => item.toJson()).toList()),
+      );
+      await prefs.remove(oldKey);
     }
     final owner = prefs.getString(_legacyOwnerKey)?.trim() ?? '';
     if (_sameUser(owner, oldName)) {
       await prefs.setString(_legacyOwnerKey, newName.trim());
     }
-    await prefs.remove(oldKey);
   }
 
   /// Clears only the current account's local check-ins.
