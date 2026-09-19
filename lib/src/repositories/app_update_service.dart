@@ -33,7 +33,9 @@ class AppUpdateService {
   final String baseUrl;
 
   Future<UpdateInfo> checkLatest() async {
-    final res = await http.get(Uri.parse('$baseUrl/api/update/latest'));
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/update/latest'))
+        .timeout(const Duration(seconds: 10));
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('Update check failed: ${res.statusCode}');
     }
@@ -52,7 +54,9 @@ class AppUpdateService {
   }
 
   Future<String> downloadApk(UpdateInfo info) async {
-    final res = await http.get(Uri.parse(info.apkUrl));
+    final res = await http
+        .get(Uri.parse(info.apkUrl))
+        .timeout(const Duration(minutes: 2));
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('APK download failed: ${res.statusCode}');
     }
@@ -72,7 +76,14 @@ class AppUpdateService {
     if (!Platform.isAndroid) {
       throw Exception('APK install is only available on Android.');
     }
-    await _channel.invokeMethod<void>('installApk', {'path': apkPath});
+    final file = File(apkPath);
+    final downloadRoot = (await _downloadDir()).absolute.path;
+    final absolutePath = file.absolute.path;
+    if (!absolutePath.startsWith('$downloadRoot${Platform.pathSeparator}') ||
+        !await file.exists()) {
+      throw Exception('Update file is outside the app cache.');
+    }
+    await _channel.invokeMethod<void>('installApk', {'path': absolutePath});
   }
 
   Future<Directory> _downloadDir() async {

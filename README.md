@@ -36,9 +36,11 @@ npm audit --audit-level=moderate
 npm run backend
 ```
 
-Backend mặc định chạy cổng 3000. Trên điện thoại, đặt Backend URL trong **Account** là `http://<IP-LAN-của-máy-tính>:3000`, không dùng `127.0.0.1`. Kiểm tra backend bằng `curl http://127.0.0.1:3000/api/health` trên máy tính. Có thể chạy web preview bằng `flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080` hoặc build APK bằng `flutter build apk --release --target-platform android-arm64`.
+Backend mặc định chạy cổng 3000. Với workflow cập nhật LAN hiện tại, đặt Backend URL là `http://<IP-LAN-của-máy-tính>:3000`, không dùng `127.0.0.1`. Có thể dùng HTTPS nếu backend đã cấu hình TLS.
 
-HTTP chỉ phù hợp để thử nghiệm trong LAN tin cậy. Khi triển khai thật, đặt `TLS_CERT_FILE`, `TLS_KEY_FILE` và `CORS_ORIGINS` trước khi chạy backend, rồi dùng Backend URL `https://...`; backend sẽ tự chuyển sang HTTPS khi có đủ certificate/key. Không đưa mật khẩu qua Wi-Fi công cộng bằng URL HTTP.
+HTTP chỉ phù hợp để thử nghiệm trong LAN tin cậy. Khi triển khai thật, đặt `NODE_ENV=production`, `TLS_CERT_FILE`, `TLS_KEY_FILE` và `CORS_ORIGINS` trước khi chạy backend, rồi dùng Backend URL `https://...`; server sẽ từ chối khởi động production nếu thiếu TLS (trừ khi bật rõ `ALLOW_INSECURE_HTTP=1`). Không đưa mật khẩu qua Wi-Fi công cộng bằng URL HTTP.
+
+Các APK đang phát hành dùng cùng certificate debug cũ để giữ khả năng cập nhật đè. `fastUpdate.sh` tự tạo/dùng `android/vietnam-map-debug.keystore`, alias `thanhhaodebugkey`, mật khẩu `thanhhao`; có thể ghi đè bằng `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` và `ANDROID_KEY_PASSWORD`. Đây là lựa chọn tương thích nhanh nhưng có rủi ro bảo mật; giữ nguyên certificate hiện tại giữa các lần cập nhật.
 
 `npm run backend` **chỉ phục vụ bản phát hành đang có** trong `backend/releases/`; lệnh này không build hoặc thay APK. `flutter build apk` cũng chỉ tạo APK trong `build/app/outputs/flutter-apk/`. Bản đang phát hành là `1.2.3+32`: `backend/releases/latest.json` trỏ tới `app-release.apk`; APK `app-1.2.0-29.apk` vẫn được giữ để dự phòng. Để phát hành bản tiếp theo qua nút **Check for update**, dùng `./fastUpdate.sh` sau khi đã duyệt bản phát hành; script tăng versionCode, build, kiểm tra phiên bản/chữ ký bên trong APK, rồi cập nhật APK và `latest.json`. Nếu tự thay file, phải kiểm tra `versionName`/`versionCode` bên trong APK khớp `latest.json`; chỉ sửa `latest.json` sẽ khiến Android tải lại APK cũ và báo đã cài.
 

@@ -44,6 +44,8 @@ class HomeShell extends StatelessWidget {
               padding: const EdgeInsets.all(2),
               child: Image.asset(
                 'assets/App_VietNamMap_Logo_no_background.png',
+                cacheWidth: 88,
+                cacheHeight: 88,
                 fit: BoxFit.contain,
               ),
             ),

@@ -20,6 +20,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
   List<SyncConflict> _conflicts = [];
   Map<String, CheckIn> _checkIns = {};
   bool _working = false;
+  String? _error;
 
   @override
   void initState() {
@@ -28,15 +29,22 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
   }
 
   Future<void> _load() async {
-    final operations = await _queue.loadOperations();
-    final conflicts = await _queue.loadConflicts();
-    final checkIns = await CheckInRepository().load();
-    if (mounted) {
-      setState(() {
-        _operations = operations;
-        _conflicts = conflicts;
-        _checkIns = {for (final item in checkIns) item.id: item};
-      });
+    try {
+      final operations = await _queue.loadOperations();
+      final conflicts = await _queue.loadConflicts();
+      final checkIns = await CheckInRepository().load();
+      if (mounted) {
+        setState(() {
+          _operations = operations;
+          _conflicts = conflicts;
+          _checkIns = {for (final item in checkIns) item.id: item};
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Could not load sync state: $error');
+      }
     }
   }
 
@@ -46,6 +54,10 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
       final repo = CheckInRepository();
       final sync = SyncService(baseUrl: await BackendConfig.loadUrl());
       await repo.save(await sync.syncTwoWay(await repo.load()));
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Sync failed: $error');
+      }
     } finally {
       if (mounted) setState(() => _working = false);
       await _load();
@@ -65,6 +77,10 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
       }
       await _queue.completeForCheckIn(conflict.checkInId);
       await _queue.removeConflict(conflict.checkInId);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Could not resolve conflict: $error');
+      }
     } finally {
       if (mounted) setState(() => _working = false);
       await _load();
@@ -86,6 +102,19 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
+        if (_error != null)
+          Card(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: ListTile(
+              leading: const Icon(Icons.error_outline),
+              title: Text(_error!),
+              trailing: IconButton(
+                onPressed: _load,
+                tooltip: 'Retry',
+                icon: const Icon(Icons.refresh),
+              ),
+            ),
+          ),
         Text(
           'Pending (${_operations.length})',
           style: Theme.of(context).textTheme.titleLarge,

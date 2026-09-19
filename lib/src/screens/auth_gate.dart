@@ -109,6 +109,8 @@ class _AuthScreenState extends State<AuthScreen> {
                                   'assets/App_VietNamMap_Logo_no_background.png',
                                   width: 48,
                                   height: 48,
+                                  cacheWidth: 96,
+                                  cacheHeight: 96,
                                   fit: BoxFit.contain,
                                 ),
                               ),

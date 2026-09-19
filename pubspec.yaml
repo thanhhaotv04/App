@@ -2,7 +2,7 @@ name: vietnam_map_01
 description: "VietNam Map Checkin Flutter app"
 publish_to: 'none'
 
-version: 260918.1.0+26091801
+version: 260919.1.0+26091901
 
 environment:
   sdk: ^3.12.1
@@ -26,7 +26,6 @@ dependencies:
   image: ^4.10.1
   path_provider: ^2.1.6
   share_plus: ^13.3.0
-  cupertino_icons: ^1.0.9
 dev_dependencies:
   flutter_test:
     sdk: flutter

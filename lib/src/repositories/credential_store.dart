@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -35,7 +36,11 @@ class CredentialStore {
     if (storedUser.toLowerCase() != userName.trim().toLowerCase()) return false;
     final verifier = prefs.getString(_verifierKey);
     if (verifier != null && verifier.isNotEmpty) {
-      return _matchesVerifier(password, verifier);
+      final matched = _matchesVerifier(password, verifier);
+      if (matched && !verifier.startsWith('2:')) {
+        await prefs.setString(_verifierKey, _newVerifier(password));
+      }
+      return matched;
     }
     // One-release migration path for installs that stored a plain password.
     final legacy = prefs.getString(legacyPasswordKey);
@@ -57,6 +62,7 @@ class CredentialStore {
     try {
       return await _secure.read(key: _tokenKey) ?? '';
     } catch (_) {
+      if (!_allowInsecureFallback) return '';
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString(_tokenFallbackKey) ?? '';
     }
@@ -72,6 +78,9 @@ class CredentialStore {
       }
       await prefs.remove(_tokenFallbackKey);
     } catch (_) {
+      if (!_allowInsecureFallback) {
+        throw StateError('Secure storage is unavailable on this device.');
+      }
       if (token.isEmpty) {
         await prefs.remove(_tokenFallbackKey);
       } else {
@@ -115,6 +124,12 @@ class CredentialStore {
     await prefs.remove(_tokenFallbackKey);
   }
 
+  static bool get _allowInsecureFallback =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.windows;
+
   Future<String> readSecret(String key) async {
     try {
       return await _secure.read(key: key) ?? '';
@@ -138,17 +153,35 @@ class CredentialStore {
   static String _newVerifier(String password) {
     final random = Random.secure();
     final salt = List<int>.generate(16, (_) => random.nextInt(256));
-    final digest = sha256.convert([...salt, ...utf8.encode(password)]).bytes;
-    return '${base64UrlEncode(salt)}:${base64UrlEncode(digest)}';
+    final digest = _derive(password, salt);
+    return '2:${base64UrlEncode(salt)}:${base64UrlEncode(digest)}';
   }
 
   static bool _matchesVerifier(String password, String verifier) {
     final parts = verifier.split(':');
-    if (parts.length != 2) return false;
+    if (parts.length == 2) {
+      try {
+        final salt = base64Url.decode(parts[0]);
+        final expected = base64Url.decode(parts[1]);
+        final actual = sha256.convert([
+          ...salt,
+          ...utf8.encode(password),
+        ]).bytes;
+        if (actual.length != expected.length) return false;
+        var difference = 0;
+        for (var index = 0; index < actual.length; index += 1) {
+          difference |= actual[index] ^ expected[index];
+        }
+        return difference == 0;
+      } catch (_) {
+        return false;
+      }
+    }
+    if (parts.length != 3 || parts[0] != '2') return false;
     try {
-      final salt = base64Url.decode(parts[0]);
-      final expected = base64Url.decode(parts[1]);
-      final actual = sha256.convert([...salt, ...utf8.encode(password)]).bytes;
+      final salt = base64Url.decode(parts[1]);
+      final expected = base64Url.decode(parts[2]);
+      final actual = _derive(password, salt);
       if (actual.length != expected.length) return false;
       var difference = 0;
       for (var index = 0; index < actual.length; index += 1) {
@@ -158,5 +191,20 @@ class CredentialStore {
     } catch (_) {
       return false;
     }
+  }
+
+  static List<int> _derive(String password, List<int> salt) {
+    const iterations = 80_000;
+    final key = utf8.encode(password);
+    var block = <int>[...salt, 0, 0, 0, 1];
+    var output = Hmac(sha256, key).convert(block).bytes;
+    final first = List<int>.from(output);
+    for (var iteration = 1; iteration < iterations; iteration += 1) {
+      output = Hmac(sha256, key).convert(output).bytes;
+      for (var index = 0; index < first.length; index += 1) {
+        first[index] ^= output[index];
+      }
+    }
+    return first;
   }
 }

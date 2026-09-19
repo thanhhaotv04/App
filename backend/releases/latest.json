@@ -1,6 +1,6 @@
 {
-  "versionName": "260918.1",
-  "versionCode": 26091801,
+  "versionName": "260919.1",
+  "versionCode": 26091901,
   "apkFile": "app-release.apk",
-  "notes": "Bổ sung Sync Center, xử lý xung đột, Timeline, GPS nhận diện tỉnh, album nâng cao, backup mã hóa, quyền riêng tư, quota ảnh và tăng cường bảo mật."
+  "notes": "Khắc phục lỗi bảo mật, đồng bộ, cập nhật và trải nghiệm người dùng."
 }

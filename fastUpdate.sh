@@ -79,7 +79,7 @@ done
 [[ "$REQUESTED_PORT" =~ ^[0-9]+$ ]] || die "Port must be numeric: $REQUESTED_PORT"
 (( REQUESTED_PORT >= 1 && REQUESTED_PORT <= 65535 )) || die "Port must be between 1 and 65535"
 
-for command in flutter node npm curl sha256sum; do
+for command in flutter node npm curl sha256sum keytool; do
   require_command "$command"
 done
 
@@ -197,6 +197,30 @@ flutter analyze
 
 echo "Running Flutter tests..."
 flutter test
+
+USER_HOME_DIR="$(getent passwd "$(id -u)" | cut -d: -f6)"
+PROJECT_DEBUG_KEYSTORE="$ROOT_DIR/android/vietnam-map-debug.keystore"
+SOURCE_DEBUG_KEYSTORE="${ANDROID_DEBUG_KEYSTORE_PATH:-$USER_HOME_DIR/.android/debug.keystore}"
+if [[ ! -f "$PROJECT_DEBUG_KEYSTORE" && -f "$SOURCE_DEBUG_KEYSTORE" ]]; then
+  keytool -importkeystore \
+    -srckeystore "$SOURCE_DEBUG_KEYSTORE" \
+    -srcstorepass android \
+    -srcalias androiddebugkey \
+    -srckeypass android \
+    -destkeystore "$PROJECT_DEBUG_KEYSTORE" \
+    -deststorepass thanhhao \
+    -destalias thanhhaodebugkey \
+    -destkeypass thanhhao \
+    -noprompt >/dev/null
+fi
+LEGACY_DEBUG_KEYSTORE="$PROJECT_DEBUG_KEYSTORE"
+if [[ -z "${ANDROID_KEYSTORE_PATH:-}" && -f "$LEGACY_DEBUG_KEYSTORE" ]]; then
+  export ANDROID_KEYSTORE_PATH="$LEGACY_DEBUG_KEYSTORE"
+  export ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD:-thanhhao}"
+  export ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS:-thanhhaodebugkey}"
+  export ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD:-thanhhao}"
+  echo "WARNING: using legacy debug keystore for update compatibility: $ANDROID_KEYSTORE_PATH"
+fi
 
 echo "Building Android ARM64 release APK..."
 flutter build apk --release --target-platform android-arm64 \

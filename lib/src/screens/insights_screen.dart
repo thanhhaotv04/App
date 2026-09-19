@@ -17,6 +17,8 @@ class InsightsScreen extends StatefulWidget {
 class _InsightsScreenState extends State<InsightsScreen> {
   final _repo = CheckInRepository();
   List<CheckIn> _items = [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -25,9 +27,22 @@ class _InsightsScreenState extends State<InsightsScreen> {
   }
 
   Future<void> _load() async {
-    final items = await _repo.load();
-    if (!mounted) return;
-    setState(() => _items = items);
+    try {
+      final items = await _repo.load();
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+        _error = null;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load insights: $error';
+        });
+      }
+    }
   }
 
   Future<void> _copyTravelRecap() async {
@@ -41,6 +56,16 @@ class _InsightsScreenState extends State<InsightsScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: Text(_error!),
+        ),
+      );
+    }
     final visited = _items
         .map((item) => VietnamRegions.normalize(item.city))
         .where((name) => name.isNotEmpty)
@@ -49,8 +74,15 @@ class _InsightsScreenState extends State<InsightsScreen> {
     final monthlyCounts = _monthlyCounts(_items);
     final activeDays = _activeDays(_items);
     final currentStreak = _currentStreak(_items);
-    final progress = (visited.length / 63).clamp(0.0, 1.0);
-    final remaining = (63 - visited.length).clamp(0, 63);
+    final totalProvinces = VietnamRegions.all
+        .expand((region) => region.provinces)
+        .toSet()
+        .length;
+    final progress = (visited.length / totalProvinces).clamp(0.0, 1.0);
+    final remaining = (totalProvinces - visited.length).clamp(
+      0,
+      totalProvinces,
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -108,7 +140,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
                   children: [
                     Semantics(
                       label:
-                          '${(progress * 100).toStringAsFixed(1)} percent of Vietnam province coverage complete',
+                          '${(progress * 100).toStringAsFixed(1)} percent of the historical 63-province view complete',
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(999),
                         child: LinearProgressIndicator(
@@ -121,7 +153,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      '${(progress * 100).toStringAsFixed(1)}% complete · $remaining province(s) left',
+                      '${(progress * 100).toStringAsFixed(1)}% complete · $remaining province(s) left in the historical view',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 12),

@@ -74,6 +74,34 @@ class _MapScreenState extends State<MapScreen> {
     _loadBackendUrl();
     _load();
     _loadGeoJson();
+    _recoverLostPhoto();
+  }
+
+  Future<void> _recoverLostPhoto() async {
+    try {
+      final response = await ImagePicker().retrieveLostData();
+      if (response.isEmpty) return;
+      final recovered = <_PickedPhoto>[];
+      for (final file in response.files ?? const <XFile>[]) {
+        final optimized = await const ImageOptimizer().optimize(
+          await file.readAsBytes(),
+          file.name,
+        );
+        recovered.add(
+          _PickedPhoto(
+            file: XFile.fromData(optimized.bytes, name: optimized.fileName),
+            bytes: optimized.bytes,
+          ),
+        );
+      }
+      if (!mounted || recovered.isEmpty) return;
+      setState(() {
+        _pickedPhotos = [..._pickedPhotos, ...recovered];
+        _photoInfo = '${_pickedPhotos.length} recovered photo(s) selected';
+      });
+    } catch (_) {
+      // Lost picker data is optional; the check-in form remains usable.
+    }
   }
 
   Future<void> _loadBackendUrl() async {

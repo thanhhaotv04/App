@@ -81,11 +81,26 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
   bool _authenticated = false;
 
   Future<void> _signOut() async {
+    final tokenFuture = _credentials.readToken();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_sessionKey, false);
+    unawaited(_credentials.clearToken());
     if (!mounted) return;
-    _router.go('/checkin');
     setState(() => _authenticated = false);
+    _router.go('/checkin');
+    unawaited(_revokeRemoteSession(tokenFuture));
+  }
+
+  Future<void> _revokeRemoteSession(Future<String> tokenFuture) async {
+    try {
+      final token = await tokenFuture;
+      if (token.isEmpty) return;
+      await AuthService(
+        baseUrl: await BackendConfig.loadUrl(),
+      ).logout(token: token).timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // Local sign-out must still work when the backend is unavailable.
+    }
   }
 
   @override
@@ -97,6 +112,7 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
   @override
   void initState() {
     super.initState();
+    unawaited(AppTheme.load());
     _loadAuth();
   }
 

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_colors.dart';
 
 class AppTheme {
+  static const _themeKey = 'vmc-theme-mode';
   static final ValueNotifier<ThemeMode> themeMode = ValueNotifier(
     ThemeMode.light,
   );
@@ -11,6 +13,29 @@ class AppTheme {
     themeMode.value = themeMode.value == ThemeMode.dark
         ? ThemeMode.light
         : ThemeMode.dark;
+    _persist();
+  }
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_themeKey);
+    if (value == 'dark') {
+      themeMode.value = ThemeMode.dark;
+    } else if (value == 'light') {
+      themeMode.value = ThemeMode.light;
+    }
+  }
+
+  static Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _themeKey,
+        themeMode.value == ThemeMode.dark ? 'dark' : 'light',
+      );
+    } catch (_) {
+      // Theme state remains available for this process if persistence fails.
+    }
   }
 
   static ThemeData light() {

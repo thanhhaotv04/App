@@ -16,13 +16,33 @@ class TimelineScreen extends StatefulWidget {
 
 class _TimelineScreenState extends State<TimelineScreen> {
   List<CheckIn> _items = [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    CheckInRepository().load().then((value) {
-      if (mounted) setState(() => _items = value);
-    });
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final value = await CheckInRepository().load();
+      if (mounted) {
+        setState(() {
+          _items = value;
+          _loading = false;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load timeline: $error';
+        });
+      }
+    }
   }
 
   List<List<CheckIn>> get _trips {
@@ -50,7 +70,17 @@ class _TimelineScreenState extends State<TimelineScreen> {
         decoration: BoxDecoration(
           gradient: LinearGradient(colors: [colors.bg, colors.bg2]),
         ),
-        child: _trips.isEmpty
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? Center(
+                child: FilledButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(_error!),
+                ),
+              )
+            : _trips.isEmpty
             ? const Center(child: Text('No journeys yet.'))
             : ListView.separated(
                 padding: const EdgeInsets.all(18),

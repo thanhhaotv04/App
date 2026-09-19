@@ -76,10 +76,21 @@ class AuthService {
       },
       headers: {
         if (token?.isNotEmpty == true) 'Authorization': 'Bearer $token',
-        if (token?.isNotEmpty != true) 'X-Password': currentPassword,
+        'X-Password': currentPassword,
       },
     );
     return AuthSession.fromJson(data, fallbackName: newName ?? name);
+  }
+
+  Future<void> logout({String? token}) async {
+    await _post(
+      '/api/auth/logout',
+      const {},
+      headers: {
+        if (token?.trim().isNotEmpty == true)
+          'Authorization': 'Bearer ${token!.trim()}',
+      },
+    );
   }
 
   Future<Map<String, dynamic>> _post(

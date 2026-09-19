@@ -174,8 +174,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveBackendUrl() async {
-    await BackendConfig.saveUrl(_backendCtrl.text);
-    _showMessage('Backend URL saved.');
+    try {
+      await BackendConfig.saveUrl(_backendCtrl.text);
+      _showMessage('Backend URL saved.');
+    } catch (error) {
+      _showMessage(error.toString().replaceFirst('FormatException: ', ''));
+    }
   }
 
   Future<void> _syncNow() async {
@@ -233,6 +237,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _exportBackup() async {
     final password = await _askBackupPassword('Export encrypted backup');
     if (password == null) return;
+    if (password.length < 8) {
+      _showMessage('Backup password must have at least 8 characters.');
+      return;
+    }
     try {
       final bytes = await const BackupService().encode(
         checkIns: await _repo.load(),
@@ -263,8 +271,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     );
     if (file == null || !mounted) return;
+    final fileSize = await file.length();
+    if (fileSize > 100 * 1024 * 1024) {
+      _showMessage('Backup is too large (maximum 100 MB).');
+      return;
+    }
     final password = await _askBackupPassword('Import encrypted backup');
     if (password == null) return;
+    if (password.length < 8) {
+      _showMessage('Backup password must have at least 8 characters.');
+      return;
+    }
     try {
       final service = const BackupService();
       final payload = await service.decode(
@@ -517,7 +534,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     TextField(
                       controller: _backendCtrl,
                       keyboardType: TextInputType.url,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Backend URL',
                         hintText: BackendConfig.defaultUrl,
                       ),

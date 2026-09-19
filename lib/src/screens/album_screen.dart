@@ -51,6 +51,8 @@ class _AlbumScreenState extends State<AlbumScreen> {
   final _checkins = CheckInRepository();
   List<TravelAlbum> _savedAlbums = [];
   List<CheckIn> _items = [];
+  bool _loading = true;
+  String? _loadError;
   String _backendUrl = BackendConfig.defaultUrl;
   final _filterCtrl = TextEditingController();
   String _filter = '';
@@ -77,8 +79,16 @@ class _AlbumScreenState extends State<AlbumScreen> {
         _savedAlbums = albums;
         _items = items;
         _backendUrl = url;
+        _loading = false;
+        _loadError = null;
       });
     } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadError = 'Could not open albums: $error';
+        });
+      }
       _message('Could not open albums: $error');
     }
   }
@@ -1097,6 +1107,16 @@ class _AlbumScreenState extends State<AlbumScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loadError != null) {
+      return Center(
+        child: FilledButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: Text(_loadError!),
+        ),
+      );
+    }
     final visible = _visibleAlbums;
     return Container(
       decoration: BoxDecoration(
