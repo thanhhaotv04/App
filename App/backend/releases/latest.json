@@ -1,0 +1,9 @@
+{
+  "applicationId": "com.thanhhao.esp32_monitor",
+  "versionName": "261001.4",
+  "versionCode": 26100104,
+  "apkFile": "esp32-navride-261001.4.apk",
+  "notes": "Đổi tên thành ESP32-NavRide; giữ dữ liệu và khả năng cập nhật app cũ. Đồng bộ tên thiết bị Bluetooth và giao diện. Sau cập nhật, kiểm tra và bật lại quyền truy cập thông báo để chuyển chỉ dẫn OsmAnd.",
+  "sizeBytes": 52246998,
+  "sha256": "6440c1b4bc9c7f3d2e1c9252965135445d6328a24e66be39d6e6ae1fb6cfd027"
+}
