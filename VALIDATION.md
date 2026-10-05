@@ -1,4 +1,161 @@
-# Local validation — 2026-10-03
+# Local validation
+
+## App reliability fixes — 2026-10-04 (local, not deployed)
+
+- Fixed the six issues from the app audit: BLE write rejection/exception or
+  missing callback now reconnects while retaining the pending command; Wi-Fi
+  health polls without locking controls and failed sends clear stale status;
+  old health responses cannot overwrite a newer send failure.
+- Storage recovers valid records independently and preserves the original
+  snapshot in a timestamped SharedPreferences recovery key before writing the
+  repaired snapshot. Unreadable JSON fails visibly and cannot be overwritten
+  by a subsequent normal save. The app shows a recovery warning when needed.
+- Bluetooth content that exceeds the packet limit now requires confirmation
+  of the exact shortened text, or Cancel. Original saved content is unchanged.
+  Retry connection catches native errors, displays feedback and clears busy state.
+- A retry of APK installation reuses a cached file only after verifying its
+  size, SHA-256 and ZIP header. A modified cache is downloaded again; native
+  package/version/signature checks remain in place. Returning from permission
+  settings still requires retrying the update action, but not downloading again.
+- Checks: Flutter analyze clean; 43 Flutter tests passed, including seven new
+  regression cases; 23 Android JVM tests passed (19 existing plus four new BLE
+  recovery tests); backend `npm test` passed (one integration test).
+- Flutter line coverage: 1,043/1,344 lines (77.6%). Long-message confirmation
+  tested at width 375 with text scale 1.6; existing responsive layout tests pass.
+- `flutter build web --no-pub` and Gradle `:app:assembleDebug` passed. Local
+  debug APK: `App/build/app/outputs/apk/debug/app-debug.apk`. Mockito and its
+  JDK-compatible instrumentation dependencies are test-only.
+- No APK installed, no firmware changed/flashed in this fix session, no update
+  manifest published, no version/package ID changed. BLE failures were injected
+  in JVM tests, not reproduced on the physical phone/ESP32. Long-running riding,
+  Doze and physical TFT behavior still require a stationary on-device test.
+
+## Firmware validation — 2026-10-03
+
+## Clock menu: background Stopwatch and Timer — firmware 1.3.17
+
+- Added `Clock → Stopwatch / Timer` to the physical-button menu. Stopwatch
+  has Start/Pause/Resume/Reset; leaving its page keeps it running. Timer has
+  5/15/30/60-minute presets, an `At time` 24-hour editor and `View timer` /
+  Cancel. Selecting a clock time schedules its next occurrence, including
+  tomorrow when the selected time has passed. Only this clock-time entry
+  requires a synchronized wall clock.
+- Both counters use ESP32's 64-bit monotonic timer and operate concurrently,
+  without Wi-Fi/BLE or dependence on later wall-clock synchronization.
+  Active counters use small bottom-right minute labels (`SW`, `T`, optional
+  `P` for paused stopwatch). Road text remains size 2 and was moved above
+  the reserved footer; its page indicators are at the bottom left.
+- Timer expiry changes the full screen between black and white every 700 ms
+  with `TIME UP`. Any released button dismisses it and is consumed before
+  normal quick-mode/menu handling. The saved theme is not changed, and the
+  stopwatch continues while the alarm is visible. State is RAM-only and
+  resets on reboot/power loss.
+- Host C++ assertions passed for concurrent operation, start/pause/resume,
+  reset/cancel, every duration preset, one-shot expiry, minute rounding,
+  midnight/next-day scheduling and operation across the 32-bit millisecond
+  boundary. The test uses the same `include/clock_timers.h` as firmware.
+- PlatformIO build and USB flash of 1.3.17 passed on ESP32-S3
+  `14:C1:9F:27:03:44`; uploaded image hash verified. RAM: 52,356 bytes;
+  program size: 1,028,533 bytes. The user started Stopwatch and a 300-second
+  Timer through the physical buttons, then confirmed both minute labels
+  were clear. The device reported 1.3.17 through `/api/health`; a live HTTP
+  roundabout sample (`EXIT 4`, `Nguyen Hue`, 250 m) was accepted and logged
+  while the counters ran. The full real 5-minute countdown subsequently
+  logged `CLOCK: timer expired`, followed by button dismissal, navigation
+  restoration and `CLOCK: alarm dismissed; theme restored`. The user also
+  confirmed the continuous black/white alarm, return to navigation after
+  dismissal, and continued stopwatch minute count all worked correctly.
+
+## QR menu: Bank and Profile — firmware 1.3.16
+
+- Added `Menu → QR → Bank / Profile` using the two user-supplied images.
+  Decoded each original QR and re-encoded its exact payload without logos.
+  The Bank payload identifies TPBank account 70333655343; Profile preserves
+  the original `https://q.me-qr.com/2rw76u3u` URL.
+- Host generation uses QR error correction M, integer module scaling and
+  a four-module white quiet zone. Bank is 45 modules at 2 px/module (106 px
+  including the quiet zone); Profile is 29 modules at 3 px/module (111 px).
+  Both reconstructed 128×160 raster images decode to the exact original
+  contents using ZXing. Packed bitmap verification and regenerated-header
+  comparison passed. No runtime QR library or network request is required.
+- Main menu now has five rows; QR submenu has two. Button 1 moves to the
+  next item/code, Button 2 opens the selected item, and Button 3 goes back.
+  QR pages have no inactivity timeout or timed redraw. Navigation updates
+  continue behind the menu, and normal navigation is restored on menu exit.
+- PlatformIO build and USB upload of 1.3.16 passed on ESP32-S3
+  `14:C1:9F:27:03:44`, with flash hash verification. RAM usage is 52,252 bytes;
+  program size is 1,022,225 bytes. Physical menu/phone-scan confirmation is
+  pending from the user; successful host decoding is not a camera scan of
+  the actual TFT.
+
+## OsmAnd turn icons and stable roundabout rendering — firmware 1.3.15
+
+- Compared OsmAnd's `TurnType.java`, `TurnPathHelper.java`, `TurnDrawable.java`,
+  and `ExternalApiHelper.java` from `osmandapp/OsmAnd` master. The 14 primary
+  turn codes are C, TL, TSLL, TSHL, TR, TSLR, TSHR, KL, KR, TU, TRU,
+  OFFR, RNDB and RNLB. The Android bridge and TFT now retain distinct types
+  for each instead of collapsing slight/sharp/keep and right U-turn.
+- Root cause of the old/new roundabout swap: AIDL snapshots carry the real
+  exit angle, while the notification and bare direction callback do not.
+  The listener now refreshes an available complete AIDL snapshot before using
+  notification fallback; a bare callback no longer marks itself as a complete
+  snapshot. Firmware removed the separate solid-circle fallback and always
+  renders the same ring/path design. Missing angles use OsmAnd TurnType's
+  default angle 0, so the exit direction is only approximate in that case.
+- PlatformIO build and upload of 1.3.15 passed on the connected ESP32-S3
+  (`14:C1:9F:27:03:44`); flash hash verified. Flutter analyzer passed,
+  all 36 Flutter tests passed, and all 19 local Android bridge tests passed.
+  Release APK built and installed into personal user 0. Work-profile user 11
+  remains uninstalled.
+- On the phone, notification listener and OsmAnd AIDL connected, then BLE
+  negotiated MTU 185 without changing notification permission. The app sent
+  `sharp_left` and roundabout samples. Firmware serial confirmed
+  `sharp_left Nguyen Hue 250 m`, followed by roundabout exits 5 and 4 with
+  angles -115 and -100; Android logged firmware ACKs. A mistaken screen tap
+  briefly selected EXIT 5 during verification because the expanded sample
+  list had scrolled after the prior tap; re-reading the fresh UI coordinates
+  and selecting EXIT 4 produced the matching firmware log and ACK. The user
+  confirmed EXIT 4 and the new roundabout glyph were clear on the TFT.
+- Live OsmAnd route geometry was not simulated in this run. Only the complete AIDL
+  snapshot can provide a real exit angle; notification-only fallback remains
+  an approximate route cue.
+
+## Compact navigation, exits 4–6 and connection recovery — firmware 1.3.14
+
+- Clock/date/status now occupy the top 40 of 160 TFT rows. Navigation uses
+  the remaining 120 rows, with an exit/direction label and full-width road
+  names at text size 2. Long road names wrap and page every 3.5 seconds;
+  only the affected display regions redraw. Road names retain the existing
+  ASCII transliteration for the TFT font.
+- Added app samples for roundabout exits 4, 5 and 6 and support for five dim
+  passed-exit ticks. The final exit direction uses OsmAnd's actual angle;
+  intermediate dim ticks and sample angles are illustrative, not mapped
+  road geometry. Parser tests cover exits 1–6 without deriving angles from
+  the exit number, and check the 180-byte packet limit.
+- Flutter analyzer passed; all 36 Flutter tests and 17 Android unit tests
+  passed. Release APK build and OsmAnd release parcelable check passed.
+  PlatformIO built and flashed firmware 1.3.14 to ESP32-S3
+  `14:C1:9F:27:03:44`, with flash hash verification.
+- The locally built APK was installed explicitly into personal user 0.
+  BLE samples for exits 4, 5 and 6 received firmware acknowledgements;
+  serial logs recorded `DISPLAY: navigation roundabout Nguyen Hue 250 m`
+  with exit/angle pairs `4/-100`, `5/-115` and `6/-125`.
+  On-glass readability of the new layout still awaits user confirmation.
+- Notification access is checked for the exact listener component. App
+  resume/Retry connection first requests a rebind; if Android retains a
+  stale binding, the app restarts only its listener component without
+  changing the user's notification-access grant. Recovery is throttled.
+  A live force-stop/reopen test logged stale-binding repair at 16:24:26,
+  listener and OsmAnd AIDL connection at 16:24:27, and BLE connection/MTU
+  negotiation at 16:24:28. Notification access remained granted throughout;
+  no manual permission toggle was used. The idle route cleared directions.
+- The duplicate icon came from the same package being installed in both
+  personal user 0 and work-profile user 11. Removed only the work-profile
+  installation with `pm uninstall -k --user 11`; its data was retained for
+  recovery. Verified user 0 installed=true and user 11 installed=false.
+  Subsequent USB installation used `adb install --user 0 -r`.
+- APK version remains 261001.4.0 (26100104) for this local validation.
+  The update backend's published release was not changed.
 
 ## Roundabout circulation direction — 2026-10-03
 

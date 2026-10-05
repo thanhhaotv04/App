@@ -11,8 +11,11 @@
 #include <freertos/queue.h>
 #include <sys/time.h>
 #include <time.h>
+#include <esp_timer.h>
 
 #include "secrets.h"
+#include "qr_assets.h"
+#include "clock_timers.h"
 
 // GOOUUU ESP32-S3 + 1.8-inch ST7735 128x160 wiring.
 constexpr uint8_t TFT_SCLK = 21;
@@ -28,7 +31,7 @@ constexpr uint8_t BUTTON_MENU = 0;  // BOOT strap: release before reset/upload.
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.13";
+constexpr char FIRMWARE_VERSION[] = "1.3.17";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr char SETUP_PASSWORD[] = "monitor1234";
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -40,6 +43,8 @@ constexpr uint32_t BUTTON_DEBOUNCE_MS = 60;
 constexpr uint32_t STATUS_BLINK_MS = 500;
 constexpr uint32_t NAVIGATION_BLINK_MS = 500;
 constexpr uint32_t NAVIGATION_LINK_LOST_MS = 15000;
+constexpr uint32_t ROAD_PAGE_INTERVAL_MS = 3500;
+constexpr int16_t CLOCK_HEIGHT = 40;
 constexpr uint32_t MODE_SWITCH_DELAY_MS = 250;
 constexpr int TURN_ARROW_SHOW_METERS = 2000;
 constexpr int TURN_ARROW_BLINK_METERS = 1000;
@@ -120,7 +125,13 @@ bool navigationVisible = false;
 bool navigationOnScreen = false;
 bool navigationArrowVisible = true;
 uint32_t lastNavigationBlink = 0;
-enum class MenuView : uint8_t { Closed, List, Info };
+uint32_t lastRoadPageAt = 0;
+uint8_t roadPage = 0;
+uint8_t roadPageCount = 1;
+enum class MenuView : uint8_t {
+  Closed, List, Info, QrList, QrCode, ClockList, Stopwatch,
+  TimerList, TimerActive, TimerEdit, Alarm
+};
 MenuView menuView = MenuView::Closed;
 uint8_t menuSelection = 0;
 uint32_t menuLastInput = 0;
@@ -137,6 +148,19 @@ bool setupFrameDrawn = false;
 String lastRenderedTime;
 String lastRenderedDate;
 String lastRenderedStatus;
+ClockTimers clockTimers;
+String lastBadgeKey;
+String lastClockToolValue;
+String timerDescription;
+uint8_t timerHour = 0;
+uint8_t timerMinute = 0;
+uint8_t timerEditField = 0;
+bool timerEditorReady = false;
+uint32_t lastAlarmFrame = 0;
+uint32_t lastClockToolsDraw = 0;
+bool alarmWhite = false;
+
+uint64_t monotonicMs() { return static_cast<uint64_t>(esp_timer_get_time()) / 1000; }
 
 struct ButtonState {
   uint8_t pin;
@@ -342,6 +366,27 @@ void drawCentered(const String &value, int16_t y, uint8_t size,
            background);
 }
 
+void drawClockBadge(bool force = false) {
+  if (menuView != MenuView::Closed || detailsUntil != 0 || popupUntil != 0 ||
+      clockTimers.ringing) return;
+  const uint64_t now = monotonicMs();
+  const uint64_t elapsed = clockTimers.elapsed(now);
+  const String sw = clockTimers.stopwatchRunning || elapsed > 0
+      ? "SW " + String(static_cast<unsigned long>(elapsed / 60000)) + "m" +
+            (clockTimers.stopwatchRunning ? "" : " P") : "";
+  const String timer = clockTimers.timerRunning
+      ? "T " + String(static_cast<unsigned long>(ClockTimers::remainingMinutes(
+            clockTimers.remaining(now)))) + "m" : "";
+  const String key = sw + ":" + timer;
+  if (!force && key == lastBadgeKey) return;
+  lastBadgeKey = key;
+  const uint16_t bg = navigationOnScreen ? COLOR_PANEL : COLOR_BACKGROUND;
+  tft.fillRect(40, 142, 86, 18, bg);
+  if (!sw.isEmpty()) drawText(sw, 126 - sw.length() * 6,
+                              timer.isEmpty() ? 151 : 142, 1, COLOR_ACCENT, bg);
+  if (!timer.isEmpty()) drawText(timer, 126 - timer.length() * 6, 151, 1, COLOR_WAIT, bg);
+}
+
 void drawWrapped(const String &value, int16_t y, uint16_t color = COLOR_TEXT,
                  uint16_t background = COLOR_BACKGROUND,
                  uint8_t maxLines = 4) {
@@ -370,8 +415,8 @@ String clockStatusKey() {
 }
 
 void drawClockStaticLayout() {
-  // Top third is reserved for date, connection indicator and the clock.
-  tft.drawFastHLine(4, 54, 120, COLOR_PANEL);
+  // Exactly the top quarter is reserved for date, connection and HH:MM.
+  tft.drawFastHLine(4, CLOCK_HEIGHT - 1, 120, COLOR_PANEL);
 }
 
 void resetClockRenderCache() {
@@ -404,6 +449,8 @@ void refreshConnectionIndicator() {
 }
 
 void renderClock(bool restorePopupRegion = false) {
+  if (clockTimers.ringing) return;
+  const bool frameChanged = !clockFrameDrawn || restorePopupRegion;
   // The full frame is drawn only when entering the clock. Normal ticks and
   // popup restoration update only the dirty rectangles below.
   if (!clockFrameDrawn) {
@@ -413,8 +460,8 @@ void renderClock(bool restorePopupRegion = false) {
     resetClockRenderCache();
   } else if (restorePopupRegion) {
     // Notifications live below the clock, so restoring one never touches the
-    // date, connection indicator or clock in the top third.
-    tft.fillRect(0, 56, 128, 104, COLOR_BACKGROUND);
+    // date, connection indicator or clock in the top quarter.
+    tft.fillRect(0, CLOCK_HEIGHT, 128, 160 - CLOCK_HEIGHT, COLOR_BACKGROUND);
   }
 
   const bool valid = clockValid();
@@ -433,8 +480,8 @@ void renderClock(bool restorePopupRegion = false) {
   }
 
   if (timeText != lastRenderedTime) {
-    tft.fillRect(4, 17, 120, 34, COLOR_BACKGROUND);
-    drawCentered(timeText, 17, 4, valid ? COLOR_TEXT : COLOR_WAIT);
+    tft.fillRect(4, 14, 120, 24, COLOR_BACKGROUND);
+    drawCentered(timeText, 14, 3, valid ? COLOR_TEXT : COLOR_WAIT);
     lastRenderedTime = timeText;
   }
   if (dateText != lastRenderedDate) {
@@ -445,9 +492,11 @@ void renderClock(bool restorePopupRegion = false) {
 
   const String status = clockStatusKey();
   if (status != lastRenderedStatus) drawClockStatus(status);
+  drawClockBadge(frameChanged);
 }
 
 void drawSetupScreen(bool force = false) {
+  if (clockTimers.ringing) return;
   if (setupFrameDrawn && !force) return;
   tft.fillScreen(COLOR_BACKGROUND);
   drawCentered("SETUP", 8, 2, COLOR_ACCENT);
@@ -459,9 +508,10 @@ void drawSetupScreen(bool force = false) {
   drawText("Open app to send", 5, 102, 1, COLOR_WAIT);
   drawText("Use WiFi or BLE", 5, 114, 1, COLOR_WAIT);
   tft.drawFastHLine(4, 135, 120, COLOR_PANEL);
-  drawCentered("AP + BLE", 141, 1, COLOR_OK);
+  drawCentered("AP + BLE", 126, 1, COLOR_OK);
   setupFrameDrawn = true;
   clockFrameDrawn = false;
+  drawClockBadge(true);
 }
 
 String clippedText(const String &value, size_t maxLength) {
@@ -471,6 +521,7 @@ String clippedText(const String &value, size_t maxLength) {
 }
 
 void restoreMainScreen() {
+  if (clockTimers.ringing) return;
   menuView = MenuView::Closed;
   detailsUntil = 0;
   popupUntil = 0;
@@ -537,35 +588,194 @@ void drawConnectionDetails() {
                  method.c_str(), ssid.c_str(), ip.c_str(), rssi.c_str());
 }
 
-constexpr uint8_t MENU_ITEM_COUNT = 4;
-constexpr uint8_t nextMenuItem(uint8_t index) {
-  return (index + 1) % MENU_ITEM_COUNT;
+String durationText(uint64_t seconds) {
+  char value[24];
+  snprintf(value, sizeof(value), "%02llu:%02u:%02u",
+           static_cast<unsigned long long>(seconds / 3600),
+           static_cast<unsigned>((seconds / 60) % 60),
+           static_cast<unsigned>(seconds % 60));
+  return String(value);
 }
-static_assert(nextMenuItem(3) == 0, "Menu selection must wrap");
+
+void drawClockTool(bool force = false) {
+  const bool stopwatch = menuView == MenuView::Stopwatch;
+  const uint64_t now = monotonicMs();
+  const String value = durationText(stopwatch ? clockTimers.elapsed(now) / 1000
+      : (clockTimers.remaining(now) + 999) / 1000);
+  if (force) {
+    tft.fillScreen(COLOR_BACKGROUND);
+    drawCentered(stopwatch ? "STOPWATCH" : "TIMER", 8, 2, COLOR_ACCENT);
+    drawText(stopwatch ? "1 Reset" : "1 Cancel", 8, 111, 1);
+    drawText(stopwatch ? (clockTimers.stopwatchRunning ? "2 Pause" : "2 Start / Resume")
+                       : "2 Background", 8, 126, 1);
+    drawText("3 Background", 8, 149, 1, COLOR_WAIT);
+    lastClockToolValue = "";
+  }
+  if (value == lastClockToolValue) return;
+  lastClockToolValue = value;
+  tft.fillRect(2, 41, 124, 54, COLOR_BACKGROUND);
+  drawCentered(value, 44, 2);
+  drawCentered(stopwatch ? (clockTimers.stopwatchRunning ? "Running"
+                             : clockTimers.elapsed(now) == 0 ? "Ready" : "Paused")
+                         : (clockTimers.timerRunning ? timerDescription : "No timer"),
+               78, 1, COLOR_WAIT);
+}
+
+void drawTimerEditor() {
+  tft.fillScreen(COLOR_BACKGROUND);
+  drawCentered("AT TIME", 8, 2, COLOR_ACCENT);
+  if (!timerEditorReady) {
+    drawCentered("Sync time first", 52, 1, COLOR_WAIT);
+    drawCentered("Connect phone", 75, 1);
+    drawCentered("or WiFi", 88, 1);
+    drawText("2 Retry", 8, 126, 1);
+  } else {
+    char value[6];
+    snprintf(value, sizeof(value), "%02u:%02u", timerHour, timerMinute);
+    drawCentered(value, 48, 3);
+    drawCentered(timerEditField == 0 ? "Set hour (24h)"
+                 : timerEditField == 1 ? "Set minute" : "Ready to start", 83, 1, COLOR_WAIT);
+    if (timerEditField < 2)
+      tft.drawFastHLine(timerEditField == 0 ? 19 : 73, 75, 36, COLOR_ACCENT);
+    drawText(timerEditField == 2 ? "1 Change" : "1 Increase", 8, 112, 1);
+    drawText(timerEditField == 2 ? "2 Start" : "2 Next", 8, 126, 1);
+  }
+  drawText("3 Back", 8, 149, 1, COLOR_WAIT);
+}
+
+void openTimerEditor() {
+  menuView = MenuView::TimerEdit;
+  timerEditField = 0;
+  timerEditorReady = clockValid();
+  if (timerEditorReady) {
+    time_t initial = time(nullptr) + 300;
+    tm local{};
+    localtime_r(&initial, &local);
+    timerHour = local.tm_hour;
+    timerMinute = local.tm_min;
+  }
+  drawTimerEditor();
+}
+
+void startClockTimer(uint64_t duration, const String &description) {
+  clockTimers.startTimer(monotonicMs(), duration);
+  timerDescription = description;
+  menuView = MenuView::TimerActive;
+  lastBadgeKey = "";
+  drawClockTool(true);
+  Serial.printf("CLOCK: timer started %llu seconds (%s)\n",
+                static_cast<unsigned long long>(duration / 1000), description.c_str());
+}
+
+bool updateClockTools() {
+  if (clockTimers.update(monotonicMs())) {
+    menuView = MenuView::Alarm;
+    popupUntil = 0;
+    detailsUntil = 0;
+    navigationOnScreen = false;
+    clockFrameDrawn = false;
+    setupFrameDrawn = false;
+    lastAlarmFrame = millis() - 700;
+    Serial.println("CLOCK: timer expired; press any button to dismiss");
+  }
+  if (!clockTimers.ringing) return false;
+  if (millis() - lastAlarmFrame >= 700 || menuView != MenuView::Alarm) {
+    menuView = MenuView::Alarm;
+    lastAlarmFrame = millis();
+    alarmWhite = !alarmWhite;
+    const uint16_t bg = alarmWhite ? ST77XX_WHITE : ST77XX_BLACK;
+    const uint16_t fg = alarmWhite ? ST77XX_BLACK : ST77XX_WHITE;
+    tft.fillScreen(bg);
+    drawCentered("TIME UP", 52, 2, fg, bg);
+    drawCentered("Press any button", 97, 1, fg, bg);
+    drawCentered("to stop", 112, 1, fg, bg);
+  }
+  return true;
+}
+
+constexpr uint8_t MENU_ITEM_COUNT = 6;
+constexpr uint8_t nextMenuItem(uint8_t index, uint8_t count = MENU_ITEM_COUNT) {
+  return (index + 1) % count;
+}
+static_assert(nextMenuItem(5) == 0 && nextMenuItem(1, 2) == 0,
+              "Main and QR menu selections must wrap");
+
+bool isListMenu() {
+  return menuView == MenuView::List || menuView == MenuView::QrList ||
+         menuView == MenuView::ClockList || menuView == MenuView::TimerList;
+}
+
+uint8_t menuItemCount() {
+  return menuView == MenuView::QrList || menuView == MenuView::ClockList
+             ? 2 : MENU_ITEM_COUNT;
+}
+
+void drawQrCode() {
+  const bool bank = menuSelection == 0;
+  const uint8_t size = bank ? BANK_QR_SIZE : PROFILE_QR_SIZE;
+  const uint8_t *bits = bank ? BANK_QR_BITS : PROFILE_QR_BITS;
+  const uint8_t scale = 128 / (size + 8);
+  const int16_t side = (size + 8) * scale;
+  const int16_t x0 = (128 - side) / 2 + 4 * scale;
+  const int16_t y0 = 17 + (124 - side) / 2 + 4 * scale;
+  // Preserve a four-module white quiet zone at integer scale in both themes.
+  // No timed redraw while scanning; navigation keeps updating behind the menu.
+  tft.fillScreen(ST77XX_WHITE);
+  drawCentered(bank ? "BANK - TPBank" : "PROFILE", 3, 1,
+               ST77XX_BLACK, ST77XX_WHITE);
+  const uint8_t rowBytes = (size + 7) / 8;
+  tft.startWrite();
+  for (uint8_t y = 0; y < size; ++y) {
+    for (uint8_t x = 0; x < size; ++x) {
+      if (pgm_read_byte(bits + y * rowBytes + x / 8) & (0x80 >> (x % 8)))
+        tft.writeFillRect(x0 + x * scale, y0 + y * scale, scale, scale,
+                          ST77XX_BLACK);
+    }
+  }
+  tft.endWrite();
+  if (bank) drawCentered("70333655343", 137, 1, ST77XX_BLACK, ST77XX_WHITE);
+  drawCentered("1 NEXT 3 BACK", 149, 1, ST77XX_BLACK, ST77XX_WHITE);
+  Serial.printf("MENU: QR %s modules=%u scale=%u\n",
+                bank ? "Bank" : "Profile", size, scale);
+}
+
+static_assert((BANK_QR_SIZE + 8) * (128 / (BANK_QR_SIZE + 8)) <= 124 &&
+                  128 / (BANK_QR_SIZE + 8) >= 2 &&
+                  (PROFILE_QR_SIZE + 8) * (128 / (PROFILE_QR_SIZE + 8)) <= 124 &&
+                  128 / (PROFILE_QR_SIZE + 8) >= 2,
+              "QR codes must fit with quiet zones and at least 2px modules");
 
 void drawMenuRow(uint8_t index) {
-  const int16_t y = 36 + index * 26;
+  const int16_t y = 32 + index * 18;
   const bool selected = index == menuSelection;
   const uint16_t background = selected ? COLOR_ACCENT : COLOR_PANEL;
   const uint16_t foreground = selected ? COLOR_BACKGROUND : COLOR_TEXT;
-  tft.fillRect(4, y, 120, 23, background);
-  const String label = index == 0 ? "WiFi"
+  tft.fillRect(4, y, 120, 17, background);
+  const char *timerLabels[] = {"5 min", "15 min", "30 min", "60 min", "At time", "View timer"};
+  const String label = menuView == MenuView::QrList ? (index == 0 ? "Bank" : "Profile")
+                       : menuView == MenuView::ClockList ? (index == 0 ? "Stopwatch" : "Timer")
+                       : menuView == MenuView::TimerList ? timerLabels[index]
+                       : index == 0 ? "WiFi"
                        : index == 1 ? "Bluetooth"
                        : index == 2 ? (lightTheme ? "Theme: Light" : "Theme: Dark")
-                                    : "ESP32 Info";
-  drawText(label, 9, y + 7, 1, foreground, background);
-  if ((index == 0 && activeMode == "wifi") ||
-      (index == 1 && activeMode == "bluetooth")) {
-    drawText("ON", 105, y + 7, 1, selected ? foreground : COLOR_OK,
+                       : index == 3 ? "ESP32 Info" : index == 4 ? "QR" : "Clock";
+  drawText(label, 9, y + 5, 1, foreground, background);
+  if (menuView == MenuView::List &&
+      ((index == 0 && activeMode == "wifi") ||
+       (index == 1 && activeMode == "bluetooth"))) {
+    drawText("ON", 105, y + 5, 1, selected ? foreground : COLOR_OK,
              background);
   }
 }
 
 void drawMenu() {
   tft.fillScreen(COLOR_BACKGROUND);
-  drawCentered("MENU", 5, 2, COLOR_ACCENT);
+  drawCentered(menuView == MenuView::QrList ? "QR"
+               : menuView == MenuView::ClockList ? "CLOCK"
+               : menuView == MenuView::TimerList ? "TIMER" : "MENU", 5, 2, COLOR_ACCENT);
   tft.drawFastHLine(4, 29, 120, COLOR_PANEL);
-  for (uint8_t index = 0; index < MENU_ITEM_COUNT; ++index) {
+  const uint8_t count = menuItemCount();
+  for (uint8_t index = 0; index < count; ++index) {
     drawMenuRow(index);
   }
   tft.drawFastHLine(4, 142, 120, COLOR_PANEL);
@@ -592,6 +802,37 @@ void closeMenu() {
 }
 
 void selectMenuItem() {
+  menuLastInput = millis();
+  if (menuView == MenuView::ClockList) {
+    if (menuSelection == 0) {
+      menuView = MenuView::Stopwatch;
+      drawClockTool(true);
+    } else {
+      menuView = MenuView::TimerList;
+      menuSelection = 0;
+      drawMenu();
+    }
+    return;
+  }
+  if (menuView == MenuView::TimerList) {
+    if (menuSelection < 4) {
+      const uint8_t minutes[] = {5, 15, 30, 60};
+      startClockTimer(static_cast<uint64_t>(minutes[menuSelection]) * 60000,
+                       String(minutes[menuSelection]) + " min");
+    } else if (menuSelection == 4) {
+      openTimerEditor();
+    } else {
+      menuView = MenuView::TimerActive;
+      drawClockTool(true);
+    }
+    return;
+  }
+  if (menuView == MenuView::QrList) {
+    menuView = MenuView::QrCode;
+    menuLastInput = millis();
+    drawQrCode();
+    return;
+  }
   if (menuView != MenuView::List) return;
   menuLastInput = millis();
   if (menuSelection == 0) {
@@ -611,10 +852,19 @@ void selectMenuItem() {
     preferences.putBool("lightTheme", lightTheme);
     drawMenu();
     Serial.printf("MENU: theme=%s\n", lightTheme ? "light" : "dark");
-  } else {
+  } else if (menuSelection == 3) {
     menuView = MenuView::Info;
     drawConnectionDetails();
     Serial.println("MENU: device info");
+  } else if (menuSelection == 4) {
+    menuView = MenuView::QrList;
+    menuSelection = 0;
+    drawMenu();
+    Serial.println("MENU: QR list");
+  } else {
+    menuView = MenuView::ClockList;
+    menuSelection = 0;
+    drawMenu();
   }
 }
 
@@ -640,6 +890,18 @@ void handleButtons() {
   const bool bluetoothChanged = updateButton(bluetoothButton);
   const bool menuChanged = updateButton(menuButton);
 
+  if (clockTimers.ringing) {
+    if ((wifiChanged && !wifiButton.stablePressed) ||
+        (bluetoothChanged && !bluetoothButton.stablePressed) ||
+        (menuChanged && !menuButton.stablePressed)) {
+      clockTimers.cancelTimer();
+      lastBadgeKey = "";
+      restoreMainScreen();
+      Serial.println("CLOCK: alarm dismissed; theme restored");
+    }
+    return;
+  }
+
   if (menuChanged && !menuButton.stablePressed) {
     menuLastInput = millis();
     if (menuView == MenuView::Closed) {
@@ -647,18 +909,59 @@ void handleButtons() {
     } else if (menuView == MenuView::Info) {
       menuView = MenuView::List;
       drawMenu();
+    } else if (menuView == MenuView::QrCode) {
+      menuView = MenuView::QrList;
+      drawMenu();
+    } else if (menuView == MenuView::QrList) {
+      menuView = MenuView::List;
+      menuSelection = 4;
+      drawMenu();
+    } else if (menuView == MenuView::ClockList) {
+      menuView = MenuView::List;
+      menuSelection = 5;
+      drawMenu();
+    } else if (menuView == MenuView::TimerList) {
+      menuView = MenuView::ClockList;
+      menuSelection = 1;
+      drawMenu();
+    } else if (menuView == MenuView::TimerEdit) {
+      menuView = MenuView::TimerList;
+      menuSelection = 4;
+      drawMenu();
     } else {
       closeMenu();
     }
   }
   if (wifiChanged && !wifiButton.stablePressed) {
-    if (menuView == MenuView::List) {
+    if (isListMenu()) {
       const uint8_t previous = menuSelection;
-      menuSelection = nextMenuItem(menuSelection);
+      menuSelection = nextMenuItem(menuSelection, menuItemCount());
       menuLastInput = millis();
       drawMenuRow(previous);
       drawMenuRow(menuSelection);
       Serial.printf("MENU: selected %u\n", menuSelection);
+    } else if (menuView == MenuView::Stopwatch) {
+      clockTimers.resetStopwatch();
+      lastBadgeKey = "";
+      drawClockTool(true);
+      Serial.println("CLOCK: stopwatch reset");
+    } else if (menuView == MenuView::TimerActive) {
+      clockTimers.cancelTimer();
+      lastBadgeKey = "";
+      menuView = MenuView::TimerList;
+      menuSelection = 0;
+      menuLastInput = millis();
+      drawMenu();
+      Serial.println("CLOCK: timer cancelled");
+    } else if (menuView == MenuView::TimerEdit && timerEditorReady) {
+      if (timerEditField == 0) timerHour = (timerHour + 1) % 24;
+      else if (timerEditField == 1) timerMinute = (timerMinute + 1) % 60;
+      else timerEditField = 0;
+      drawTimerEditor();
+    } else if (menuView == MenuView::QrCode) {
+      menuSelection = nextMenuItem(menuSelection, 2);
+      menuLastInput = millis();
+      drawQrCode();
     } else if (menuView == MenuView::Closed) {
       if (activeMode == "wifi" && wifiSsid == DEFAULT_WIFI_SSID &&
           WiFi.status() == WL_CONNECTED) {
@@ -670,8 +973,36 @@ void handleButtons() {
     }
   }
   if (bluetoothChanged && !bluetoothButton.stablePressed) {
-    if (menuView == MenuView::List) {
+    if (isListMenu()) {
       selectMenuItem();
+    } else if (menuView == MenuView::Stopwatch) {
+      clockTimers.toggleStopwatch(monotonicMs());
+      lastBadgeKey = "";
+      drawClockTool(true);
+      Serial.printf("CLOCK: stopwatch %s\n", clockTimers.stopwatchRunning ? "running" : "paused");
+    } else if (menuView == MenuView::TimerActive) {
+      closeMenu();
+    } else if (menuView == MenuView::TimerEdit) {
+      if (!timerEditorReady) openTimerEditor();
+      else if (timerEditField < 2) {
+        ++timerEditField;
+        drawTimerEditor();
+      } else if (!clockValid()) {
+        timerEditorReady = false;
+        drawTimerEditor();
+      } else {
+        time_t current = time(nullptr);
+        tm local{};
+        localtime_r(&current, &local);
+        const uint32_t duration = ClockTimers::secondsUntil(
+            local.tm_hour, local.tm_min, local.tm_sec, timerHour, timerMinute);
+        char target[20];
+        snprintf(target, sizeof(target), "%s %02u:%02u",
+                 duration >= static_cast<uint32_t>(86400 - local.tm_hour * 3600 -
+                        local.tm_min * 60 - local.tm_sec) ? "Tomorrow" : "Until",
+                 timerHour, timerMinute);
+        startClockTimer(static_cast<uint64_t>(duration) * 1000, String(target));
+      }
     } else if (menuView == MenuView::Closed) {
       Serial.println("BUTTON G39: quick fresh Bluetooth link");
       switchToBluetooth();
@@ -720,17 +1051,16 @@ void runColorTest() {
 }
 
 void drawPopup() {
-  // Keep the top third readable while riding; notifications occupy only the
-  // lower two thirds of the screen.
-  tft.fillRect(2, 58, 124, 100, COLOR_PANEL);
+  // Keep the compact clock visible above all notification content.
+  tft.fillRect(2, CLOCK_HEIGHT + 2, 124, 158 - CLOCK_HEIGHT, COLOR_PANEL);
   const String header = popupKind == "task"
                             ? "TASK"
                             : popupKind == "navigation" ? "NAVIGATION"
                             : popupKind == "connection" ? "CONNECTION"
                                                           : "NOTIFICATION";
-  drawText(header, 7, 64, 1, COLOR_ACCENT, COLOR_PANEL);
-  drawWrapped(popupTitle, 80, COLOR_TEXT, COLOR_PANEL, 2);
-  drawWrapped(popupBody, 112, COLOR_WAIT, COLOR_PANEL);
+  drawText(header, 7, 47, 1, COLOR_ACCENT, COLOR_PANEL);
+  drawWrapped(popupTitle, 63, COLOR_TEXT, COLOR_PANEL, 2);
+  drawWrapped(popupBody, 95, COLOR_WAIT, COLOR_PANEL, 5);
 }
 
 String formatNavigationDistance(int distanceMeters) {
@@ -748,13 +1078,23 @@ String formatNavigationDistance(int distanceMeters) {
 }
 
 void drawNavigationDistance(int distanceMeters) {
-  tft.fillRect(2, 58, 124, 23, COLOR_PANEL);
-  drawCentered(formatNavigationDistance(distanceMeters), 61, 2, COLOR_WAIT,
-               COLOR_PANEL);
+  tft.fillRect(62, 42, 64, 35, COLOR_PANEL);
+  const String distance = formatNavigationDistance(distanceMeters);
+  const int split = distance.indexOf(' ');
+  const String number = distance.substring(0, split);
+  // Five digits fit this half-width region; very long distances stay legible.
+  const uint8_t size = number.length() <= 5 ? 2 : 1;
+  drawText(number, 62 + (64 - number.length() * 6 * size) / 2, 47, size,
+           COLOR_WAIT, COLOR_PANEL);
+  drawText(distance.substring(split + 1), 88, 67, 1, COLOR_WAIT, COLOR_PANEL);
 }
 
 bool isTurnManeuver(const String &maneuver) {
-  return maneuver == "left" || maneuver == "right" || maneuver == "u_turn" ||
+  return maneuver == "left" || maneuver == "right" ||
+         maneuver == "slight_left" || maneuver == "slight_right" ||
+         maneuver == "sharp_left" || maneuver == "sharp_right" ||
+         maneuver == "keep_left" || maneuver == "keep_right" ||
+         maneuver == "u_turn" || maneuver == "u_turn_right" ||
          maneuver == "roundabout" || maneuver == "roundabout_left";
 }
 
@@ -766,65 +1106,116 @@ bool blinkTurnArrow(const String &maneuver, int distanceMeters) {
   return isTurnManeuver(maneuver) && blinkTurnAt(distanceMeters);
 }
 
+void drawThickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                   int16_t width, uint16_t color) {
+  const float dx = x1 - x0;
+  const float dy = y1 - y0;
+  const float length = sqrtf(dx * dx + dy * dy);
+  if (length == 0) return;
+  const int16_t ox = lroundf(-dy * width / (2 * length));
+  const int16_t oy = lroundf(dx * width / (2 * length));
+  tft.fillTriangle(x0 + ox, y0 + oy, x0 - ox, y0 - oy,
+                   x1 + ox, y1 + oy, color);
+  tft.fillTriangle(x1 + ox, y1 + oy, x0 - ox, y0 - oy,
+                   x1 - ox, y1 - oy, color);
+  tft.fillCircle(x0, y0, width / 2, color);
+  tft.fillCircle(x1, y1, width / 2, color);
+}
+
 void drawNavigationArrow(const String &maneuver, int distanceMeters,
                          bool visible, int exitNumber = 0,
                          int turnAngle = 999) {
   // The arrow is the only region touched by the 500 ms blink.
-  tft.fillRect(2, 82, 58, 66, COLOR_PANEL);
+  tft.fillRect(2, 42, 58, 66, COLOR_PANEL);
   if (!visible) return;
-  if (showTurnArrow(maneuver, distanceMeters) &&
+  if (maneuver == "off_route") {
+    // OsmAnd OFFR: an interrupted forward arrow, never a turn.
+    tft.fillRect(26, 88, 8, 15, COLOR_TEXT);
+    tft.fillRect(26, 69, 8, 12, COLOR_TEXT);
+    tft.fillTriangle(30, 46, 16, 70, 44, 70, COLOR_TEXT);
+  } else if (showTurnArrow(maneuver, distanceMeters) &&
+             (maneuver == "slight_left" || maneuver == "slight_right" ||
+              maneuver == "sharp_left" || maneuver == "sharp_right" ||
+              maneuver == "keep_left" || maneuver == "keep_right")) {
+    const bool right = maneuver.endsWith("right");
+    const bool keep = maneuver.startsWith("keep");
+    const bool sharp = maneuver.startsWith("sharp");
+    const int16_t startX = right ? 22 : 38;
+    const int16_t bendX = right ? 42 : 18;
+    drawThickLine(startX, 101, startX, 78, 8, COLOR_TEXT);
+    drawThickLine(startX, 78, bendX, 62, 8, COLOR_TEXT);
+    if (keep) {
+      drawThickLine(bendX, 62, bendX, 55, 8, COLOR_TEXT);
+      tft.fillTriangle(bendX, 45, bendX - 12, 62, bendX + 12, 62,
+                       COLOR_TEXT);
+    } else if (sharp) {
+      // Sharp turn folds back after the approach, unlike a slight turn.
+      const int16_t tipX = right ? 51 : 9;
+      drawThickLine(bendX, 62, tipX, 77, 8, COLOR_TEXT);
+      if (right) tft.fillTriangle(55, 89, 39, 77, 54, 68, COLOR_TEXT);
+      else tft.fillTriangle(5, 89, 21, 77, 6, 68, COLOR_TEXT);
+    } else {
+      if (right) tft.fillTriangle(53, 50, 34, 52, 48, 70, COLOR_TEXT);
+      else tft.fillTriangle(7, 50, 26, 52, 12, 70, COLOR_TEXT);
+    }
+  } else if (showTurnArrow(maneuver, distanceMeters) &&
       (maneuver == "left" || maneuver == "right")) {
     const bool right = maneuver == "right";
     // Approach from the bottom, follow a rounded 90-degree corner, then turn.
     const int16_t cornerX = right ? 22 : 38;
-    tft.fillCircle(cornerX, 110, 12, COLOR_TEXT);
-    tft.fillCircle(cornerX, 110, 4, COLOR_PANEL);
+    tft.fillCircle(cornerX, 70, 12, COLOR_TEXT);
+    tft.fillCircle(cornerX, 70, 4, COLOR_PANEL);
     if (right) {
-      tft.fillRect(22, 98, 13, 25, COLOR_PANEL);
-      tft.fillRect(10, 110, 25, 13, COLOR_PANEL);
-      tft.fillRect(10, 109, 9, 35, COLOR_TEXT);
-      tft.fillRect(22, 98, 20, 9, COLOR_TEXT);
-      tft.fillTriangle(56, 102, 39, 90, 39, 114, COLOR_TEXT);
+      tft.fillRect(22, 58, 13, 25, COLOR_PANEL);
+      tft.fillRect(10, 70, 25, 13, COLOR_PANEL);
+      tft.fillRect(10, 69, 9, 35, COLOR_TEXT);
+      tft.fillRect(22, 58, 20, 9, COLOR_TEXT);
+      tft.fillTriangle(56, 62, 39, 50, 39, 74, COLOR_TEXT);
     } else {
-      tft.fillRect(26, 98, 12, 25, COLOR_PANEL);
-      tft.fillRect(26, 110, 25, 13, COLOR_PANEL);
-      tft.fillRect(41, 109, 9, 35, COLOR_TEXT);
-      tft.fillRect(18, 98, 20, 9, COLOR_TEXT);
-      tft.fillTriangle(4, 102, 21, 90, 21, 114, COLOR_TEXT);
+      tft.fillRect(26, 58, 12, 25, COLOR_PANEL);
+      tft.fillRect(26, 70, 25, 13, COLOR_PANEL);
+      tft.fillRect(41, 69, 9, 35, COLOR_TEXT);
+      tft.fillRect(18, 58, 20, 9, COLOR_TEXT);
+      tft.fillTriangle(4, 62, 21, 50, 21, 74, COLOR_TEXT);
     }
   } else if (showTurnArrow(maneuver, distanceMeters) &&
-             maneuver == "u_turn") {
-    // Enter on the right, turn back, and point down the left return lane.
-    tft.fillCircle(29, 111, 18, COLOR_TEXT);
-    tft.fillCircle(29, 111, 11, COLOR_PANEL);
-    tft.fillRect(9, 111, 41, 24, COLOR_PANEL);
-    tft.fillRoundRect(9, 106, 8, 27, 4, COLOR_TEXT);
-    tft.fillRoundRect(41, 106, 8, 38, 4, COLOR_TEXT);
-    tft.fillTriangle(13, 146, 4, 131, 25, 131, COLOR_TEXT);
+             (maneuver == "u_turn" || maneuver == "u_turn_right")) {
+    // Mirror the return lane for OsmAnd's TU and TRU types.
+    const bool right = maneuver == "u_turn_right";
+    tft.fillCircle(29, 71, 18, COLOR_TEXT);
+    tft.fillCircle(29, 71, 11, COLOR_PANEL);
+    tft.fillRect(9, 71, 41, 24, COLOR_PANEL);
+    tft.fillRoundRect(right ? 41 : 9, 66, 8, 27, 4, COLOR_TEXT);
+    tft.fillRoundRect(right ? 9 : 41, 66, 8, 38, 4, COLOR_TEXT);
+    if (right) tft.fillTriangle(45, 106, 33, 91, 54, 91, COLOR_TEXT);
+    else tft.fillTriangle(13, 106, 4, 91, 25, 91, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "roundabout" || maneuver == "roundabout_left")) {
     // OsmAnd's turn path: enter from below, travel around the ring, then exit
-    // radially at the route angle. A notification without angle is only a
-    // generic roundabout cue; never invent an exit direction from its ordinal.
+    // radially at the route angle. Its TurnType defaults to angle 0 when the
+    // snapshot has no angle; keep the same path style for both input sources.
     constexpr int16_t centerX = 30;
-    constexpr int16_t centerY = 111;
+    constexpr int16_t centerY = 71;
     constexpr int16_t outerRadius = 19;
     constexpr int16_t innerRadius = 12;
     const bool clockwise = maneuver == "roundabout_left";
     tft.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 18, 3,
                       COLOR_TEXT);
-    if (turnAngle >= -180 && turnAngle <= 180) {
+    {
+      const int angle = turnAngle >= -180 && turnAngle <= 180 ? turnAngle : 0;
       const uint16_t ringOutline = lightTheme ? 0xAD55 : 0x630C;
       tft.drawCircle(centerX, centerY, outerRadius, ringOutline);
       tft.drawCircle(centerX, centerY, innerRadius, ringOutline);
       // OsmAnd uses t + 180 for left-hand circulation and t - 180 for
       // right-hand circulation. Clamp near the entry so the exit stays legible.
-      const int sweep = roundaboutSweepDegrees(turnAngle, exitNumber,
+      const int sweep = roundaboutSweepDegrees(angle, exitNumber,
                                                clockwise);
       // OsmAnd draws the exits passed before the chosen one as outline steps.
-      if (exitNumber > 1 && exitNumber <= 5) {
-        for (int ordinal = 1; ordinal < exitNumber; ++ordinal) {
-          const float theta = (sweep * ordinal / exitNumber) * DEG_TO_RAD;
+      if (exitNumber > 1) {
+        // Keep at most five passed-exit ticks readable on the small TFT.
+        const int steps = min(exitNumber, 6);
+        for (int ordinal = 1; ordinal < steps; ++ordinal) {
+          const float theta = (sweep * ordinal / steps) * DEG_TO_RAD;
           const float ux = -sinf(theta);
           const float uy = cosf(theta);
           for (int16_t r = outerRadius; r <= 26; r += 2) {
@@ -873,15 +1264,6 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
                        lroundf(centerY + uy * 21 + ux * 8),
                        lroundf(centerX + ux * 21 + uy * 8),
                        lroundf(centerY + uy * 21 - ux * 8), COLOR_TEXT);
-    } else {
-      // AIDL fallback/notification may have no route angle.
-      tft.fillCircle(centerX, centerY, outerRadius + 1, COLOR_TEXT);
-      tft.fillCircle(centerX, centerY, innerRadius, COLOR_PANEL);
-      if (clockwise) {
-        tft.fillTriangle(53, 92, 34, 84, 34, 100, COLOR_ACCENT);
-      } else {
-        tft.fillTriangle(7, 92, 26, 84, 26, 100, COLOR_ACCENT);
-      }
     }
     if (exitNumber > 0) {
       const String label = String(exitNumber);
@@ -892,39 +1274,77 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
                scale, COLOR_ACCENT, COLOR_PANEL);
     }
   } else if (maneuver == "arrive") {
-    tft.fillCircle(29, 113, 20, COLOR_TEXT);
-    tft.fillCircle(29, 113, 12, COLOR_PANEL);
-    tft.fillCircle(29, 113, 5, COLOR_OK);
+    tft.fillCircle(29, 73, 20, COLOR_TEXT);
+    tft.fillCircle(29, 73, 12, COLOR_PANEL);
+    tft.fillCircle(29, 73, 5, COLOR_OK);
   } else {
-    tft.fillRect(25, 102, 9, 40, COLOR_TEXT);
-    tft.fillTriangle(29, 84, 12, 106, 46, 106, COLOR_TEXT);
+    tft.fillRect(25, 62, 9, 40, COLOR_TEXT);
+    tft.fillTriangle(29, 44, 12, 66, 46, 66, COLOR_TEXT);
+  }
+}
+
+void drawNavigationStreet(const String &street, bool resetPage) {
+  String remaining = toDisplayAscii(street);
+  remaining.trim();
+  if (remaining.isEmpty()) remaining = "--";
+  String lines[8];
+  uint8_t count = 0;
+  while (!remaining.isEmpty() && count < 8) {
+    int split = remaining.length() <= 10 ? remaining.length()
+                                         : remaining.lastIndexOf(' ', 10);
+    if (split <= 0) split = min<int>(10, remaining.length());
+    lines[count++] = remaining.substring(0, split);
+    remaining = remaining.substring(split);
+    remaining.trim();
+  }
+  roadPageCount = (count + 1) / 2;
+  if (resetPage || roadPage >= roadPageCount) roadPage = 0;
+  lastRoadPageAt = millis();
+  tft.fillRect(2, 108, 124, 34, COLOR_PANEL);
+  for (uint8_t row = 0; row < 2; ++row) {
+    const uint8_t index = roadPage * 2 + row;
+    if (index < count)
+      drawCentered(lines[index], 109 + row * 16, 2, COLOR_TEXT, COLOR_PANEL);
+  }
+  tft.fillRect(2, 151, 25, 7, COLOR_PANEL);
+  if (roadPageCount > 1) {
+    for (uint8_t page = 0; page < roadPageCount; ++page)
+      tft.drawFastHLine(4 + page * 5, 155, 3,
+                       page == roadPage ? COLOR_TEXT : COLOR_WAIT);
   }
 }
 
 void drawNavigation(const String &maneuver, int distanceMeters,
                     const String &street, int exitNumber, int turnAngle) {
-  tft.fillRect(2, 58, 124, 100, COLOR_PANEL);
+  if (clockTimers.ringing) return;
+  tft.fillRect(2, CLOCK_HEIGHT + 2, 124, 158 - CLOCK_HEIGHT, COLOR_PANEL);
   navigationArrowVisible = true;
   lastNavigationBlink = millis();
   drawNavigationArrow(maneuver, distanceMeters, true, exitNumber, turnAngle);
-  String road = clippedText(toDisplayAscii(street), 40);
-  road.trim();
-  drawText(maneuver == "left" || maneuver == "right" ? "ONTO" : "ROAD",
-           61, 87, 1, COLOR_WAIT, COLOR_PANEL);
-  if (road.isEmpty()) drawText("--", 61, 102, 1, COLOR_WAIT, COLOR_PANEL);
-  for (uint8_t line = 0; line < 4 && !road.isEmpty(); ++line) {
-    int split = road.length() > 10 ? road.lastIndexOf(' ', 10) : road.length();
-    if (split <= 0) split = min<int>(10, road.length());
-    drawText(road.substring(0, split), 61, 101 + line * 12, 1,
-             COLOR_ACCENT, COLOR_PANEL);
-    road = road.substring(split);
-    road.trim();
-  }
-
+  const bool roundabout = maneuver == "roundabout" || maneuver == "roundabout_left";
+  drawText(roundabout && exitNumber > 0 ? "EXIT " + String(exitNumber)
+                                      : maneuver == "left" ? "LEFT"
+                                      : maneuver == "slight_left" ? "SL LEFT"
+                                      : maneuver == "sharp_left" ? "SH LEFT"
+                                      : maneuver == "keep_left" ? "KEEP L"
+                                      : maneuver == "right" ? "RIGHT"
+                                      : maneuver == "slight_right" ? "SL RIGHT"
+                                      : maneuver == "sharp_right" ? "SH RIGHT"
+                                      : maneuver == "keep_right" ? "KEEP R"
+                                      : maneuver == "u_turn" ? "U-TURN"
+                                      : maneuver == "u_turn_right" ? "U-TURN R"
+                                      : maneuver == "off_route" ? "OFF ROUTE"
+                                      : maneuver == "arrive" ? "ARRIVE" : "AHEAD",
+           65, 84, 1, COLOR_TEXT, COLOR_PANEL);
+  drawText("ONTO", 65, 98, 1, COLOR_WAIT, COLOR_PANEL);
+  drawNavigationStreet(street, true);
   drawNavigationDistance(distanceMeters);
+  navigationOnScreen = true;
+  drawClockBadge(true);
 }
 
 void showPopup(const String &kind, const String &title, const String &body) {
+  if (clockTimers.ringing) return;
   if (detailsUntil != 0 || menuView != MenuView::Closed) restoreMainScreen();
   navigationOnScreen = false;
   popupKind = kind;
@@ -1046,6 +1466,10 @@ bool processCommand(const String &payload) {
     const String maneuver = document["maneuver"] | "straight";
     if (maneuver != "left" && maneuver != "right" &&
         maneuver != "straight" && maneuver != "u_turn" &&
+        maneuver != "slight_left" && maneuver != "slight_right" &&
+        maneuver != "sharp_left" && maneuver != "sharp_right" &&
+        maneuver != "keep_left" && maneuver != "keep_right" &&
+        maneuver != "u_turn_right" && maneuver != "off_route" &&
         maneuver != "arrive" && maneuver != "roundabout" &&
         maneuver != "roundabout_left") {
       sendBleStatus("error:maneuver");
@@ -1491,7 +1915,18 @@ void loop() {
   applyPendingModeSwitch();
   handleConnectionState();
 
-  if (menuView != MenuView::Closed &&
+  if (updateClockTools()) {
+    delay(10);
+    return;
+  }
+  if (millis() - lastClockToolsDraw >= 250) {
+    lastClockToolsDraw = millis();
+    if (menuView == MenuView::Stopwatch || menuView == MenuView::TimerActive)
+      drawClockTool();
+    drawClockBadge();
+  }
+
+  if ((isListMenu() || menuView == MenuView::Info) &&
       millis() - menuLastInput >= MENU_TIMEOUT_MS) {
     Serial.println("MENU: timeout");
     closeMenu();
@@ -1525,6 +1960,12 @@ void loop() {
     } else {
       renderClock();
     }
+  }
+  if (menuView == MenuView::Closed && navigationOnScreen &&
+      detailsUntil == 0 && popupUntil == 0 && roadPageCount > 1 &&
+      millis() - lastRoadPageAt >= ROAD_PAGE_INTERVAL_MS) {
+    roadPage = (roadPage + 1) % roadPageCount;
+    drawNavigationStreet(navigationStreet, false);
   }
   if (menuView == MenuView::Closed && navigationOnScreen &&
       detailsUntil == 0 && popupUntil == 0 &&

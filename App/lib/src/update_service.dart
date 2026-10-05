@@ -210,6 +210,19 @@ class AppUpdateService {
     final directory = await Directory(
       '$cachePath/esp32-navride-updates',
     ).create(recursive: true);
+    final target = File('${directory.path}/update-${info.versionCode}.apk');
+    // Reuse only a verified file, including after returning from install permission settings.
+    if (await target.exists() &&
+        await target.length() == info.sizeBytes &&
+        (await sha256.bind(target.openRead()).first).toString() ==
+            info.sha256Digest &&
+        listEquals(
+          await target.openRead(0, 4).expand((v) => v).toList(),
+          const [0x50, 0x4b, 0x03, 0x04],
+        )) {
+      onProgress?.call(1);
+      return target.path;
+    }
     final partial = File(
       '${directory.path}/update-${info.versionCode}.apk.part',
     );
@@ -257,7 +270,6 @@ class AppUpdateService {
       if (!listEquals(signature, const [0x50, 0x4b, 0x03, 0x04])) {
         throw const FormatException('The downloaded file is not a valid APK.');
       }
-      final target = File('${directory.path}/update-${info.versionCode}.apk');
       if (await target.exists()) await target.delete();
       await partial.rename(target.path);
       return target.path;

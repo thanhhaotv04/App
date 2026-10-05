@@ -33,9 +33,29 @@ Không ghép khoảng cách mới với tên đường cũ, không lấy `curren
 sắp rẽ. Nếu API không có dữ liệu mới, app dùng thông báo dẫn đường làm dự phòng.
 Firmware vẽ biểu tượng vòng xuyến và quay đầu dạng tuyến đường liền nét, tương
 phản cao trên TFT. Số lối ra được hiện ở giữa vòng xuyến khi OsmAnd cung cấp
-ordinal. App không tự đoán hướng/nhánh ra nếu nguồn không gửi đủ dữ liệu.
-Phần thử dẫn đường hỗ trợ rẽ
-trái, đi thẳng, rẽ phải và quay đầu ở khoảng cách mẫu 250 m.
+ordinal. App ưu tiên góc ra thật từ snapshot OsmAnd AIDL; khi snapshot còn
+hoạt động, thông báo không thay thế hình vòng xuyến bằng dữ liệu thiếu góc.
+Nếu chỉ có thông báo, firmware vẫn dùng cùng kiểu hình nhưng góc mặc định 0
+chưa thể diễn tả chính xác nhánh ra. Số lối ra vẫn lấy từ OsmAnd.
+Phần thử dẫn đường hỗ trợ các loại hướng bên dưới và vòng xuyến lối ra 1–6
+ở khoảng cách mẫu 250 m. Góc trong các mẫu chỉ để thử hình vẽ;
+tuyến thật luôn dùng góc OsmAnd cung cấp, không cố định góc theo số lối ra.
+
+Các mã hướng rẽ chính lấy từ [TurnType](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd-java/src/main/java/net/osmand/router/TurnType.java);
+hình trên TFT được giản lược để vừa 58×66 px, đối chiếu với
+[TurnPathHelper](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd/src/net/osmand/plus/views/TurnPathHelper.java):
+
+| OsmAnd | Hướng trên TFT |
+| --- | --- |
+| C | Straight |
+| TL / TSLL / TSHL / KL | Left / Slight left / Sharp left / Keep left |
+| TR / TSLR / TSHR / KR | Right / Slight right / Sharp right / Keep right |
+| TU / TRU | U-turn trái / U-turn phải |
+| OFFR | Off route |
+| RNDB / RNLB | Vòng xuyến ngược chiều / thuận chiều kim đồng hồ; hiện số lối ra |
+
+OsmAnd còn có biểu tượng chỉ dẫn làn đường và điểm trên bản đồ; chúng không
+thuộc 14 mã `TurnType` chính và API hiện tại không chuyển hình làn đường qua BLE.
 
 Để dùng OsmAnd: chuyển ESP32 sang Bluetooth, chọn `ESP32-NavRide`, rồi bật
 quyền truy cập thông báo khi app yêu cầu. Nếu quyền đã được cấp từ trước, app
@@ -67,9 +87,16 @@ một lượt rẽ đã hết hiệu lực.
    kiểm tra riêng đường truyền BLE. Nếu mẫu có tên đường nhưng tuyến thật
    hiện `--`, dữ liệu điểm rẽ của OsmAnd chưa có tên đường. App không tự điền
    tên đường cũ. TTS là tùy chọn lời nói, không bắt buộc cho tên đường từ API.
-4. Nếu hiện `Restore notification access`, mở cài đặt quyền từ nút này,
-   tắt rồi bật lại quyền thông báo của riêng ESP32-NavRide và quay lại app.
-   Tình huống này có thể xảy ra sau khi Android dừng ứng dụng.
+4. Nếu quyền đã cấp nhưng dịch vụ chưa chạy, app tự thử nối lại rồi khởi động
+   lại riêng component dịch vụ. Có thể bấm `Retry connection` để thử lại;
+   không cần tắt/bật quyền mỗi lần vào app. Quyền được kiểm tra theo đúng
+   component hiện tại, không nhầm quyền còn lưu của tên component cũ.
+   Nếu Android vẫn chặn, kiểm tra quyền thông báo và cho phép app chạy nền
+   trong cài đặt pin của điện thoại.
+
+Khi cài bằng USB vào hồ sơ cá nhân, dùng
+`adb install --user 0 -r build/app/outputs/flutter-apk/app-release.apk`.
+Không dùng lệnh cài cho mọi user trên điện thoại có hồ sơ công việc.
 
 Tài liệu OsmAnd: [Voice Prompts / Notifications](https://osmand.net/docs/user/navigation/guidance/voice-navigation/)
 và [Navigation Settings](https://osmand.net/docs/user/navigation/guidance/navigation-settings/).

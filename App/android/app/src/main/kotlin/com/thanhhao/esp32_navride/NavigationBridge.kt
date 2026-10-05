@@ -106,10 +106,17 @@ internal object NavigationBleSender {
         val roundaboutSample = when (maneuver) {
             "roundabout_1" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 1, 110)
             "roundabout_2", "roundabout" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 2, 0)
-            "roundabout_3" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 3, -110)
+            "roundabout_3" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 3, -80)
+            "roundabout_4" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 4, -100)
+            "roundabout_5" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 5, -115)
+            "roundabout_6" -> OsmAndNavigation("roundabout", distanceMeters, streetName, 6, -125)
             else -> null
         }
-        if (roundaboutSample == null && maneuver !in setOf("left", "right", "straight", "u_turn")) return false
+        if (roundaboutSample == null && maneuver !in setOf(
+                "left", "slight_left", "sharp_left", "keep_left",
+                "right", "slight_right", "sharp_right", "keep_right",
+                "straight", "u_turn", "u_turn_right", "off_route",
+            )) return false
         if (distanceMeters !in 0..999_999) return false
         return sendNavigation(
             context,
@@ -288,25 +295,59 @@ internal object NavigationBleSender {
         characteristic: BluetoothGattCharacteristic,
     ): Boolean {
         val payload = pendingPayload ?: return false
-        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            bluetoothGatt.writeCharacteristic(
-                characteristic,
-                payload,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-            ) == BluetoothStatusCodes.SUCCESS
-        } else {
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            characteristic.value = payload
-            bluetoothGatt.writeCharacteristic(characteristic)
-        }
+        val started = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                bluetoothGatt.writeCharacteristic(
+                    characteristic,
+                    payload,
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+                ) == BluetoothStatusCodes.SUCCESS
+            } else {
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                characteristic.value = payload
+                bluetoothGatt.writeCharacteristic(characteristic)
+            }
+        }.getOrDefault(false)
         if (started) {
             pendingPayload = null
             inFlightPayload = payload
             inFlightIsNavigation = pendingIsNavigation
             writing = true
+            reconnectHandler.postDelayed({
+                synchronized(NavigationBleSender) {
+                    if (gatt === bluetoothGatt && writing && inFlightPayload === payload) {
+                        Log.w("NavRide", "BLE write callback timed out; reconnecting")
+                        recoverGattWrite(bluetoothGatt)
+                    }
+                }
+            }, 5_000)
             return true
         }
-        return false
+        // No callback follows a rejected write. Reconnect explicitly, keeping
+        // the queued command; otherwise it blocks every later command forever.
+        recoverGattWrite(bluetoothGatt)
+        return true
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun recoverGattWrite(bluetoothGatt: BluetoothGatt) {
+        if (gatt !== bluetoothGatt) return
+        if (inFlightPayload != null && pendingPayload == null) {
+            pendingPayload = inFlightPayload
+            pendingIsNavigation = inFlightIsNavigation
+        }
+        inFlightPayload = null
+        commandCharacteristic = null
+        writing = false
+        servicesRequested = false
+        channelReady = false
+        negotiatedMtu = 23
+        connected = false
+        acknowledgedRequestId = 0
+        gatt = null
+        runCatching { bluetoothGatt.disconnect() }
+        runCatching { bluetoothGatt.close() }
+        scheduleReconnect()
     }
 
     @SuppressLint("MissingPermission")
@@ -478,12 +519,7 @@ internal object NavigationBleSender {
                     inFlightPayload = null
                     commandCharacteristic?.let { writePending(bluetoothGatt, it) }
                 } else {
-                    if (inFlightPayload != null && pendingPayload == null) {
-                        pendingPayload = inFlightPayload
-                        pendingIsNavigation = inFlightIsNavigation
-                    }
-                    inFlightPayload = null
-                    bluetoothGatt.disconnect()
+                    recoverGattWrite(bluetoothGatt)
                 }
             }
         }
@@ -556,11 +592,19 @@ internal object OsmAndNotificationParser {
         val maneuver = when {
             Regex("\\btake (?:the )?\\d+(?:st|nd|rd|th)? exit\\b").containsMatchIn(text) ||
                 listOf("roundabout", "vòng xuyến", "vong xuyen").any(text::contains) -> "roundabout"
+            listOf("right u-turn", "right u turn", "u-turn right", "quay đầu phải").any(text::contains) -> "u_turn_right"
             listOf("quay đầu", "quay dau", "u-turn", "u turn", "make a u-turn").any(text::contains) -> "u_turn"
-            listOf("rẽ phải", "re phai", "chếch phải", "chech phai", "giữ bên phải", "giu ben phai", "turn right", "right turn", "keep right", "slight right", "bear right").any(text::contains) -> "right"
-            listOf("rẽ trái", "re trai", "chếch trái", "chech trai", "giữ bên trái", "giu ben trai", "turn left", "left turn", "keep left", "slight left", "bear left").any(text::contains) -> "left"
+            listOf("sharp right", "sharply right", "rẽ gắt phải").any(text::contains) -> "sharp_right"
+            listOf("sharp left", "sharply left", "rẽ gắt trái").any(text::contains) -> "sharp_left"
+            listOf("slight right", "slightly right", "bear right", "chếch phải", "chech phai").any(text::contains) -> "slight_right"
+            listOf("slight left", "slightly left", "bear left", "chếch trái", "chech trai").any(text::contains) -> "slight_left"
+            listOf("keep right", "giữ bên phải", "giu ben phai").any(text::contains) -> "keep_right"
+            listOf("keep left", "giữ bên trái", "giu ben trai").any(text::contains) -> "keep_left"
+            listOf("rẽ phải", "re phai", "turn right", "right turn").any(text::contains) -> "right"
+            listOf("rẽ trái", "re trai", "turn left", "left turn").any(text::contains) -> "left"
             listOf("đi thẳng", "di thang", "go straight", "continue straight", "continue on").any(text::contains) -> "straight"
             listOf("đã đến", "da den", "arrived", "destination").any(text::contains) -> "arrive"
+            listOf("off route", "off-route", "lệch tuyến").any(text::contains) -> "off_route"
             else -> return null
         }
         val match = distancePattern.find(text)
@@ -581,9 +625,17 @@ internal object OsmAndDirectionMapper {
         if (distanceMeters < 0) return null
         val maneuver = when (turnType) {
             1 -> "straight"
-            2, 3, 4, 8 -> "left"
-            5, 6, 7, 9 -> "right"
-            10, 11 -> "u_turn"
+            2 -> "left"
+            3 -> "slight_left"
+            4 -> "sharp_left"
+            5 -> "right"
+            6 -> "slight_right"
+            7 -> "sharp_right"
+            8 -> "keep_left"
+            9 -> "keep_right"
+            10 -> "u_turn"
+            11 -> "u_turn_right"
+            12 -> "off_route"
             13 -> if (leftSide) "roundabout_left" else "roundabout"
             14 -> "roundabout_left"
             else -> return null
@@ -597,9 +649,17 @@ internal object OsmAndDirectionMapper {
         val roundaboutType = turn?.let(roundaboutTypePattern::matchEntire)
         val type = when (turn) {
             "C" -> 1
-            "TL", "TSLL", "TSHL", "KL" -> 2
-            "TR", "TSLR", "TSHR", "KR" -> 5
-            "TU", "TRU" -> 10
+            "TL" -> 2
+            "TSLL" -> 3
+            "TSHL" -> 4
+            "TR" -> 5
+            "TSLR" -> 6
+            "TSHR" -> 7
+            "KL" -> 8
+            "KR" -> 9
+            "TU" -> 10
+            "TRU" -> 11
+            "OFFR" -> 12
             else -> when {
                 roundaboutType?.groupValues?.get(1) == "RNDB" -> 13
                 roundaboutType?.groupValues?.get(1) == "RNLB" -> 14

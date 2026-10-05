@@ -8,6 +8,25 @@ import org.json.JSONObject
 
 class OsmAndNotificationParserTest {
     @Test
+    fun roundaboutExitsOneThroughSixKeepRealAngleAndRoadInBlePacket() {
+        for (exit in 1..6) {
+            // Exit ordinal is not an angle: the same physical direction can
+            // be exit 2 or exit 6 on different roundabouts.
+            val navigation = OsmAndDirectionMapper.fromNextTurn(
+                "RNDB$exit", 250, "Đường Võ Nguyên Giáp", -90,
+            )!!
+            val encoded = NavigationBleSender.encodeNavigationPacket(
+                navigation, Int.MAX_VALUE, 1790900000L,
+            )
+            val packet = JSONObject(encoded)
+            assertEquals(exit, packet.getInt("exit"))
+            assertEquals(-90, packet.getInt("angle"))
+            assertEquals("Duong Vo Nguyen Giap", packet.getString("street"))
+            assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= 180)
+        }
+    }
+
+    @Test
     fun parsesOsmAnd54NotificationWithoutConfusingNextLegAndTotalDistances() {
         val result = OsmAndNotificationParser.parse(
             "60 m • Turn right and go\n" +
@@ -136,22 +155,31 @@ class OsmAndNotificationParserTest {
         val keepRight = OsmAndNotificationParser.parse("Keep right in 400 metres")
         val vietnamese = OsmAndNotificationParser.parse("Sau 1,2 kilômét, chếch trái")
 
-        assertEquals("right", keepRight?.maneuver)
+        assertEquals("keep_right", keepRight?.maneuver)
         assertEquals(400, keepRight?.distanceMeters)
-        assertEquals("left", vietnamese?.maneuver)
+        assertEquals("slight_left", vietnamese?.maneuver)
         assertEquals(1200, vietnamese?.distanceMeters)
     }
 
     @Test
+    fun notificationFallbackPreservesSpecificOsmAndTurnWords() {
+        assertEquals("sharp_right", OsmAndNotificationParser.parse("Turn sharply right in 250 m")?.maneuver)
+        assertEquals("slight_left", OsmAndNotificationParser.parse("Turn slightly left in 250 m")?.maneuver)
+        assertEquals("u_turn_right", OsmAndNotificationParser.parse("Right U-turn in 250 m")?.maneuver)
+        assertEquals("off_route", OsmAndNotificationParser.parse("Off route 250 m")?.maneuver)
+    }
+
+    @Test
     fun mapsOfficialOsmAndTurnTypes() {
-        assertEquals("straight", OsmAndDirectionMapper.map(1, 800, false)?.maneuver)
-        assertEquals("left", OsmAndDirectionMapper.map(4, 600, false)?.maneuver)
-        assertEquals("right", OsmAndDirectionMapper.map(7, 400, false)?.maneuver)
-        assertEquals("u_turn", OsmAndDirectionMapper.map(10, 200, false)?.maneuver)
+        val allTypes = listOf(
+            "straight", "left", "slight_left", "sharp_left", "right",
+            "slight_right", "sharp_right", "keep_left", "keep_right",
+            "u_turn", "u_turn_right", "off_route", "roundabout", "roundabout_left",
+        )
+        allTypes.forEachIndexed { index, expected ->
+            assertEquals(expected, OsmAndDirectionMapper.map(index + 1, 400, false)?.maneuver)
+        }
         assertEquals("roundabout_left", OsmAndDirectionMapper.map(13, 100, true)?.maneuver)
-        assertEquals("roundabout", OsmAndDirectionMapper.map(13, 100, false)?.maneuver)
-        assertEquals("roundabout_left", OsmAndDirectionMapper.map(14, 100, false)?.maneuver)
-        assertEquals(null, OsmAndDirectionMapper.map(12, 100, false))
         assertEquals(null, OsmAndDirectionMapper.map(5, -1, false))
     }
 
@@ -160,7 +188,7 @@ class OsmAndNotificationParserTest {
         assertEquals(OsmAndNavigation("roundabout", 1630, "Đường số 11", 4),
             OsmAndDirectionMapper.fromNextTurn("RNDB4", 1630, "Đường số 11"))
         assertEquals("", OsmAndDirectionMapper.fromNextTurn("TR", 250, null)?.streetName)
-        assertEquals(null, OsmAndDirectionMapper.fromNextTurn("OFFR", 250, "Old road"))
+        assertEquals("off_route", OsmAndDirectionMapper.fromNextTurn("OFFR", 250, "Old road")?.maneuver)
         assertEquals(null, OsmAndDirectionMapper.fromNextTurn("TR", -1, "Old road"))
         assertEquals("roundabout_left", OsmAndDirectionMapper.fromNextTurn("RNLB2", 250, "Road")?.maneuver)
         assertEquals(OsmAndNavigation("roundabout", 250, "Road", 2, 0),
@@ -169,6 +197,22 @@ class OsmAndNotificationParserTest {
             OsmAndDirectionMapper.fromNextTurn("RNLB1", 250, "Road", 110))
         assertEquals(-90, OsmAndDirectionMapper.fromNextTurn("RNDB3", 250, "Road", 270)?.turnAngle)
         assertEquals(null, OsmAndDirectionMapper.fromNextTurn("TR", 250, "Road", 90)?.turnAngle)
+    }
+
+    @Test
+    fun officialTurnCodesRetainDistinctShapesAndFitBle() {
+        val cases = mapOf(
+            "TSLL" to "slight_left", "TSHL" to "sharp_left", "KL" to "keep_left",
+            "TSLR" to "slight_right", "TSHR" to "sharp_right", "KR" to "keep_right",
+            "TRU" to "u_turn_right", "OFFR" to "off_route",
+        )
+        cases.forEach { (code, expected) ->
+            val turn = OsmAndDirectionMapper.fromNextTurn(code, 250, "Nguyen Hue")!!
+            assertEquals(expected, turn.maneuver)
+            assertEquals(expected, JSONObject(NavigationBleSender.encodeNavigationPacket(
+                turn, 1, 1790900000L,
+            )).getString("maneuver"))
+        }
     }
 
     @Test

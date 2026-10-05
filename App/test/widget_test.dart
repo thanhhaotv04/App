@@ -255,6 +255,21 @@ void main() {
         find.text('ESP32 received the 250 m navigation sample.'),
         findsOneWidget,
       );
+      for (final exit in [4, 5, 6]) {
+        final button = find.byKey(
+          ValueKey('navigation-sample-roundabout_$exit'),
+        );
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(
+          calls
+              .lastWhere((call) => call.method == 'sendOsmAndSample')
+              .arguments['maneuver'],
+          'roundabout_$exit',
+        );
+      }
       connected = false;
       await tester.pump(const Duration(seconds: 3));
       await tester.pumpAndSettle();
@@ -309,11 +324,12 @@ void main() {
       );
       await tester.pumpWidget(const NavRideApp());
       await tester.pumpAndSettle();
-      expect(find.text('Restore notification access'), findsOneWidget);
+      expect(find.text('Retry connection'), findsOneWidget);
       expect(find.text('Ready for directions'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('navigation-primary')));
       await tester.pumpAndSettle();
-      expect(calls, contains('openNotificationAccessSettings'));
+      expect(calls, contains('recoverNavigationConnection'));
+      expect(calls, isNot(contains('openNotificationAccessSettings')));
       expect(calls, isNot(contains('openOsmAnd')));
     },
   );

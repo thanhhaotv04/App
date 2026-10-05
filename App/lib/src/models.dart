@@ -182,12 +182,10 @@ class NavRideSnapshot {
     return NavRideSnapshot(
       profileName: json['profileName'] as String? ?? 'You',
       notices: (json['notices'] as List<dynamic>? ?? [])
-          .whereType<Map<String, dynamic>>()
-          .map(Notice.fromJson)
+          .map((item) => Notice.fromJson(item as Map<String, dynamic>))
           .toList(),
       tasks: (json['tasks'] as List<dynamic>? ?? [])
-          .whereType<Map<String, dynamic>>()
-          .map(TaskItem.fromJson)
+          .map((item) => TaskItem.fromJson(item as Map<String, dynamic>))
           .toList(),
       config: NavRideConfig.fromJson(
         json['config'] as Map<String, dynamic>? ?? const {},

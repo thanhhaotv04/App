@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,7 +26,8 @@ class MainActivity : FlutterActivity() {
         // or after Android restarts the activity. Keep an active bridge intact.
         if (notificationAccessGranted() &&
             !NavigationBridgeStore.deviceId(this).isNullOrBlank() &&
-            (!OsmAndAidlState.subscribed || !NavigationBleSender.isConnected())
+            (!OsmAndNotificationListener.isListening() ||
+                !OsmAndAidlState.subscribed || !NavigationBleSender.isConnected())
         ) {
             OsmAndNotificationListener.ensureBridge(this)
         }
@@ -52,6 +52,10 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "getOsmAndBridgeStatus" -> result.success(osmandBridgeStatus())
+                    "recoverNavigationConnection" -> {
+                        OsmAndNotificationListener.ensureBridge(this)
+                        result.success(true)
+                    }
                     "openOsmAnd" -> {
                         val app = OsmAndPackages.installed(this)
                         val intent = app?.let { packageManager.getLaunchIntentForPackage(it) }
@@ -117,7 +121,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun notificationAccessGranted(): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+        OsmAndNotificationListener.hasAccess(this)
 
     private fun osmandBridgeStatus(): Map<String, Boolean> {
         val configured = !NavigationBridgeStore.deviceId(this).isNullOrBlank()
@@ -133,6 +137,7 @@ class MainActivity : FlutterActivity() {
             "configured" to configured,
             "notificationAccess" to notificationAccess,
             "listenerConnected" to listenerConnected,
+            "listenerRecovering" to OsmAndNotificationListener.isRecovering(),
             "osmandInstalled" to osmandInstalled,
             "bluetoothReady" to bluetoothEnabled,
             "aidlConnected" to OsmAndAidlState.connected,

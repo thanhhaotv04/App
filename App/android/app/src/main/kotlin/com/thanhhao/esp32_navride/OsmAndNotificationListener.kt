@@ -1,12 +1,15 @@
 package com.thanhhao.esp32_navride
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -29,6 +32,7 @@ class OsmAndNotificationListener : NotificationListenerService() {
         super.onListenerConnected()
         handler.removeCallbacks(rebindTask)
         activeListener = this
+        recovering = false
         Log.i("NavRide", "Notification listener connected")
         if (!NavigationBridgeStore.deviceId(this).isNullOrBlank()) {
             restartAidlBridge()
@@ -77,9 +81,13 @@ class OsmAndNotificationListener : NotificationListenerService() {
         if (OsmAndAidlState.subscribed && OsmAndAidlState.lastApiDirectionAt > 0 &&
             SystemClock.elapsedRealtime() - OsmAndAidlState.lastApiDirectionAt < 5000
         ) return
+        // A quiet AIDL subscription may still have the complete next-turn
+        // snapshot. Prefer its real exit angle over notification text, which
+        // only supplies an exit ordinal and would swap the roundabout shape.
+        if (aidlBridge?.refreshNavigation() == true) return
         if (parsed == null) return
         OsmAndAidlState.lastDirectionAt = SystemClock.elapsedRealtime()
-        val payload = "${parsed.maneuver}:${parsed.distanceMeters}:${parsed.streetName}"
+        val payload = "${parsed.maneuver}:${parsed.exitNumber}:${parsed.distanceMeters}:${parsed.streetName}"
         val now = SystemClock.elapsedRealtime()
         if (payload == lastPayload && now - lastSentAt < 5000) return
         if (NavigationBleSender.sendNavigation(this, parsed)) {
@@ -136,8 +144,60 @@ class OsmAndNotificationListener : NotificationListenerService() {
     companion object {
         @Volatile
         private var activeListener: OsmAndNotificationListener? = null
+        private val recoveryHandler = Handler(Looper.getMainLooper())
+        @Volatile private var recovering = false
+        private var lastRecoveryAt = -30_000L
 
         fun isListening(): Boolean = activeListener != null
+        fun isRecovering(): Boolean = recovering
+
+        fun hasAccess(context: Context): Boolean {
+            val component = ComponentName(context, OsmAndNotificationListener::class.java)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                context.getSystemService(NotificationManager::class.java)
+                    .isNotificationListenerAccessGranted(component)
+            } else {
+                Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+                    ?.split(':')?.contains(component.flattenToString()) == true
+            }
+        }
+
+        // Repair a stale system binding without changing the user's access grant.
+        // Only one bounded recovery can run; never disturb a live listener.
+        fun recoverListener(context: Context) {
+            if (activeListener != null || recovering || !hasAccess(context)) return
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRecoveryAt < 30_000) return
+            lastRecoveryAt = now
+            recovering = true
+            val app = context.applicationContext
+            val component = ComponentName(app, OsmAndNotificationListener::class.java)
+            runCatching {
+                app.packageManager.setComponentEnabledSetting(component,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+                requestRebind(component)
+            }.onFailure { Log.w("NavRide", "Listener rebind request failed", it) }
+            recoveryHandler.postDelayed({
+                if (activeListener != null || !hasAccess(app)) {
+                    recovering = false
+                    return@postDelayed
+                }
+                Log.i("NavRide", "Repairing stale notification listener binding")
+                runCatching {
+                    app.packageManager.setComponentEnabledSetting(component,
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                }.onFailure { Log.w("NavRide", "Listener restart failed", it) }
+                recoveryHandler.postDelayed({
+                    // Always re-enable, even if access was revoked during recovery.
+                    runCatching {
+                        app.packageManager.setComponentEnabledSetting(component,
+                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+                        if (hasAccess(app)) requestRebind(component)
+                    }.onFailure { Log.w("NavRide", "Listener enable failed", it) }
+                    recoveryHandler.postDelayed({ recovering = false }, 5_000)
+                }, 500)
+            }, 2_000)
+        }
 
         fun replayActiveNavigation() {
             val listener = activeListener ?: return
@@ -166,7 +226,7 @@ class OsmAndNotificationListener : NotificationListenerService() {
             if (listener != null) {
                 listener.restartAidlBridge()
             } else {
-                requestRebind(ComponentName(context, OsmAndNotificationListener::class.java))
+                recoverListener(context)
             }
         }
 
@@ -181,8 +241,10 @@ class OsmAndNotificationListener : NotificationListenerService() {
         // test samples without waiting for the first navigation notification.
         NavigationBleSender.send(applicationContext,
             "{\"apiVersion\":1,\"command\":\"ping\",\"timestamp\":${System.currentTimeMillis() / 1000}}")
-        aidlBridge?.stop()
-        aidlBridge = OsmAndAidlBridge(applicationContext).also { it.start() }
+        if (aidlBridge == null || !OsmAndAidlState.subscribed) {
+            aidlBridge?.stop()
+            aidlBridge = OsmAndAidlBridge(applicationContext).also { it.start() }
+        }
         if (NavigationBleSender.isConnected()) replayActiveNavigation()
     }
 }

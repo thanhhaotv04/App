@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ class NavRideApp extends StatefulWidget {
 class _NavRideAppState extends State<NavRideApp> {
   NavRideSnapshot? _snapshot;
   String? _loadError;
+  String? _loadWarning;
   @override
   void initState() {
     super.initState();
@@ -37,11 +39,20 @@ class _NavRideAppState extends State<NavRideApp> {
   Future<void> _load() async {
     setState(() => _loadError = null);
     try {
-      final snapshot = await NavRideStorage().load();
-      if (mounted) setState(() => _snapshot = snapshot);
+      final storage = NavRideStorage();
+      final snapshot = await storage.load();
+      if (mounted) {
+        setState(() {
+          _snapshot = snapshot;
+          _loadWarning = storage.recoveryWarning;
+        });
+      }
     } catch (_) {
       if (mounted) {
-        setState(() => _loadError = 'Could not read saved data.');
+        setState(
+          () => _loadError =
+              'Could not read saved data. Your original data has not been replaced.',
+        );
       }
     }
   }
@@ -99,7 +110,7 @@ class _NavRideAppState extends State<NavRideApp> {
       ),
     ),
     home: _snapshot != null
-        ? NavRideHome(snapshot: _snapshot!)
+        ? NavRideHome(snapshot: _snapshot!, recoveryWarning: _loadWarning)
         : Scaffold(
             body: Center(
               child: _loadError == null
@@ -120,8 +131,9 @@ class _NavRideAppState extends State<NavRideApp> {
 }
 
 class NavRideHome extends StatefulWidget {
-  const NavRideHome({required this.snapshot, super.key});
+  const NavRideHome({required this.snapshot, this.recoveryWarning, super.key});
   final NavRideSnapshot snapshot;
+  final String? recoveryWarning;
   @override
   State<NavRideHome> createState() => _NavRideHomeState();
 }
@@ -144,6 +156,8 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
   Future<void>? _bridgeRefresh;
   Future<void> _pendingSave = Future<void>.value();
   Timer? _statusTimer;
+  bool _healthPending = false;
+  int _statusGeneration = 0;
   int _page = 0;
   bool _showTasks = false;
   bool _connectionBusy = false;
@@ -202,8 +216,11 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   void _startStatusTimer() {
     _statusTimer?.cancel();
-    if (!_android) return;
     _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_config.mode == ConnectionMode.network && !_deviceBusy) {
+        unawaited(_pollNetworkHealth());
+      }
+      if (!_android) return;
       if (!_deviceBusy && (_page == 0 || _usingNativeBle)) {
         unawaited(_refreshBridge());
         if (_page == 0 &&
@@ -214,6 +231,38 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         }
       }
     });
+  }
+
+  // Health polling must not disable buttons or overlap slower requests.
+  Future<void> _pollNetworkHealth() async {
+    if (_healthPending || !mounted) return;
+    _healthPending = true;
+    final transport = _transport;
+    final generation = _statusGeneration;
+    try {
+      final status = await transport.health();
+      if (mounted &&
+          identical(transport, _transport) &&
+          generation == _statusGeneration &&
+          !_deviceBusy) {
+        setState(() {
+          _status = status;
+          _deviceError = null;
+        });
+      }
+    } catch (error) {
+      if (mounted &&
+          identical(transport, _transport) &&
+          generation == _statusGeneration &&
+          !_deviceBusy) {
+        setState(() {
+          _status = null;
+          _deviceError = _friendlyError(error);
+        });
+      }
+    } finally {
+      _healthPending = false;
+    }
   }
 
   @override
@@ -273,6 +322,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   Future<void> _runConnection(Future<void> Function() action) async {
     if (_deviceBusy || !mounted) return;
+    _statusGeneration++;
     setState(() {
       _connectionBusy = true;
       _deviceError = null;
@@ -448,8 +498,54 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   Future<void> _send(Map<String, dynamic> command) async {
     if (!_canSend) return;
+    _statusGeneration++;
     setState(() => _sending = true);
     try {
+      if (_config.mode == ConnectionMode.bluetooth) {
+        // Use the largest ID so the preview also fits the final packet.
+        final preview =
+            jsonDecode(
+                  encodeDeviceCommand({
+                    ...command,
+                    'requestId': 2147483647,
+                  }, maxBytes: 180),
+                )
+                as Map<String, dynamic>;
+        final shortened = ['title', 'body'].any(
+          (key) =>
+              command[key] is String &&
+              preview[key] != toTftText(command[key] as String),
+        );
+        if (shortened) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Message is too long for Bluetooth'),
+              content: SingleChildScrollView(
+                child: Text(
+                  'Only the following text fits on this connection. Cancel to keep the full message, or send this shorter version.\n\n${preview['title']}\n${preview['body']}',
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Send shorter version'),
+                ),
+              ],
+            ),
+          );
+          if (confirmed != true || !mounted) return;
+          command = {
+            ...command,
+            'title': preview['title'],
+            'body': preview['body'],
+          };
+        }
+      }
       await _refreshBridge();
       if (_usingNativeBle) {
         await _sendNative(command);
@@ -463,6 +559,12 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         _showMessage('ESP32 confirmed delivery.');
       }
     } catch (error) {
+      if (mounted && _config.mode == ConnectionMode.network) {
+        setState(() {
+          _status = null;
+          _deviceError = _friendlyError(error);
+        });
+      }
       _showMessage(_friendlyError(error), error: true);
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -517,9 +619,18 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       setState(() => _page = 2);
       await _changeMode(ConnectionMode.bluetooth);
     } else if (_listenerNeedsRestore) {
-      await _navigationChannel.invokeMethod<void>(
-        'openNotificationAccessSettings',
-      );
+      if (_deviceBusy) return;
+      setState(() => _navigationBusy = true);
+      try {
+        await _navigationChannel.invokeMethod<void>(
+          'recoverNavigationConnection',
+        );
+        await _refreshBridge();
+      } catch (error) {
+        _showMessage(_friendlyError(error), error: true);
+      } finally {
+        if (mounted) setState(() => _navigationBusy = false);
+      }
     } else if (_bridge['osmandInstalled'] == false || _navigationReady) {
       await _openOsmAnd();
     } else {
@@ -886,6 +997,11 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       32,
     ),
     children: [
+      if (widget.recoveryWarning != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Text(widget.recoveryWarning!),
+        ),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -941,7 +1057,9 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       return 'Allow notification access so NavRide can receive directions and street names from OsmAnd.';
     }
     if (_listenerNeedsRestore) {
-      return 'Notification access is enabled, but its service is not running. Turn ESP32-NavRide off and on in notification access, then return here.';
+      return _bridge['listenerRecovering'] == true
+          ? 'Reconnecting navigation in the background. This may take a few seconds.'
+          : 'Notification access is already enabled. Tap Retry connection to restart the navigation connection.';
     }
     if (!_navigationReady) {
       return 'Check that ESP32 is in Bluetooth mode and OsmAnd is installed on your phone.';
@@ -961,7 +1079,11 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       return 'Connect ESP32';
     }
     if (_bridge['osmandInstalled'] == false) return 'Check OsmAnd';
-    if (_listenerNeedsRestore) return 'Restore notification access';
+    if (_listenerNeedsRestore) {
+      return _bridge['listenerRecovering'] == true
+          ? 'Reconnecting…'
+          : 'Retry connection';
+    }
     if (_navigationReady) return 'Open OsmAnd';
     if (_bridge['notificationAccess'] != true) return 'Enable navigation';
     return 'Reconnect OsmAnd';
@@ -1010,7 +1132,9 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
               width: double.infinity,
               child: FilledButton.icon(
                 key: const ValueKey('navigation-primary'),
-                onPressed: _deviceBusy ? null : _navigationAction,
+                onPressed: _deviceBusy || _bridge['listenerRecovering'] == true
+                    ? null
+                    : _navigationAction,
                 icon: const Icon(Icons.arrow_forward),
                 label: Text(_deviceBusy ? 'Connecting…' : _navigationButton),
               ),
@@ -1076,9 +1200,17 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
               children: [
                 for (final sample in const [
                   ('left', Icons.turn_left, 'Left'),
+                  ('slight_left', Icons.turn_left, 'Slight left'),
+                  ('sharp_left', Icons.turn_left, 'Sharp left'),
+                  ('keep_left', Icons.turn_left, 'Keep left'),
                   ('straight', Icons.straight, 'Straight'),
                   ('right', Icons.turn_right, 'Right'),
+                  ('slight_right', Icons.turn_right, 'Slight right'),
+                  ('sharp_right', Icons.turn_right, 'Sharp right'),
+                  ('keep_right', Icons.turn_right, 'Keep right'),
                   ('u_turn', Icons.u_turn_left, 'U-turn'),
+                  ('u_turn_right', Icons.u_turn_right, 'Right U-turn'),
+                  ('off_route', Icons.not_listed_location, 'Off route'),
                   (
                     'roundabout_1',
                     Icons.roundabout_left,
@@ -1093,6 +1225,21 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
                     'roundabout_3',
                     Icons.roundabout_left,
                     'Roundabout · exit 3',
+                  ),
+                  (
+                    'roundabout_4',
+                    Icons.roundabout_left,
+                    'Roundabout · exit 4',
+                  ),
+                  (
+                    'roundabout_5',
+                    Icons.roundabout_left,
+                    'Roundabout · exit 5',
+                  ),
+                  (
+                    'roundabout_6',
+                    Icons.roundabout_left,
+                    'Roundabout · exit 6',
                   ),
                 ])
                   OutlinedButton.icon(

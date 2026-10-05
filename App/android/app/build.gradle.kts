@@ -29,6 +29,11 @@ android {
         implementation("net.osmand:android-aidl-lib:5.4@aar")
         testImplementation("junit:junit:4.13.2")
         testImplementation("org.json:json:20240303")
+        testImplementation("org.mockito:mockito-inline:5.2.0")
+        // Mockito's older defaults cannot instrument the JDK 25 used locally.
+        testImplementation("net.bytebuddy:byte-buddy:1.18.2")
+        testImplementation("net.bytebuddy:byte-buddy-agent:1.18.2")
+        testImplementation("org.objenesis:objenesis:3.4")
     }
 
     buildTypes {

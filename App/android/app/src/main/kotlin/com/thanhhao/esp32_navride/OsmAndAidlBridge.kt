@@ -66,7 +66,11 @@ internal class OsmAndAidlBridge(context: Context) {
                 return
             }
             OsmAndAidlState.lastDirectionAt = SystemClock.elapsedRealtime()
-            OsmAndAidlState.lastApiDirectionAt = OsmAndAidlState.lastDirectionAt
+            // The callback's bare turn type lacks the roundabout exit and
+            // angle; only the complete snapshot should suppress notification
+            // fallback or be treated as the authoritative icon.
+            OsmAndAidlState.lastApiDirectionAt =
+                if (snapshot != null) OsmAndAidlState.lastDirectionAt else 0L
             NavigationBleSender.sendNavigation(
                 appContext,
                 navigation,
