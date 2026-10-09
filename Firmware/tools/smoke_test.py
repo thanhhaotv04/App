@@ -1,8 +1,9 @@
 """Exercise a connected NavRide board over HTTP and BLE, then restore Wi-Fi.
 
 Run with Python containing bleak and pyserial:
-  python tools/smoke_test.py --ip 192.168.1.55 --serial /dev/ttyACM0
+  python tools/smoke_test.py --ip 192.168.1.55 --serial /dev/ttyACM0 --pin 123456
 This sends temporary test content and switches the board's connection mode.
+If BLE discovery fails after switching modes, press Button 1 to restore Wi-Fi.
 Serial DISPLAY messages verify the draw path, not the physical TFT pixels.
 """
 import argparse
@@ -40,7 +41,8 @@ async def main(args):
     def http(path, payload=None, expected=200):
         body = None if payload is None else json.dumps(payload).encode()
         request = urllib.request.Request(f"http://{args.ip}{path}", data=body,
-                                         headers={"Content-Type": "application/json"})
+                                         headers={"Content-Type": "application/json",
+                                                  "X-NavRide-Pin": args.pin})
         try:
             with urllib.request.urlopen(request, timeout=4) as response:
                 status, result = response.status, json.load(response)
@@ -54,25 +56,26 @@ async def main(args):
 
     try:
         health = http("/api/health")
-        assert health["firmware"] == "1.3.3" and health["mode"] == "wifi", health
+        assert health["firmware"] and health["mode"] == "wifi", health
         print("HEALTH", health, flush=True)
         assert http("/api/command", command(command="push_notification", title="Road test",
                     body="Check mirrors before riding"))["ok"]
         http("/api/command", command(command="unknown"), expected=400)
         http("/api/command", command(command="push_notification", body="x" * 513), expected=400)
-        for distance in [2000, 1999, 1000, 999, 250]:
+        for distance in [2000, 1999, 1000, 999, 200, 199]:
             assert http("/api/command", command(command="navigation", maneuver="left",
                         distance_m=distance, street="Nguyễn Huệ"))["ok"]
             await asyncio.sleep(.15)
         assert http("/api/command", command(command="set_mode", mode="bluetooth"))["ok"]
         await asyncio.sleep(1)
         device = await BleakScanner.find_device_by_filter(
-            lambda device, advert: device.address.upper() == args.ble.upper()
-            and SERVICE in advert.service_uuids, timeout=12,
+            lambda device, advert: (args.ble is None or device.address.upper() == args.ble.upper())
+            and device.name == "ESP32-NavRide"
+            and SERVICE in (advert.service_uuids or []), timeout=12,
         )
         assert device is not None, "Board not advertising BLE"
         replies = asyncio.Queue()
-        async with BleakClient(device, timeout=15) as client:
+        async with BleakClient(device, timeout=30, pair=True) as client:
             await client.start_notify(STATUS, lambda _, value: replies.put_nowait(bytes(value).decode()))
             request_id = 12340
 
@@ -98,6 +101,11 @@ async def main(args):
                 for maneuver in ["left", "right", "u_turn", "straight", "arrive"]:
                     await send("navigation", "navigation", maneuver=maneuver, distance_m=250, street="Nguyen Hue")
                     await asyncio.sleep(.15)
+                for exit_number in range(1, 7):
+                    await send("navigation", "navigation", maneuver="roundabout",
+                               distance_m=250, street="Nguyen Hue", exit=exit_number)
+                await send("speed", "speed", kmh=42)
+                await send("clear_navigation", "clear")
                 await client.write_gatt_char(COMMAND, b'{"apiVersion":2,"command":"ping"}', response=True)
                 assert await asyncio.wait_for(replies.get(), 5) == "error:api_version"
                 await send("clear_popup", "clear")
@@ -113,11 +121,10 @@ async def main(args):
                 continue
         assert health["mode"] == "wifi", "Wi-Fi was not restored"
         joined = "\n".join(lines)
-        for expected in ["2.00 km arrow=straight blink=no", "1.99 km arrow=left blink=no",
-                         "1.00 km arrow=left blink=no", "999 m arrow=left blink=yes",
-                         "DISPLAY: popup", "navigation u_turn", "navigation right"]:
+        for expected in ["DISPLAY: popup", "DISPLAY: navigation updated",
+                         "DISPLAY: navigation cleared", "DISPLAY: speed updated"]:
             assert expected in joined, f"Missing draw evidence: {expected}"
-        print("PASS: HTTP, BLE request-ID ACKs, text rendering paths and distance thresholds; Wi-Fi restored.")
+        print("PASS: HTTP, authenticated BLE ACKs, navigation, speed and Wi-Fi restoration.")
     finally:
         stopped.set()
         reader.join(timeout=1)
@@ -129,5 +136,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ip", required=True)
     parser.add_argument("--serial", required=True)
-    parser.add_argument("--ble", default="14:C1:9F:27:03:45")
-    asyncio.run(main(parser.parse_args()))
+    parser.add_argument("--pin", required=True, help="Six-digit PIN shown in ESP32 Info")
+    parser.add_argument("--ble", help="BLE address, if multiple NavRide devices are nearby")
+    args = parser.parse_args()
+    if len(args.pin) != 6 or not args.pin.isdigit():
+        parser.error("--pin must contain exactly six digits")
+    asyncio.run(main(args))

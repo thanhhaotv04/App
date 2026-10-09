@@ -514,7 +514,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       _bleCandidates = candidates;
       if (candidates.isEmpty) {
         _deviceError =
-            'No ESP32 found. Press Button 2 until BLT flashes, then scan again.';
+            'No ESP32 found. Press and release Button 2, then scan while BLT flashes.';
       }
     });
   });
@@ -1887,7 +1887,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
           if (_config.mode == ConnectionMode.bluetooth) ...[
             const SizedBox(height: 8),
             const Text(
-              'Press Button 2 on ESP32 until BLT flashes, then select Find devices. Android may ask for the PIN shown in ESP32 Info.',
+              'Press and release Button 2 on ESP32, then select Find devices within 20 seconds. Android may ask for the PIN shown in ESP32 Info.',
               style: TextStyle(color: NavRideColors.muted, height: 1.45),
             ),
             const SizedBox(height: 12),

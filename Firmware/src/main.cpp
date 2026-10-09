@@ -27,9 +27,9 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.29";
+constexpr char FIRMWARE_VERSION[] = "1.3.30";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
-constexpr char SETUP_PASSWORD[] = "monitor1234";
+constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
 constexpr uint32_t DRAW_INTERVAL_MS = 1000;
 constexpr uint32_t POPUP_DURATION_MS = 8000;
@@ -66,6 +66,8 @@ static_assert(6 * 12 <= STREET_WIDTH && 13 * 6 <= STREET_WIDTH &&
 static_assert(2 * 6 * 3 <= SPEED_WIDTH && 3 * 6 * 2 <= SPEED_WIDTH &&
                   101 + 8 * 5 < 145,
               "Enlarged speed digits must fit above the unit");
+static_assert(5 + (6 + SETUP_PASSWORD_LENGTH) * 6 <= 128,
+              "Setup AP password must fit the TFT width");
 constexpr uint32_t MODE_SWITCH_DELAY_MS = 250;
 constexpr int TURN_ARROW_SHOW_METERS = 2000;
 constexpr int TURN_ARROW_BLINK_METERS = 200;
@@ -152,6 +154,7 @@ String lastOfflineDate;
 String activeMode = "setup";
 String wifiSsid;
 String wifiPassword;
+String setupPassword;
 uint32_t pairingPin = 0;
 uint8_t authFailures = 0;
 uint32_t authLockedUntil = 0;
@@ -672,7 +675,7 @@ void drawSetupScreen(bool force = false) {
   if (setupApActive) {
     drawText("WIFI AP:", 5, 46, 1);
     drawText(SETUP_SSID, 5, 58, 1);
-    drawText("Pass: monitor1234", 5, 70, 1);
+    drawText("Pass: " + setupPassword, 5, 70, 1);
   }
   drawText("BLE: " + String(BLE_NAME), 5, 85, 1, COLOR_ACCENT);
   drawText("PIN: " + String(pairingPin), 5, 102, 1, COLOR_ACCENT);
@@ -1944,12 +1947,20 @@ void startSetupMode() {
   offlineFrameDrawn = false;
   wifiConnected = false;
   wifiSearching = false;
+  startBle();
+  if (setupPassword.length() != SETUP_PASSWORD_LENGTH) {
+    char generated[SETUP_PASSWORD_LENGTH + 1];
+    snprintf(generated, sizeof(generated), "NR%08lX%02X",
+             static_cast<unsigned long>(esp_random()),
+             static_cast<unsigned>(esp_random() & 0xFF));
+    setupPassword = generated;
+    preferences.putString("apPassword", setupPassword);
+  }
   WiFi.mode(WIFI_AP);
-  setupApActive = WiFi.softAP(SETUP_SSID, SETUP_PASSWORD);
+  setupApActive = WiFi.softAP(SETUP_SSID, setupPassword.c_str());
   setupSearching = true;
   setupSearchStartedAt = millis();
   if (setupApActive) startHttp();
-  startBle();
   Serial.println("SETUP: access point ready");
   drawSetupScreen(true);
 }
@@ -2257,6 +2268,7 @@ void setup() {
     pairingPin = 100000 + esp_random() % 900000;
     preferences.putUInt("pin", pairingPin);
   }
+  setupPassword = preferences.getString("apPassword", "");
   applyTheme(preferences.getBool("lightTheme", false));
   commandQueue = xQueueCreate(4, sizeof(QueuedCommand));
   activeMode = preferences.isKey("mode") ? preferences.getString("mode", "") : "";

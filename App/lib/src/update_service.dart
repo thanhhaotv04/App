@@ -123,6 +123,11 @@ class AppUpdateService {
           .send(request)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        if (response.statusCode == 503) {
+          throw const FormatException(
+            'App updates are temporarily unavailable. Check the published APK on the update server.',
+          );
+        }
         throw FormatException(
           'The update server returned HTTP ${response.statusCode}.',
         );

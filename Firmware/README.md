@@ -3,7 +3,7 @@
 Firmware cho ESP32-S3 + TFT ST7735 1.8 inch 128x160. Pin TFT giữ nguyên theo
 `ESP32_TFT1.8inch`:
 
-Phiên bản hiện tại: `1.3.29`.
+Phiên bản hiện tại: `1.3.30`.
 
 32 pixel trên cùng (1/5 màn hình): hàng đầu là ngày/tháng/năm
 `dd/mm/yyyy`, phút của Stopwatch/Timer và trạng thái kết nối;
@@ -154,9 +154,17 @@ thư viện QR runtime.
 Kiểm tra logic độc lập phần cứng:
 `g++ -std=c++11 -Wall -Wextra -Werror tools/test_clock_timers.cpp -o /tmp/navride-clock-test && /tmp/navride-clock-test`.
 
+Khi bo và cổng serial đã kết nối, có thể kiểm thử HTTP/BLE bằng
+`python3 tools/smoke_test.py --ip <IP_ESP32> --serial <CONG_SERIAL> --pin <PIN_6_SO>`.
+Script cần `bleak` và `pyserial`, sẽ gửi dữ liệu mẫu, tạm chuyển sang BLE rồi
+trả về Wi-Fi; chỉ chạy khi xe đứng yên. ACK/log không thay thế việc nhìn TFT để
+xác nhận hình vẽ thực tế. Nếu không tìm được BLE sau khi chuyển chế độ, nhấn
+Button 1 trên ESP32 để quay lại Wi-Fi.
+
 ## Chế độ kết nối
 
-- Lần đầu khởi động: AP `ESP32-NavRide-Setup`, mật khẩu `monitor1234`, IP
+- Lần đầu khởi động: AP `ESP32-NavRide-Setup`, mật khẩu riêng 12 ký tự hiện
+  trên màn hình TFT (được lưu để dùng lại sau khi khởi động lại), IP
   `192.168.4.1`, đồng thời quảng bá BLE `ESP32-NavRide` tối đa 20 giây.
   Khi một phương thức có thiết bị kết nối, phương thức kia được tắt.
 - PIN 6 số hiện ở màn setup và `Menu → ESP32 Info`. Nhập PIN trong app khi

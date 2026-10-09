@@ -208,8 +208,8 @@ ghép lại ESP32 nếu app mới yêu cầu.
 
 ## Giao tiếp thật
 
-Lần đầu nối điện thoại/máy tính vào AP `ESP32-NavRide-Setup` (mật khẩu
-`monitor1234`, IP `192.168.4.1`), sau đó nhập SSID/mật khẩu Wi‑Fi trong màn
+Lần đầu nối điện thoại/máy tính vào AP `ESP32-NavRide-Setup` (mật khẩu riêng
+hiện trên màn hình TFT, IP `192.168.4.1`), sau đó nhập SSID/mật khẩu Wi‑Fi trong màn
 `Settings`. Nhập PIN 6 số đang hiện trên màn setup hoặc trong `Menu → ESP32
 Info`; PIN này cần cho mọi lệnh HTTP, và khi ghép đôi BLE Android có thể hỏi
 cùng mã. Hoặc chọn thiết bị BLE `ESP32-NavRide`. Khi firmware đã chuyển sang

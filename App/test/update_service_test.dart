@@ -31,7 +31,7 @@ void main() {
             'versionName': '1.1.0',
             'versionCode': 2,
             'apkUrl': '/releases/esp32-navride-1.1.0.apk',
-            'notes': 'Cải thiện kết nối.',
+            'notes': 'Improved connection stability.',
             'sizeBytes': 1024,
             'sha256': 'a' * 64,
           }),
@@ -52,6 +52,23 @@ void main() {
       'http://192.168.1.10:3000/releases/esp32-navride-1.1.0.apk',
     );
     expect(info.sizeBytes, 1024);
+  });
+
+  test('explains when the update server is unavailable', () async {
+    final service = AppUpdateService(
+      baseUrl: 'http://192.168.1.10:3000',
+      client: MockClient((_) async => http.Response('', 503)),
+    );
+    await expectLater(
+      service.checkLatest(currentVersionCode: 1),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('App updates are temporarily unavailable'),
+        ),
+      ),
+    );
   });
 
   test('rejects an APK hosted on another origin', () async {

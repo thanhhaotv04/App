@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const releasesDir = path.join(directory, 'releases');
-const [source, versionName, versionCodeText, notes = 'Cập nhật ESP32-NavRide.'] =
+const [source, versionName, versionCodeText, notes = 'ESP32-NavRide update.'] =
   process.argv.slice(2);
 const versionCode = Number(versionCodeText);
 

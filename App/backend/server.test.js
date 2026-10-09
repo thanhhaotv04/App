@@ -54,7 +54,9 @@ test('serves only a verified update manifest and APK', async (context) => {
     path.join(releasesDir, 'latest.json'),
     JSON.stringify({ ...manifest, applicationId: 'com.thanhhao.esp32_monitor' }),
   );
-  assert.equal((await fetch(`${base}/api/update/latest`)).status, 503);
+  const legacy = await fetch(`${base}/api/update/latest`);
+  assert.equal(legacy.status, 503);
+  assert.equal((await legacy.json()).message, 'Update metadata is not ready.');
   await fs.writeFile(path.join(releasesDir, 'latest.json'), JSON.stringify(manifest));
 
   await fs.appendFile(path.join(releasesDir, apkFile), 'corrupt');

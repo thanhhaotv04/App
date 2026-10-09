@@ -29,9 +29,9 @@ async function publishedRelease(releasesDir) {
       await fs.readFile(path.join(releasesDir, 'latest.json'), 'utf8'),
     );
   } catch (error) {
-    if (error.code === 'ENOENT') throw new HttpError(404, 'Chưa có bản cập nhật.');
+    if (error.code === 'ENOENT') throw new HttpError(404, 'No update is available yet.');
     if (error instanceof SyntaxError) {
-      throw new HttpError(503, 'Thông tin bản cập nhật chưa sẵn sàng.');
+      throw new HttpError(503, 'Update metadata is not ready.');
     }
     throw error;
   }
@@ -53,7 +53,7 @@ async function publishedRelease(releasesDir) {
     typeof manifest.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(manifest.sha256)
   ) {
-    throw new HttpError(503, 'Thông tin bản cập nhật chưa sẵn sàng.');
+    throw new HttpError(503, 'Update metadata is not ready.');
   }
 
   const apkPath = path.join(releasesDir, manifest.apkFile);
@@ -61,14 +61,14 @@ async function publishedRelease(releasesDir) {
   try {
     stat = await fs.stat(apkPath);
   } catch (error) {
-    if (error.code === 'ENOENT') throw new HttpError(404, 'Chưa có bản cập nhật.');
+    if (error.code === 'ENOENT') throw new HttpError(404, 'No update is available yet.');
     throw error;
   }
   if (!stat.isFile() || stat.size !== manifest.sizeBytes) {
-    throw new HttpError(503, 'APK đang được chuẩn bị.');
+    throw new HttpError(503, 'The APK is being prepared.');
   }
   if ((await sha256(apkPath)) !== manifest.sha256) {
-    throw new HttpError(503, 'APK không vượt qua kiểm tra toàn vẹn.');
+    throw new HttpError(503, 'APK integrity check failed.');
   }
   return { manifest, apkPath };
 }
@@ -96,7 +96,7 @@ export function createUpdateServer({ releasesDir = defaultReleasesDir } = {}) {
       }
 
       const url = new URL(request.url ?? '/', 'http://localhost');
-      if (url.search || url.hash) throw new HttpError(404, 'Không tìm thấy.');
+      if (url.search || url.hash) throw new HttpError(404, 'Not found.');
       if (url.pathname === '/api/health') {
         sendJson(response, 200, { ok: true, service: 'esp32-navride-update' }, headOnly);
         return;
@@ -114,7 +114,7 @@ export function createUpdateServer({ releasesDir = defaultReleasesDir } = {}) {
         return;
       }
       if (url.pathname !== `/releases/${manifest.apkFile}`) {
-        throw new HttpError(404, 'Không tìm thấy.');
+        throw new HttpError(404, 'Not found.');
       }
 
       response.writeHead(200, {
@@ -136,7 +136,7 @@ export function createUpdateServer({ releasesDir = defaultReleasesDir } = {}) {
       const status = error instanceof HttpError ? error.status : 500;
       if (status === 500) console.error('Update server error:', error);
       sendJson(response, status, {
-        message: error instanceof HttpError ? error.message : 'Lỗi máy chủ.',
+        message: error instanceof HttpError ? error.message : 'Server error.',
       });
     });
   });
