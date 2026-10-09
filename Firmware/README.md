@@ -3,7 +3,7 @@
 Firmware cho ESP32-S3 + TFT ST7735 1.8 inch 128x160. Pin TFT giữ nguyên theo
 `ESP32_TFT1.8inch`:
 
-Phiên bản hiện tại: `1.3.30`.
+Phiên bản hiện tại: `1.3.32`.
 
 32 pixel trên cùng (1/5 màn hình): hàng đầu là ngày/tháng/năm
 `dd/mm/yyyy`, phút của Stopwatch/Timer và trạng thái kết nối;
@@ -17,8 +17,8 @@ Chỉ vùng tốc độ thay đổi được vẽ lại. Không có dữ liệu 
 thì hiện `--`, không giả định xe đang đứng yên. Tốc độ hết hạn sau 5 giây
 không nhận gói mới. Badge Stopwatch/Timer nằm giữa hàng trên cùng, không
 chồng lên tốc độ hay tên đường. Phần chỉ đường dùng 128 pixel còn lại: biểu tượng bên
-trái, khoảng cách và
-`EXIT n` bên phải; tên đường dài tự ngắt dòng trong cột bên trái.
+trái, khoảng cách bên phải; số lối ra nằm giữa biểu tượng vòng xuyến.
+Tên đường dài tự ngắt dòng trong cột bên trái.
 Tên dài đổi trang mỗi 3,5 giây; chấm báo trang nằm trên tên đường. Chỉ vùng tên
 đường được cập nhật. Vòng xuyến hỗ trợ lối ra 1–6 (và số lối ra từ nguồn tối đa
 99); góc mũi tên ra lấy từ
@@ -208,7 +208,10 @@ Button 1 trên ESP32 để quay lại Wi-Fi.
   lối đi vào từ dưới, dải cong liên tục, các nhánh đã đi qua và mũi tên rời
   vòng ở góc do OsmAnd cung cấp; số lối ra nằm giữa. `roundabout` chạy ngược chiều kim đồng hồ,
   `roundabout_left` chạy thuận chiều. Nếu nguồn không có góc (ví dụ notification),
-  firmware chỉ vẽ vòng trung tính với số lối ra, không đoán hướng rẽ sai.
+  firmware vẽ mũi tên theo chiều lưu thông trên vòng cùng số lối ra, không
+  đoán hướng của đường ra. Các nhãn thao tác (`EXIT`, `SL LEFT`, `KEEP L`,
+  `ONTO`...) không hiển thị để bớt rối; mã thao tác vẫn được giữ để vẽ mũi tên
+  khi đến gần.
   Hướng ra chỉ chính xác khi AIDL cung cấp góc thực. App ưu tiên
   snapshot AIDL khi tuyến còn hoạt động. Các nét dày, tương phản cao và nằm
   trong vùng vẽ cục bộ để nhấp nháy mà không chớp cả màn hình.

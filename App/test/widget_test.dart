@@ -118,7 +118,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').last);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('App updates'));
+    await tester.scrollUntilVisible(find.text('App updates'), 200);
     await tester.pumpAndSettle();
     await tester.tap(find.text('App updates'));
     await tester.pumpAndSettle();

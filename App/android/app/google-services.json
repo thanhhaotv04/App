@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "596937794277",
+    "project_id": "navride-96851",
+    "storage_bucket": "navride-96851.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:596937794277:android:5bee28a6845f61011baa0c",
+        "android_client_info": {
+          "package_name": "com.thanhhao.esp32_navride"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBq1Edd01xGkZYfA0-akqmXkQX6B089c8o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

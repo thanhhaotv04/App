@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'models.dart';
+import 'fleet_tracking_panel.dart';
 import 'storage.dart';
 import 'transport.dart';
 import 'update_service.dart';
@@ -21,7 +22,8 @@ abstract final class NavRideColors {
 }
 
 class NavRideApp extends StatefulWidget {
-  const NavRideApp({super.key});
+  const NavRideApp({this.firebaseReady = false, super.key});
+  final bool firebaseReady;
   @override
   State<NavRideApp> createState() => _NavRideAppState();
 }
@@ -110,7 +112,11 @@ class _NavRideAppState extends State<NavRideApp> {
       ),
     ),
     home: _snapshot != null
-        ? NavRideHome(snapshot: _snapshot!, recoveryWarning: _loadWarning)
+        ? NavRideHome(
+            snapshot: _snapshot!,
+            recoveryWarning: _loadWarning,
+            firebaseReady: widget.firebaseReady,
+          )
         : Scaffold(
             body: Center(
               child: _loadError == null
@@ -131,9 +137,15 @@ class _NavRideAppState extends State<NavRideApp> {
 }
 
 class NavRideHome extends StatefulWidget {
-  const NavRideHome({required this.snapshot, this.recoveryWarning, super.key});
+  const NavRideHome({
+    required this.snapshot,
+    this.recoveryWarning,
+    this.firebaseReady = false,
+    super.key,
+  });
   final NavRideSnapshot snapshot;
   final String? recoveryWarning;
+  final bool firebaseReady;
   @override
   State<NavRideHome> createState() => _NavRideHomeState();
 }
@@ -977,6 +989,19 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   Future<void> _clearLocalData() async {
     if (_deviceBusy || _editing || _updatingApp || _speedBusy) return;
+    if (_android) {
+      final fleet = await _navigationChannel.invokeMapMethod<String, dynamic>(
+        'getFleetStatus',
+      );
+      if (!mounted) return;
+      if (fleet?['active'] == true || fleet?['pending'] == true) {
+        _showMessage(
+          'End the trip and wait for cloud sync before deleting data.',
+          error: true,
+        );
+        return;
+      }
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -986,7 +1011,8 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
           'This stops GPS speed and navigation sharing, disconnects ESP32, '
           'and deletes saved content, connection settings, PINs and recovery copies from this app. '
           'Downloaded updates are also deleted on Android. This cannot be undone.\n\n'
-          'Content and Wi-Fi saved on ESP32, Android permissions and Bluetooth pairings remain.',
+          'Content and Wi-Fi saved on ESP32, Android permissions and Bluetooth pairings remain. '
+          'Fleet route points already uploaded to Firebase also remain; delete them in Firebase Console.',
         ),
         actions: [
           TextButton(
@@ -1991,6 +2017,8 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       ),
     ),
     const SizedBox(height: 16),
+    FleetTrackingPanel(enabled: _android && widget.firebaseReady),
+    const SizedBox(height: 16),
     _Disclosure(
       title: 'Device info',
       icon: Icons.info_outline,
@@ -2065,10 +2093,13 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       icon: Icons.privacy_tip_outlined,
       children: [
         const Text(
-          'Saved content stays on this device until you send it. There is no analytics or cloud sync. '
+          'Saved content stays on this device until you send it. There is no analytics. '
           'Android backups of app data are disabled.\n\n'
           'Navigation sharing processes only OsmAnd notifications and directions. '
-          'GPS speed is optional: only speed is sent to ESP32; coordinates and route history are not saved by NavRide.\n\n'
+          'GPS speed is optional and sent to ESP32. Fleet tracking is separate and opt-in: '
+          'during an active trip, phone GPS coordinates and speed are uploaded to Firebase. '
+          'Route points are saved after 5 minutes and 100 m of movement and remain after a trip ends. '
+          'Personal content, QR images and OsmAnd directions are never uploaded.\n\n'
           'Wi-Fi uses local HTTP, which is not encrypted. Use a trusted network or paired Bluetooth for private content. '
           'Updates contact only the server you choose. OsmAnd has its own privacy settings.',
           style: TextStyle(color: NavRideColors.muted, height: 1.5),

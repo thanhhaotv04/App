@@ -27,7 +27,7 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.30";
+constexpr char FIRMWARE_VERSION[] = "1.3.32";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -1381,8 +1381,8 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     else tft.fillTriangle(13, 99, 4, 88, 25, 88, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "roundabout" || maneuver == "roundabout_left")) {
-    // Exit ordinal alone does not determine direction. Only a real OsmAnd
-    // turn angle may place the exit arrow; notifications have no such angle.
+    // Exit ordinal alone does not determine direction. Without OsmAnd's angle,
+    // show circulation (not a guessed exit direction) plus the exit number.
     constexpr int16_t centerX = 30;
     constexpr int16_t centerY = 71;
     constexpr int16_t outerRadius = 19;
@@ -1390,20 +1390,19 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     const bool clockwise = maneuver == "roundabout_left";
     tft.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 10, 3,
                       COLOR_TEXT);
-    if (turnAngle < -180 || turnAngle > 180) {
-      tft.drawCircle(centerX, centerY, outerRadius, COLOR_TEXT);
-      tft.drawCircle(centerX, centerY, innerRadius, COLOR_TEXT);
-    } else {
-      const int angle = turnAngle;
-      const uint16_t ringOutline = lightTheme ? 0xAD55 : 0x630C;
-      tft.drawCircle(centerX, centerY, outerRadius, ringOutline);
-      tft.drawCircle(centerX, centerY, innerRadius, ringOutline);
+    const bool hasAngle = turnAngle >= -180 && turnAngle <= 180;
+    const uint16_t ringOutline = lightTheme ? 0xAD55 : 0x630C;
+    tft.drawCircle(centerX, centerY, outerRadius, ringOutline);
+    tft.drawCircle(centerX, centerY, innerRadius, ringOutline);
+    {
       // OsmAnd uses t + 180 for left-hand circulation and t - 180 for
-      // right-hand circulation. Clamp near the entry so the exit stays legible.
-      const int sweep = roundaboutSweepDegrees(angle, exitNumber,
-                                               clockwise);
+      // right-hand circulation. Without an angle, stop at the upper side and
+      // put the arrow on the ring to avoid implying a particular exit road.
+      const int sweep = hasAngle
+          ? roundaboutSweepDegrees(turnAngle, exitNumber, clockwise)
+          : (clockwise ? 135 : -135);
       // OsmAnd draws the exits passed before the chosen one as outline steps.
-      if (exitNumber > 1) {
+      if (hasAngle && exitNumber > 1) {
         // Keep at most five passed-exit ticks readable on the small TFT.
         const int steps = min(exitNumber, 6);
         for (int ordinal = 1; ordinal < steps; ++ordinal) {
@@ -1440,22 +1439,34 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
       const float theta = sweep * DEG_TO_RAD;
       const float ux = -sinf(theta);
       const float uy = cosf(theta);
-      const int16_t x0 = lroundf(centerX + ux * 16);
-      const int16_t y0 = lroundf(centerY + uy * 16);
-      const int16_t x1 = lroundf(centerX + ux * 23);
-      const int16_t y1 = lroundf(centerY + uy * 23);
-      tft.fillTriangle(lroundf(x0 - uy * 4), lroundf(y0 + ux * 4),
-                       lroundf(x1 - uy * 4), lroundf(y1 + ux * 4),
-                       lroundf(x0 + uy * 4), lroundf(y0 - ux * 4), COLOR_TEXT);
-      tft.fillTriangle(lroundf(x0 + uy * 4), lroundf(y0 - ux * 4),
-                       lroundf(x1 + uy * 4), lroundf(y1 - ux * 4),
-                       lroundf(x1 - uy * 4), lroundf(y1 + ux * 4), COLOR_TEXT);
-      tft.fillTriangle(lroundf(centerX + ux * 28),
-                       lroundf(centerY + uy * 28),
-                       lroundf(centerX + ux * 21 - uy * 8),
-                       lroundf(centerY + uy * 21 + ux * 8),
-                       lroundf(centerX + ux * 21 + uy * 8),
-                       lroundf(centerY + uy * 21 - ux * 8), COLOR_TEXT);
+      if (hasAngle) {
+        const int16_t x0 = lroundf(centerX + ux * 16);
+        const int16_t y0 = lroundf(centerY + uy * 16);
+        const int16_t x1 = lroundf(centerX + ux * 23);
+        const int16_t y1 = lroundf(centerY + uy * 23);
+        tft.fillTriangle(lroundf(x0 - uy * 4), lroundf(y0 + ux * 4),
+                         lroundf(x1 - uy * 4), lroundf(y1 + ux * 4),
+                         lroundf(x0 + uy * 4), lroundf(y0 - ux * 4), COLOR_TEXT);
+        tft.fillTriangle(lroundf(x0 + uy * 4), lroundf(y0 - ux * 4),
+                         lroundf(x1 + uy * 4), lroundf(y1 - ux * 4),
+                         lroundf(x1 - uy * 4), lroundf(y1 + ux * 4), COLOR_TEXT);
+        tft.fillTriangle(lroundf(centerX + ux * 28),
+                         lroundf(centerY + uy * 28),
+                         lroundf(centerX + ux * 21 - uy * 8),
+                         lroundf(centerY + uy * 21 + ux * 8),
+                         lroundf(centerX + ux * 21 + uy * 8),
+                         lroundf(centerY + uy * 21 - ux * 8), COLOR_TEXT);
+      } else {
+        const float tx = (clockwise ? -1 : 1) * cosf(theta);
+        const float ty = (clockwise ? -1 : 1) * sinf(theta);
+        const float x = centerX + ux * outerRadius;
+        const float y = centerY + uy * outerRadius;
+        tft.fillTriangle(lroundf(x + tx * 9), lroundf(y + ty * 9),
+                         lroundf(x - tx * 3 + ux * 6),
+                         lroundf(y - ty * 3 + uy * 6),
+                         lroundf(x - tx * 3 - ux * 6),
+                         lroundf(y - ty * 3 - uy * 6), COLOR_TEXT);
+      }
     }
     if (exitNumber > 0) {
       const String label = String(exitNumber);
@@ -1515,22 +1526,6 @@ void drawNavigation(const String &maneuver, int distanceMeters,
   navigationArrowVisible = true;
   lastNavigationBlink = millis();
   drawNavigationArrow(maneuver, distanceMeters, true, exitNumber, turnAngle);
-  const bool roundabout = maneuver == "roundabout" || maneuver == "roundabout_left";
-  drawText(roundabout && exitNumber > 0 ? "EXIT " + String(exitNumber)
-                                      : maneuver == "left" ? "LEFT"
-                                      : maneuver == "slight_left" ? "SL LEFT"
-                                      : maneuver == "sharp_left" ? "SH LEFT"
-                                      : maneuver == "keep_left" ? "KEEP L"
-                                      : maneuver == "right" ? "RIGHT"
-                                      : maneuver == "slight_right" ? "SL RIGHT"
-                                      : maneuver == "sharp_right" ? "SH RIGHT"
-                                      : maneuver == "keep_right" ? "KEEP R"
-                                      : maneuver == "u_turn" ? "U-TURN"
-                                      : maneuver == "u_turn_right" ? "U-TURN R"
-                                      : maneuver == "off_route" ? "OFF ROUTE"
-                                      : maneuver == "arrive" ? "ARRIVE" : "AHEAD",
-           65, 75, 1, COLOR_TEXT, COLOR_PANEL);
-  drawText("ONTO", 65, 89, 1, COLOR_WAIT, COLOR_PANEL);
   drawNavigationStreet(street, true);
   drawNavigationDistance(distanceMeters);
   navigationOnScreen = true;

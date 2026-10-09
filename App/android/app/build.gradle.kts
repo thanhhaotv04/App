@@ -1,5 +1,8 @@
 plugins {
     id("com.android.application")
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services")
+    // END: FlutterFire Configuration
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -27,6 +30,9 @@ android {
 
     dependencies {
         implementation("net.osmand:android-aidl-lib:5.4@aar")
+        implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
+        implementation("com.google.firebase:firebase-auth")
+        implementation("com.google.firebase:firebase-firestore")
         testImplementation("junit:junit:4.13.2")
         testImplementation("org.json:json:20240303")
         testImplementation("org.mockito:mockito-inline:5.2.0")

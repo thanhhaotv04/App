@@ -38,6 +38,21 @@ và APK cập nhật đã tải. Dữ liệu trên ESP32, quyền Android và gh
 bao gồm dữ liệu app. HTTP chỉ dành cho mạng nội bộ tin cậy vì chưa mã hóa;
 địa chỉ công khai cần HTTPS. Chi tiết: [kiểm tra quyền riêng tư](../PRIVACY_REVIEW.md).
 
+### Fleet tracking (tùy chọn)
+
+Mở `Settings → Fleet tracking`, đăng nhập tài khoản tài xế Firebase đã được
+quản lý đội xe tạo, nhập `Fleet ID`/`Vehicle ID` được gán và bấm `Start trip`.
+Điện thoại yêu cầu GPS chính xác và hiện thông báo vị trí khi đang chia sẻ.
+Chỉ vị trí GPS thật, mới và đủ chính xác cùng tốc độ được gửi tối đa 30 giây/lần
+đến Firestore; không tải thông báo, ảnh QR hoặc chỉ dẫn OsmAnd. `End trip`
+dừng chia sẻ và xóa tọa độ khỏi trạng thái hiện hành. Nếu mất mạng, app báo
+đang chờ đồng bộ; điểm đầu tiên lưu ngay khi có GPS đạt chuẩn, sau đó mỗi 10
+phút khi offline hoặc 5 phút khi online nếu đã di chuyển hơn 100 m.
+Firestore giữ các lệnh ghi trên điện thoại và tự tải lên khi có mạng; không
+gỡ app trước khi đồng bộ xong. Có thể mở lịch sử chuyến từ nút `View route
+dashboard`; chỉ đường BLE vẫn hoạt động. Tài khoản và xe cần được quản lý đội xe
+cấp quyền trước; xem lịch sử tại [NavRide Fleet Dashboard](https://navride-96851.web.app).
+
 Ứng dụng tập trung vào bốn chức năng chính: chọn Wi-Fi/Bluetooth, gửi thông
 báo cá nhân, quản lý việc cần làm và chuyển chỉ dẫn OsmAnd qua BLE. Android
 đăng ký API dẫn đường chính thức của OsmAnd và đọc `getAppInfo().turnInfo`:

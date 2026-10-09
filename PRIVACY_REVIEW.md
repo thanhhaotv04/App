@@ -52,8 +52,17 @@ recalled from everyone who had access to it.
 
 - Local HTTP is not encrypted. Use trusted Wi-Fi or authenticated Bluetooth
   when sending private content or Wi-Fi credentials.
-- The app does not save GPS coordinates or route history and has no analytics
-  or cloud sync. OsmAnd and the user-selected update server have separate data
+- Fleet tracking is opt-in: after the driver signs in and starts a trip, the
+  foreground location service sends current GPS coordinates and speed to the
+  assigned vehicle's Firebase Firestore document. It stops on End trip and
+  clears coordinates in the final status. Route points are saved separately
+  after five minutes online or ten minutes offline and 100 m of movement;
+  Firestore's Android disk cache queues offline writes for later upload. Trip
+  start/end records are stored separately. Uploaded records remain until an authorized
+  administrator removes them; local data deletion does not remove them.
+  Mock locations are rejected. Personal
+  notifications, QR assets and OsmAnd directions are not uploaded. There is no
+  analytics collection. OsmAnd and the user-selected update server have separate data
   handling. This review does not audit those external applications/services.
 - Existing published APKs are unchanged; these fixes require a newly built
   app and firmware. The current Android package is `com.thanhhao.esp32_navride`;

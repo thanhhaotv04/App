@@ -1,106 +1,35 @@
+<p align="center"><img src="App/web/icons/Icon-512.png" width="112" alt="Biểu tượng ESP32-NavRide"></p>
+
 # ESP32-NavRide
 
-ESP32-NavRide là màn hình phụ cho xe máy, sử dụng ESP32-S3 N16R8 và TFT
-ST7735 1.8 inch (128×160). App Android gửi chỉ dẫn từ OsmAnd qua Bluetooth LE
-để hiển thị mũi tên, tên đường sắp rẽ và khoảng cách. App cũng hỗ trợ gửi tốc độ
-GPS của điện thoại, thông báo cá nhân và việc cần làm.
+**Nhìn hướng rẽ mà không cần nhìn bản đồ trên điện thoại.** OsmAnd chỉ đường, app ESP32-NavRide chuyển mũi tên, tên đường, khoảng cách và tốc độ GPS lên màn hình ESP32-S3 1,8 inch.
 
-Firmware có đồng hồ, Stopwatch, Timer, QR và chế độ chỉ hiển thị giờ.
-Có thể kết nối bằng Wi-Fi hoặc Bluetooth; sau khi kết nối, chỉ một phương thức
-hoạt động tại một thời điểm. Dẫn đường qua Bluetooth không cần Wi-Fi;
-OsmAnd cần tải trước bản đồ nếu muốn sử dụng ngoại tuyến.
+Điện thoại kết nối ESP32 bằng **Bluetooth** (dẫn đường không cần Wi-Fi) hoặc **Wi-Fi**. App còn gửi thông báo, việc cần làm; màn hình có đồng hồ, bấm giờ và hẹn giờ.
 
-## Cấu trúc repo
+## Hình ảnh
 
-| Thư mục | Nội dung |
+| 1. OsmAnd và ESP32 đã kết nối | 2. Chọn Bluetooth hoặc Wi-Fi |
 | --- | --- |
-| [Firmware/](Firmware/) | Firmware ESP32-S3, cấu hình PlatformIO và tài liệu nối dây |
-| [App/](App/) | App Flutter; cầu nối OsmAnd chạy trên Android |
-| [App/backend/](App/backend/) | Máy chủ tải và cập nhật APK trong app |
-| [App/backend/releases/](App/backend/releases/) | APK đã phát hành và thông tin phiên bản |
+| <img src="docs/images/01-navigation.jpg" width="260" alt="App báo OsmAnd và màn hình ESP32 đã sẵn sàng"> | <img src="docs/images/02-connection.jpg" width="260" alt="Cài đặt kết nối Bluetooth và Wi-Fi"> |
 
-## Nạp firmware bằng PlatformIO
+| 3. Tạo thông báo trong app | 4. OsmAnd dẫn đường |
+| --- | --- |
+| <img src="docs/images/03-content.jpg" width="260" alt="Màn hình thông báo và việc cần làm"> | <img src="docs/images/04-osmand.jpg" width="260" alt="Tuyến đường và hướng rẽ trong OsmAnd"> |
 
-1. Cài **VS Code** và extension **PlatformIO IDE**.
-2. Mở thư mục **Firmware/** trong VS Code, nơi có [platformio.ini](Firmware/platformio.ini).
-   Cấu hình hiện tại dành cho ESP32-S3 N16R8 (16 MB flash, 8 MB Octal PSRAM).
-3. Nối màn hình theo [hướng dẫn firmware](Firmware/README.md).
-4. Tạo file `Firmware/include/secrets.h` với nội dung sau. Có thể để trống
-   SSID/mật khẩu để thiết lập kết nối từ app; file này đã được bỏ qua bởi Git.
+| 5. Hướng rẽ trên ESP32 | 6. Menu trên ESP32 |
+| --- | --- |
+| <img src="docs/images/05-display.jpg" width="260" alt="Màn hình ESP32 hiển thị hướng rẽ, tên đường và khoảng cách"> | <img src="docs/images/06-menu.jpg" width="260" alt="Menu Wi-Fi, Bluetooth, chủ đề, thông tin ESP32, QR và đồng hồ"> |
 
-```cpp
-#pragma once
+**7. Fleet management — đang phát triển.** Khi bạn chủ động bắt đầu chuyến đi, app lưu các điểm GPS và đồng bộ với Firebase khi có mạng. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
 
-constexpr char DEFAULT_WIFI_SSID[] = "";
-constexpr char DEFAULT_WIFI_PASSWORD[] = "";
-```
+<img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản">
 
-Cắm cáp USB có truyền dữ liệu, mở terminal PlatformIO trong thư mục `Firmware/`
-và chạy:
+Firebase đã kết nối và đã thử đồng bộ điểm ghi khi mất mạng. [Xem lịch sử chuyến đi trên dashboard](https://navride-96851.web.app) (cần tài khoản được cấp quyền).
 
-```bash
-pio run
-pio device list
-pio run -t upload --upload-port /dev/ttyACM0
-pio device monitor --port /dev/ttyACM0 --baud 115200
-```
+## Bắt đầu
 
-Thay `/dev/ttyACM0` bằng cổng thực tế từ `pio device list`. Trên Linux, cổng
-OTG/native USB thường là `/dev/ttyACM0`, cổng TTL/CH340 thường là `/dev/ttyUSB0`;
-Windows dùng `COMx`. Log của firmware hiện đi qua cổng OTG/native USB.
-Cũng có thể dùng các nút **Build**, **Upload** và **Serial Monitor** của PlatformIO.
+- **App Android:** mã nguồn và cách cài/build APK ở [App/](App/README.md). APK cũ trong repo thuộc package ID cũ; để dùng Firebase, hãy build app hiện tại theo hướng dẫn.
+- **Firmware ESP32-S3:** mã nguồn, sơ đồ dây và cách nạp bằng PlatformIO ở [Firmware/](Firmware/README.md).
+- **OsmAnd:** cài trên điện thoại, tải bản đồ, bật tích hợp ESP32-NavRide rồi bắt đầu dẫn đường. [Các bước kết nối](App/README.md).
 
-Nếu bo chưa vào chế độ nạp: giữ **BOOT**, nhấn-thả **RST**, thả **BOOT**, rồi
-thử Upload lại. Sau khi nạp xong, nhấn RST để chạy firmware nếu cần.
-
-## App và tải APK
-
-Mã nguồn app nằm trong [App/](App/). Tải
-[APK đã phát hành: ESP32-NavRide 261001.4](App/backend/releases/esp32-navride-261001.4.apk).
-Trên GitHub, mở tệp rồi chọn **Download raw file** nếu trình duyệt chưa tự tải.
-Chuyển APK sang điện thoại Android, mở tệp và cho phép cài ứng dụng từ nguồn
-đang mở tệp khi Android yêu cầu.
-
-APK đã phát hành có thể chưa chứa các thay đổi mới nhất trong mã nguồn.
-Để tự tạo APK từ source hiện tại, cài Flutter SDK và Android SDK, rồi chạy
-từ thư mục gốc repo:
-
-```bash
-cd App
-flutter pub get
-flutter build apk --release
-```
-
-APK tạo ra tại `App/build/app/outputs/flutter-apk/app-release.apk` (tính từ
-thư mục gốc repo).
-
-### Tải/cập nhật qua mạng nội bộ
-
-Cài Node.js 22 trở lên và chạy từ thư mục gốc repo:
-
-```bash
-node App/backend/server.js
-```
-
-Cho điện thoại và máy tính vào cùng mạng Wi-Fi, mở địa chỉ sau trên điện thoại
-để tải APK đã phát hành; thay `<IP-may-tinh>` bằng IP máy chạy backend:
-
-```text
-http://<IP-may-tinh>:3000/releases/esp32-navride-261001.4.apk
-```
-
-Nếu đã cài app, vào **Settings → App updates**, nhập
-`http://<IP-may-tinh>:3000`, rồi chọn **Check for updates**. Backend phục vụ
-bản trong `App/backend/releases/latest.json`; build APK riêng không tự cập nhật
-bản phát hành này. Chi tiết phát hành và thiết lập OsmAnd: [App/README.md](App/README.md).
-
-## Kết nối OsmAnd
-
-Trên ESP32, chọn **Menu → Bluetooth** hoặc nhấn Button 2. Trong app, chọn
-**Settings → Bluetooth → ESP32-NavRide**, nhập PIN trên màn hình ESP32 nếu
-được hỏi và cấp quyền truy cập thông báo. Trong OsmAnd, bật tích hợp
-**ESP32-NavRide** ở **Menu → Plugins**, rồi bắt đầu dẫn đường.
-
-Để thử giao diện app trên máy tính, chạy `flutter run -d chrome` trong `App/`.
-Cầu nối OsmAnd yêu cầu APK Android; bản web chỉ dùng để thử giao diện và
-gửi lệnh thủ công khi có kết nối phù hợp.
+Chỉ dùng màn hình phụ khi điều khiển xe an toàn; hãy thiết lập app và ESP32 khi xe đã dừng.

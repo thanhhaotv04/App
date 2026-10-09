@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.google.firebase.auth.FirebaseAuth
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -19,51 +20,82 @@ import java.security.MessageDigest
 class MainActivity : FlutterActivity() {
     private val navigationChannelName = "esp32_navride/navigation"
     private val updateChannelName = "esp32_navride/update"
-    private var speedPermissionResult: MethodChannel.Result? = null
+    private var locationPermissionResult: MethodChannel.Result? = null
+    private var pendingLocationStart: Intent? = null
 
     private fun startSpeed(result: MethodChannel.Result) {
         if (!NavigationBleSender.isConnected()) {
             result.error("not_connected", "Connect ESP32 via Bluetooth first.", null)
             return
         }
+        startLocationService(result, Intent(this, SpeedService::class.java).setAction(SpeedService.START_SPEED))
+    }
+
+    private fun startFleetTrip(result: MethodChannel.Result, fleetId: String, vehicleId: String) {
+        if (FirebaseAuth.getInstance().currentUser == null) {
+            result.error("not_signed_in", "Sign in to your fleet account first.", null)
+            return
+        }
+        if (!fleetId.matches(Regex("[A-Za-z0-9_-]{1,64}")) ||
+            !vehicleId.matches(Regex("[A-Za-z0-9_-]{1,64}"))) {
+            result.error("invalid_vehicle", "Enter a valid fleet and vehicle ID.", null)
+            return
+        }
+        if (SpeedService.fleetActive) {
+            result.error("trip_busy", "End the current trip first.", null)
+            return
+        }
+        startLocationService(result, Intent(this, SpeedService::class.java)
+            .setAction(SpeedService.START_FLEET)
+            .putExtra("fleetId", fleetId)
+            .putExtra("vehicleId", vehicleId))
+    }
+
+    private fun startLocationService(result: MethodChannel.Result, intent: Intent) {
         val locations = getSystemService(android.location.LocationManager::class.java)
         if (!locations.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
-            result.error("gps_disabled", "Turn on phone location, then start GPS speed.", null)
+            result.error("gps_disabled", "Turn on phone location, then try again.", null)
             return
         }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            if (speedPermissionResult != null) {
+            if (locationPermissionResult != null) {
                 result.error("permission_pending", "Finish the location permission request first.", null)
                 return
             }
-            speedPermissionResult = result
+            locationPermissionResult = result
+            pendingLocationStart = intent
             val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             requestPermissions(permissions.toTypedArray(), 7301)
             return
         }
         try {
-            val intent = Intent(this, SpeedService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
             result.success(true)
         } catch (error: Exception) {
-            result.error("gps_start_failed", "Could not start GPS speed. Keep NavRide open and try again.", null)
+            result.error("gps_start_failed", "Could not start GPS. Keep NavRide open and try again.", null)
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 7301) {
-            val result = speedPermissionResult ?: return
-            speedPermissionResult = null
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startSpeed(result)
-            else result.error("location_denied", "GPS speed needs precise location while using the app. You can still use navigation without it.", null)
+            val result = locationPermissionResult ?: return
+            val intent = pendingLocationStart ?: return
+            locationPermissionResult = null
+            pendingLocationStart = null
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                startLocationService(result, intent)
+            } else {
+                result.error("location_denied", "Precise location is required for GPS sharing. Navigation still works without it.", null)
+            }
         }
     }
 
     override fun onDestroy() {
-        speedPermissionResult?.error("activity_closed", "Open NavRide to start GPS speed.", null)
-        speedPermissionResult = null
+        locationPermissionResult?.error("activity_closed", "Open NavRide to start GPS.", null)
+        locationPermissionResult = null
+        pendingLocationStart = null
         super.onDestroy()
     }
 
@@ -86,10 +118,29 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getSpeedStatus" -> result.success(SpeedService.status())
+                    "getFleetStatus" -> result.success(SpeedService.fleetStatus())
                     "startSpeed" -> startSpeed(result)
                     "stopSpeed" -> {
-                        stopService(Intent(this, SpeedService::class.java))
+                        startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_SPEED))
                         result.success(true)
+                    }
+                    "startFleetTrip" -> startFleetTrip(
+                        result,
+                        call.argument<String>("fleetId")?.trim().orEmpty(),
+                        call.argument<String>("vehicleId")?.trim().orEmpty(),
+                    )
+                    "stopFleetTrip" -> {
+                        startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_FLEET))
+                        result.success(true)
+                    }
+                    "openFleetDashboard" -> {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://navride-96851.web.app")))
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.error("dashboard_unavailable", "Could not open the fleet dashboard.", null)
+                        }
                     }
                     "sendSpeedSample" -> {
                         result.success(!SpeedService.running &&
@@ -150,12 +201,16 @@ class MainActivity : FlutterActivity() {
                     }
                     "disableOsmAndBridge" -> {
                         NavigationBridgeStore.clear(this)
-                        stopService(Intent(this, SpeedService::class.java))
+                        startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_SPEED))
                         OsmAndNotificationListener.stopBridge()
                         NavigationBleSender.close()
                         result.success(true)
                     }
                     "clearLocalData" -> {
+                        if (SpeedService.fleetActive || SpeedService.fleetStatus()["pending"] == true) {
+                            result.error("trip_active", "End the fleet trip and wait for cloud sync before deleting data.", null)
+                            return@setMethodCallHandler
+                        }
                         NavigationBridgeStore.clear(this)
                         stopService(Intent(this, SpeedService::class.java))
                         OsmAndNotificationListener.stopBridge()
