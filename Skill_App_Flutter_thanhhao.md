@@ -30,47 +30,39 @@ Với app cá nhân như task/reminder/money/check-in, nên thiết kế:
 
 - Đăng nhập local được dù không có backend URL.
 - Dữ liệu chính lưu local trước.
-- Backend URL chỉ cần khi bấm Sync, Check update, hoặc tải APK.
+- Backend URL chỉ cần khi bấm Sync, Check update, hoặc tải APK. Khôi phục đăng
+  nhập bằng mật khẩu server chỉ kết nối khi người dùng chủ động chọn, và chỉ
+  dùng server đã liên kết với tài khoản.
 - Không bắt điện thoại phải chung mạng với máy tính database nếu người dùng chỉ
   muốn thêm/sửa task offline.
 
 Trong `task-reminder`, dữ liệu local dùng `SharedPreferences`:
 
-- `task-reminder-tasks-v1`
-- `task-reminder-assignments-v1`
+- `task-reminder-tasks-v1:<account hash>`
+- `task-reminder-assignments-v1:<account hash>`
 - `task-reminder-backend-url`
 - `task-reminder-auth-user`
-- `task-reminder-auth-password`
+
+Mật khẩu và bearer token chỉ lưu trong platform secure storage; không lưu vào
+SharedPreferences. Khóa mật khẩu plaintext cũ được xóa sau khi chuyển đổi an toàn.
 
 ## 3. Chạy preview web đúng cách
 
 Chạy web preview:
 
 ```bash
-flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081
+flutter run -d web-server --web-hostname 127.0.0.1 --web-port 8081
 ```
 
-Mở bằng IP LAN của máy:
+Mở trên máy phát triển:
 
 ```text
-http://192.168.x.x:8081/
+http://localhost:8081/
 ```
 
-Lấy IP hiện tại:
-
-```bash
-hostname -I | awk '{print $1}'
-```
-
-Nếu `127.0.0.1:8081` không hoạt động nhưng IP LAN hoạt động thì không vội sửa
-app. Hãy kiểm tra bằng:
-
-```bash
-curl -I http://192.168.x.x:8081/
-```
-
-Khi đổi mạng Wi-Fi, IP có thể đổi. README, backend `ALLOWED_ORIGINS`, và Backend
-URL trong app có thể cần cập nhật theo IP mới.
+Nếu cần preview qua LAN, dùng HTTPS với chứng chỉ được trình duyệt tin cậy.
+Secure storage trên web cần HTTPS hoặc localhost; không có fallback lưu mật khẩu
+plaintext cho trình duyệt qua HTTP LAN.
 
 ## 4. Backend chỉ mở đúng origin khi test web
 
@@ -78,33 +70,25 @@ Khi chạy backend để sync/update:
 
 ```bash
 cd backend
-npm install
-ALLOWED_ORIGINS=http://192.168.x.x:8081 npm start
+npm ci
+ALLOWED_ORIGINS=http://localhost:8081 npm start
 ```
 
 Không nên để CORS mở quá rộng khi release. Nếu app web đổi port hoặc IP, backend
 cần đổi `ALLOWED_ORIGINS` theo.
 
-## 5. HTTP trong Android release phải chọn theo mục tiêu
+## 5. Android và backend ngoài loopback phải dùng HTTPS
 
-Nếu release production thật và backend có đăng nhập/mật khẩu, nên dùng HTTPS và
-chặn HTTP cleartext:
+Android chặn HTTP cleartext cho cả debug và release:
 
 ```kotlin
 manifestPlaceholders["usesCleartextTraffic"] = "false"
 ```
 
-Nếu app cần cập nhật qua backend local dạng `http://192.168.x.x:3002`, Android
-release phải cho phép HTTP:
-
-```kotlin
-manifestPlaceholders["usesCleartextTraffic"] = "true"
-```
-
-Kinh nghiệm với `task-reminder`: app cá nhân chạy backend local để sync/update
-APK trong mạng LAN thì có thể bật `usesCleartextTraffic=true` cho release. Nhưng
-nếu đưa ra môi trường production hoặc server public, phải chuyển sang HTTPS vì
-header `X-Password` có chứa mật khẩu.
+Backend LAN cũng phải dùng HTTPS; HTTP chỉ được phép với loopback khi phát triển
+web/desktop. Không bật lại `usesCleartextTraffic=true` để bỏ qua kiểm tra này.
+Sync dùng bearer token; `X-Password` và reset mật khẩu không xác thực đã bị loại bỏ.
+Lần Sync đầu tiên tới server mới cần xác nhận nơi nhận tài khoản và công việc.
 
 ## 6. APK release phải được ký
 

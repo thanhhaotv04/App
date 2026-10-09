@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'models.dart';
@@ -155,6 +158,8 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
   bool _loading = true;
   String? _userName;
   String? _password;
+  String? _startupError;
+  bool _hasLocalAccount = false;
 
   @override
   void initState() {
@@ -163,38 +168,117 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
   }
 
   Future<void> _loadAuth() async {
-    final auth = await AuthCache.load();
+    (String, String)? auth;
+    try {
+      auth = await AuthCache.load();
+      _hasLocalAccount = auth != null || await AuthCache.hasAnyLocalAccount();
+    } catch (error) {
+      _startupError = error.toString();
+      auth = null;
+    }
     if (!mounted) return;
     setState(() {
       _userName = auth?.$1;
       _password = auth?.$2;
       _loading = false;
     });
+    unawaited(_flushPendingRevocations());
   }
 
   Future<String?> _login(String user, String password) async {
     final name = user.trim();
-    await AuthCache.save(name, password);
+    final error = await AuthCache.signIn(name, password);
+    if (error != null) return error;
     if (mounted) {
       setState(() {
         _userName = name;
         _password = password;
+        _hasLocalAccount = true;
       });
     }
     return null;
   }
 
   Future<String?> _register(String user, String password) async {
-    return _login(user, password);
+    final name = user.trim();
+    final error = await AuthCache.register(name, password);
+    if (error != null) return error;
+    if (mounted) {
+      setState(() {
+        _userName = name;
+        _password = password;
+        _hasLocalAccount = true;
+      });
+    }
+    return null;
+  }
+
+  Future<String?> _loginWithServerPassword(String user, String password) async {
+    final name = user.trim();
+    final baseUrl = await AuthCache.linkedBackend(name);
+    if (baseUrl.isEmpty) {
+      return 'This account has no linked server. Use its password from this device.';
+    }
+    // Use the previously linked origin, never an edited or unverified URL.
+    final session = await AuthService(baseUrl: baseUrl).signIn(name, password);
+    await AuthCache.queueCurrentTokenForRevocation(name);
+    await AuthCache.updatePassword(name, password);
+    await AuthCache.saveToken(session.token, baseUrl: baseUrl, userName: name);
+    if (mounted) {
+      setState(() {
+        _userName = name;
+        _password = password;
+        _hasLocalAccount = true;
+        _startupError = null;
+      });
+    }
+    unawaited(_flushPendingRevocations());
+    return null;
   }
 
   Future<void> _logout() async {
-    await AuthCache.clear();
-    if (!mounted) return;
-    setState(() {
-      _userName = null;
-      _password = null;
-    });
+    try {
+      await AuthCache.queueCurrentTokenForRevocation(_userName ?? '');
+    } catch (_) {
+      // Local sign-out must still work when revocation cannot be queued.
+    }
+    try {
+      await AuthCache.clear();
+    } catch (error) {
+      _startupError = 'Signed out. Credential cleanup needs a retry: $error';
+    } finally {
+      try {
+        await LocalReminderService.instance.cancelAll();
+      } catch (_) {
+        _startupError =
+            'Signed out. Disable notifications in system settings if old reminders remain.';
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _userName = null;
+        _password = null;
+      });
+    }
+    unawaited(_flushPendingRevocations());
+  }
+
+  Future<void> _flushPendingRevocations() async {
+    try {
+      for (final session in await AuthCache.pendingRevocations()) {
+        final token = session['token'] ?? '';
+        final baseUrl = session['baseUrl'] ?? '';
+        if (token.isEmpty || baseUrl.isEmpty) continue;
+        try {
+          await AuthService(baseUrl: baseUrl).logout(token);
+          await AuthCache.completeRevocation(token);
+        } catch (_) {
+          // Offline is valid; retry on the next launch or sign-out.
+        }
+      }
+    } catch (_) {
+      // Secure storage may be unavailable before the platform is ready.
+    }
   }
 
   Future<String?> _changePassword(
@@ -203,13 +287,41 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
     String confirmation,
   ) async {
     if (_password != currentPassword) return 'Current password is incorrect.';
-    if (newPassword.length < 8) {
-      return 'New password must be at least 8 characters.';
+    if (newPassword.length < 8 || newPassword.length > 256) {
+      return 'New password must contain 8–256 characters.';
     }
     if (newPassword != confirmation) {
       return 'Password confirmation does not match.';
     }
-    await AuthCache.save(_userName!, newPassword);
+    final baseUrl = await BackendConfig.loadUrl();
+    final linkedBackend = await AuthCache.linkedBackend(_userName!);
+    if (linkedBackend.isNotEmpty && baseUrl != linkedBackend) {
+      return 'Restore your linked Backend URL ($linkedBackend) before changing the password.';
+    }
+    AuthSession? newSession;
+    if (linkedBackend.isNotEmpty) {
+      try {
+        final session = await AuthService(
+          baseUrl: baseUrl,
+        ).signIn(_userName!, currentPassword);
+        newSession = await AuthService(baseUrl: baseUrl).updatePassword(
+          name: _userName!,
+          currentPassword: currentPassword,
+          newPassword: newPassword,
+          token: session.token,
+        );
+      } catch (error) {
+        return 'Backend password was not changed: $error';
+      }
+    }
+    await AuthCache.updatePassword(_userName!, newPassword);
+    if (newSession != null) {
+      await AuthCache.saveToken(
+        newSession.token,
+        baseUrl: baseUrl,
+        userName: _userName!,
+      );
+    }
     if (mounted) setState(() => _password = newPassword);
     return null;
   }
@@ -227,8 +339,15 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
         home: _loading
             ? const Scaffold(body: Center(child: CircularProgressIndicator()))
             : _userName == null || _password == null
-            ? AuthScreen(onLogin: _login, onRegister: _register)
+            ? AuthScreen(
+                onLogin: _login,
+                onRegister: _register,
+                onServerLogin: _loginWithServerPassword,
+                hasAccount: _hasLocalAccount,
+                initialError: _startupError,
+              )
             : HomeScreen(
+                key: ValueKey(_userName),
                 userName: _userName!,
                 password: _password!,
                 onLogout: _logout,
@@ -249,16 +368,16 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
       secondary: colors.secondary,
       error: colors.error,
     );
+    final textTheme = ThemeData(
+      brightness: brightness,
+    ).textTheme.apply(bodyColor: colors.primary, displayColor: colors.primary);
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
       extensions: [colors],
       scaffoldBackgroundColor: colors.surface,
-      textTheme: ThemeData(brightness: brightness).textTheme.apply(
-        bodyColor: colors.primary,
-        displayColor: colors.primary,
-      ),
+      textTheme: textTheme,
       cardTheme: CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,
@@ -296,7 +415,10 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
           backgroundColor: colors.primary,
           foregroundColor: dark ? colors.surface : AppColors.surface,
           minimumSize: const Size.fromHeight(54),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          textStyle: textTheme.labelLarge?.copyWith(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -370,6 +492,9 @@ class _TaskReminderAppState extends State<TaskReminderApp> {
 }
 
 typedef AuthCallback = Future<String?> Function(String user, String password);
+
+enum AuthMode { signIn, register }
+
 typedef ChangePasswordCallback =
     Future<String?> Function(
       String currentPassword,
@@ -382,10 +507,16 @@ class AuthScreen extends StatefulWidget {
     super.key,
     required this.onLogin,
     required this.onRegister,
+    this.onServerLogin,
+    this.hasAccount = false,
+    this.initialError,
   });
 
   final AuthCallback onLogin;
   final AuthCallback onRegister;
+  final AuthCallback? onServerLogin;
+  final bool hasAccount;
+  final String? initialError;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -394,32 +525,57 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _user = TextEditingController();
   final _password = TextEditingController();
-  bool _registering = false;
+  final _confirmation = TextEditingController();
+  late AuthMode _mode;
   bool _busy = false;
+  bool _showPassword = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = widget.hasAccount ? AuthMode.signIn : AuthMode.register;
+    _error = widget.initialError;
+  }
 
   @override
   void dispose() {
     _user.dispose();
     _password.dispose();
+    _confirmation.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (_user.text.trim().isEmpty || _password.text.length < 8) {
-      setState(
-        () => _error =
-            'Enter a username and a password with at least 8 characters.',
-      );
+  Future<void> _submit({bool useServer = false}) async {
+    if (_busy) return;
+    final registering = _mode == AuthMode.register;
+    final validation = AuthCache.validateCredentials(
+      _user.text.trim(),
+      _password.text,
+      existing: !registering,
+    );
+    if (validation != null) {
+      setState(() => _error = validation);
+      return;
+    }
+    if (registering && _password.text != _confirmation.text) {
+      setState(() => _error = 'Password confirmation does not match.');
       return;
     }
     setState(() {
       _busy = true;
       _error = null;
     });
-    final error = _registering
-        ? await widget.onRegister(_user.text, _password.text)
-        : await widget.onLogin(_user.text, _password.text);
+    String? error;
+    try {
+      error = registering
+          ? await widget.onRegister(_user.text, _password.text)
+          : useServer
+          ? await widget.onServerLogin!(_user.text, _password.text)
+          : await widget.onLogin(_user.text, _password.text);
+    } catch (caught) {
+      error = caught.toString();
+    }
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -437,79 +593,165 @@ class _AuthScreenState extends State<AuthScreen> {
           padding: const EdgeInsets.all(24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      _registering ? 'Create account' : 'Sign in',
-                      style: Theme.of(context).textTheme.headlineMedium
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Use offline first. Backend is only needed when syncing.',
-                      style: TextStyle(color: colors.muted),
-                    ),
-                    const SizedBox(height: 24),
-                    TextField(
-                      controller: _user,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _password,
-                      obscureText: true,
-                      onSubmitted: (_) => _submit(),
-                      decoration: const InputDecoration(
-                        labelText: 'Password',
-                        prefixIcon: Icon(Icons.lock_outline),
-                      ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
+            child: AutofillGroup(
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                        'Welcome to task-reminder',
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _mode == AuthMode.signIn
+                            ? 'Sign in to continue with tasks saved on this device.'
+                            : 'Create a private account on this device. No server is required.',
+                        style: TextStyle(color: colors.muted),
+                      ),
+                      const SizedBox(height: 20),
+                      SegmentedButton<AuthMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: AuthMode.signIn,
+                            icon: Icon(Icons.login_outlined),
+                            label: Text('Sign in'),
+                          ),
+                          ButtonSegment(
+                            value: AuthMode.register,
+                            icon: Icon(Icons.person_add_alt_1_outlined),
+                            label: Text('Register'),
+                          ),
+                        ],
+                        selected: {_mode},
+                        onSelectionChanged: _busy
+                            ? null
+                            : (selection) => setState(() {
+                                _mode = selection.first;
+                                _error = null;
+                                _showPassword = false;
+                                _password.clear();
+                                _confirmation.clear();
+                              }),
+                      ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: _user,
+                        enabled: !_busy,
+                        autofillHints: const [AutofillHints.username],
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Username',
+                          prefixIcon: Icon(Icons.person_outline),
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 20),
-                    FilledButton(
-                      onPressed: _busy ? null : _submit,
-                      child: _busy
-                          ? const SizedBox.square(
-                              dimension: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(_registering ? 'Create account' : 'Sign in'),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      children: [
-                        TextButton(
-                          onPressed: _busy
-                              ? null
-                              : () => setState(() {
-                                  _registering = !_registering;
-                                  _error = null;
-                                }),
-                          child: Text(
-                            _registering
-                                ? 'Already have an account'
-                                : 'Create account',
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _password,
+                        enabled: !_busy,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        autofillHints: [
+                          _mode == AuthMode.register
+                              ? AutofillHints.newPassword
+                              : AutofillHints.password,
+                        ],
+                        obscureText: !_showPassword,
+                        textInputAction: _mode == AuthMode.register
+                            ? TextInputAction.next
+                            : TextInputAction.done,
+                        onSubmitted: (_) {
+                          if (_mode == AuthMode.signIn) _submit();
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Password',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            tooltip: _showPassword
+                                ? 'Hide password'
+                                : 'Show password',
+                            onPressed: () =>
+                                setState(() => _showPassword = !_showPassword),
+                            icon: Icon(
+                              _showPassword
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (_mode == AuthMode.register) ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _confirmation,
+                          enabled: !_busy,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          autofillHints: const [AutofillHints.newPassword],
+                          obscureText: !_showPassword,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _submit(),
+                          decoration: const InputDecoration(
+                            labelText: 'Confirm password',
+                            prefixIcon: Icon(Icons.lock_reset_outlined),
                           ),
                         ),
                       ],
-                    ),
-                  ],
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            _error!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        onPressed: _busy ? null : _submit,
+                        icon: _busy
+                            ? const SizedBox.square(
+                                dimension: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(
+                                _mode == AuthMode.signIn
+                                    ? Icons.login_outlined
+                                    : Icons.person_add_alt_1_outlined,
+                              ),
+                        label: Text(
+                          _mode == AuthMode.signIn
+                              ? 'Sign in'
+                              : 'Create account',
+                        ),
+                      ),
+                      if (_mode == AuthMode.signIn &&
+                          _error != null &&
+                          widget.onServerLogin != null) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Password changed on another device? Use the password from your linked server.',
+                        ),
+                        TextButton.icon(
+                          onPressed: _busy
+                              ? null
+                              : () => _submit(useServer: true),
+                          icon: const Icon(Icons.cloud_outlined),
+                          label: const Text('Sign in with server password'),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -595,6 +837,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<TaskItem> _tasks = [];
   List<TaskAssignment> _assignments = [];
   int _page = 0;
+  String? _loadError;
 
   @override
   void initState() {
@@ -603,17 +846,37 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _load() async {
-    final store = _store ?? await TaskStore.load();
-    if (!mounted) return;
-    setState(() {
-      _store = store;
-      _tasks = store.tasks();
-      _assignments = store.assignments();
-    });
-    await LocalReminderService.instance.reschedule(
-      tasks: _tasks,
-      assignments: _assignments,
-    );
+    try {
+      final store = _store ?? await TaskStore.load(userName: widget.userName);
+      if (!mounted) return;
+      final tasks = store.tasks();
+      final assignments = store.assignments();
+      setState(() {
+        _store = store;
+        _tasks = tasks;
+        _assignments = assignments;
+        _loadError = null;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _loadError = error.toString());
+      return;
+    }
+    try {
+      await LocalReminderService.instance.reschedule(
+        tasks: _tasks,
+        assignments: _assignments,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Tasks are saved. Reminders could not be scheduled; check notification permissions.',
+            ),
+          ),
+        );
+      }
+    }
   }
 
   Future<TaskItem> _addTask(
@@ -694,6 +957,22 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _removeAssignment(TaskAssignment assignment) async {
     await _store!.removeAssignment(assignment.id);
     await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Scheduled task removed.'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              if (!mounted) return;
+              await _store!.restoreAssignment(assignment);
+              await _load();
+            },
+          ),
+        ),
+      );
   }
 
   Future<void> _snoozeAssignment(
@@ -715,12 +994,61 @@ class _HomeScreenState extends State<HomeScreen> {
       if (baseUrl.trim().isEmpty) {
         return 'Enter a Backend URL in Account before syncing.';
       }
-      final data = await TaskSyncService(
+      BackendConfig.validateUrl(baseUrl);
+      final linkedBackend = await AuthCache.linkedBackend(widget.userName);
+      if (linkedBackend != baseUrl) {
+        if (!mounted) return 'Sync interrupted because the account was closed.';
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Sync with this server?'),
+            content: Text(
+              'Your username, password and tasks will be sent to:\n\n$baseUrl\n\nOnly continue if you trust this server.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Sync'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) {
+          return 'Sync cancelled. Data stayed on this device.';
+        }
+      }
+      final token = await AuthCache.readToken(
+        baseUrl: baseUrl,
+        userName: widget.userName,
+      );
+      final service = TaskSyncService(
         baseUrl: baseUrl,
         userName: widget.userName,
         password: widget.password,
-      ).syncTwoWay(_tasks, _assignments);
-      await _store!.replaceAll(data);
+        token: token,
+      );
+      final data = await service.syncTwoWay(
+        _store!.allTasks(),
+        _store!.allAssignments(),
+      );
+      if (!mounted) return 'Sync interrupted because the account was closed.';
+      if (service.sessionToken?.isNotEmpty ?? false) {
+        await AuthCache.saveToken(
+          service.sessionToken!,
+          baseUrl: baseUrl,
+          userName: widget.userName,
+        );
+      }
+      await _store!.replaceAll(
+        mergeTaskData(
+          data,
+          TaskSyncData(_store!.allTasks(), _store!.allAssignments()),
+        ),
+      );
       await _load();
       return null;
     } catch (error) {
@@ -730,6 +1058,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loadError != null) {
+      return Scaffold(
+        appBar: const BrandAppBar(),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_loadError!),
+                TextButton(onPressed: _load, child: const Text('Retry')),
+                TextButton(
+                  onPressed: widget.onLogout,
+                  child: const Text('Sign out'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     if (_store == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -765,7 +1114,6 @@ class _HomeScreenState extends State<HomeScreen> {
         tasks: _tasks,
         assignments: _assignments,
         userName: widget.userName,
-        password: widget.password,
         onSync: _sync,
         onReload: _load,
         onLogout: widget.onLogout,
@@ -1343,23 +1691,31 @@ class _WorkListPageState extends State<WorkListPage> {
       builder: (context) => const AddTaskDialog(),
     );
     if (result == null) return;
-    final task = await widget.onAdd(
-      result.title,
-      result.note,
-      priority: result.priority,
-      iconKind: result.iconKind,
-      estimateMinutes: result.estimateMinutes,
-    );
-    for (final date in result.dates) {
-      await widget.onAssignDate(task, date, reminderTime: result.reminderTime);
+    try {
+      final task = await widget.onAdd(
+        result.title,
+        result.note,
+        priority: result.priority,
+        iconKind: result.iconKind,
+        estimateMinutes: result.estimateMinutes,
+      );
+      for (final date in result.dates) {
+        await widget.onAssignDate(
+          task,
+          date,
+          reminderTime: result.reminderTime,
+        );
+      }
+      if (!mounted) return;
+      final message = result.dates.isEmpty
+          ? 'Saved "${result.title}" to All Tasks'
+          : 'Saved "${result.title}" and added ${result.dates.length} schedules';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      _showSaveError(error);
     }
-    if (!mounted) return;
-    final message = result.dates.isEmpty
-        ? 'Saved "${result.title}" to All Tasks'
-        : 'Saved "${result.title}" and added ${result.dates.length} schedules';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _scheduleTask(TaskItem task) async {
@@ -1368,32 +1724,50 @@ class _WorkListPageState extends State<WorkListPage> {
       builder: (context) => ScheduleTaskDialog(task: task),
     );
     if (result == null) return;
-    await widget.onUpdateTask(
-      task,
-      result.title,
-      result.note,
-      result.iconKind,
-      result.priority,
-      result.estimateMinutes,
-    );
-    if (result.dates.isEmpty) {
+    try {
+      await widget.onUpdateTask(
+        task,
+        result.title,
+        result.note,
+        result.iconKind,
+        result.priority,
+        result.estimateMinutes,
+      );
+      if (result.dates.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved changes for "${result.title}"')),
+        );
+        return;
+      }
+      for (final date in result.dates) {
+        await widget.onAssignDate(
+          task,
+          date,
+          reminderTime: result.reminderTime,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved changes for "${result.title}"')),
-      );
-      return;
-    }
-    for (final date in result.dates) {
-      await widget.onAssignDate(task, date, reminderTime: result.reminderTime);
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Saved "${result.title}" and added ${result.dates.length} schedules',
+        SnackBar(
+          content: Text(
+            'Saved "${result.title}" and added ${result.dates.length} schedules',
+          ),
         ),
-      ),
-    );
+      );
+    } catch (error) {
+      _showSaveError(error);
+    }
+  }
+
+  void _showSaveError(Object error) {
+    if (!mounted) return;
+    final message = error is FormatException
+        ? error.message
+        : 'Could not finish saving. Please retry.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -1424,7 +1798,7 @@ class _WorkListPageState extends State<WorkListPage> {
               DoodlePanel(
                 shadowColor: colors.glow,
                 child: Text(
-                  'No tasks for today.',
+                  'No tasks for today. Tap + beside a task below, or use Add to create one.',
                   style: TextStyle(color: colors.muted),
                 ),
               )
@@ -1482,31 +1856,31 @@ class _WorkListPageState extends State<WorkListPage> {
         if (visibleTasks.isEmpty)
           DoodlePanel(
             shadowColor: colors.glow,
-            child: Text('No tasks yet.', style: TextStyle(color: colors.muted)),
+            child: Text(
+              'No tasks yet. Tap Add to create your first task.',
+              style: TextStyle(color: colors.muted),
+            ),
           )
         else
           LayoutBuilder(
             builder: (context, constraints) {
               final columns = constraints.maxWidth < 680 ? 1 : 2;
-              return GridView.builder(
-                itemCount: visibleTasks.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
-                  childAspectRatio: constraints.maxWidth < 420 ? 3.0 : 3.8,
-                ),
-                itemBuilder: (context, index) {
-                  final task = visibleTasks[index];
-                  return LibraryWorkRow(
-                    task: task,
-                    onAssignToday: () => widget.onAssignToday(task),
-                    onSchedule: () => _scheduleTask(task),
-                    onDelete: () => widget.onRemoveTask(task),
-                  );
-                },
+              return Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: [
+                  for (final task in visibleTasks)
+                    SizedBox(
+                      width:
+                          (constraints.maxWidth - 14 * (columns - 1)) / columns,
+                      child: LibraryWorkRow(
+                        task: task,
+                        onAssignToday: () => widget.onAssignToday(task),
+                        onSchedule: () => _scheduleTask(task),
+                        onDelete: () => widget.onRemoveTask(task),
+                      ),
+                    ),
+                ],
               );
             },
           ),
@@ -2063,11 +2437,13 @@ class PriorityPill extends StatelessWidget {
         children: [
           Icon(icon, size: 13, color: colors.primary),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: colors.primary,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: colors.primary,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -2837,9 +3213,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               TextField(
                 key: const ValueKey('add-task-title-input'),
                 controller: _title,
+                maxLength: 200,
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: 'Quick Add',
+                  counterText: '',
                   hintText: compact
                       ? 'Example: Report tomorrow 9:00'
                       : 'Example: Submit report tomorrow 9:00 !high ~45m #work',
@@ -2855,6 +3233,14 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               TextField(
                 key: const ValueKey('add-task-note-input'),
                 controller: _note,
+                maxLength: 2000,
+                buildCounter:
+                    (
+                      context, {
+                      required currentLength,
+                      required isFocused,
+                      maxLength,
+                    }) => null,
                 minLines: 1,
                 maxLines: 2,
                 decoration: const InputDecoration(
@@ -3285,9 +3671,11 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
               TextField(
                 key: const ValueKey('edit-task-title-input'),
                 controller: _title,
+                maxLength: 200,
                 autofocus: true,
                 decoration: const InputDecoration(
                   labelText: 'Task name',
+                  counterText: '',
                   prefixIcon: Icon(Icons.task_alt_outlined),
                 ),
               ),
@@ -3295,6 +3683,14 @@ class _ScheduleTaskDialogState extends State<ScheduleTaskDialog> {
               TextField(
                 key: const ValueKey('edit-task-note-input'),
                 controller: _note,
+                maxLength: 2000,
+                buildCounter:
+                    (
+                      context, {
+                      required currentLength,
+                      required isFocused,
+                      maxLength,
+                    }) => null,
                 minLines: 1,
                 maxLines: 2,
                 decoration: const InputDecoration(
@@ -3901,7 +4297,6 @@ class AccountPage extends StatefulWidget {
     required this.tasks,
     required this.assignments,
     required this.userName,
-    required this.password,
     required this.onSync,
     required this.onReload,
     required this.onLogout,
@@ -3913,7 +4308,6 @@ class AccountPage extends StatefulWidget {
   final List<TaskItem> tasks;
   final List<TaskAssignment> assignments;
   final String userName;
-  final String password;
   final Future<String?> Function() onSync;
   final Future<void> Function() onReload;
   final VoidCallback onLogout;
@@ -3926,19 +4320,39 @@ class AccountPage extends StatefulWidget {
   State<AccountPage> createState() => _AccountPageState();
 }
 
+enum _AccountSection { sync, preferences, password }
+
 class _AccountPageState extends State<AccountPage> {
   final _backend = TextEditingController();
   final _current = TextEditingController();
   final _next = TextEditingController();
   final _confirm = TextEditingController();
   String? _message;
+  String? _activity;
+  _AccountSection _section = _AccountSection.sync;
   bool _busy = false;
+  bool _notificationsEnabled = false;
+  bool _showNotificationTitles = false;
+  bool _showCurrentPassword = false;
+  bool _showNewPasswords = false;
 
   @override
   void initState() {
     super.initState();
     BackendConfig.loadUrl().then((value) {
-      if (mounted) _backend.text = value;
+      if (mounted && _backend.text.isEmpty) _backend.text = value;
+    });
+    _loadNotificationSettings();
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _notificationsEnabled =
+          prefs.getBool(LocalReminderService.enabledKey) == true;
+      _showNotificationTitles =
+          prefs.getBool(LocalReminderService.showTitlesKey) == true;
     });
   }
 
@@ -3951,39 +4365,88 @@ class _AccountPageState extends State<AccountPage> {
     super.dispose();
   }
 
-  Future<void> _run(Future<String?> Function() action, String success) async {
+  Future<void> _run(
+    Future<String?> Function() action,
+    String success,
+    String activity, {
+    _AccountSection section = _AccountSection.sync,
+  }) async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _message = null;
+      _activity = activity;
+      _section = section;
     });
-    final error = await action();
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _message = error ?? success;
-    });
+    try {
+      final error = await action();
+      if (!mounted) return;
+      setState(() => _message = error ?? success);
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is FormatException
+          ? error.message
+          : error.toString().replaceFirst('Exception: ', '');
+      setState(() => _message = message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _sync() async {
-    await BackendConfig.saveUrl(_backend.text);
-    await _run(widget.onSync, 'Data synced.');
-  }
-
-  Future<void> _notification() async {
     await _run(
       () async {
+        await BackendConfig.saveUrl(_backend.text);
+        return widget.onSync();
+      },
+      'Data synced.',
+      'Syncing tasks…',
+    );
+  }
+
+  Future<void> _notification(bool enabled) async {
+    await _run(
+      () async {
+        if (!enabled) {
+          await LocalReminderService.instance.disable();
+          await _loadNotificationSettings();
+          return null;
+        }
         final granted = await LocalReminderService.instance.requestPermission();
+        await _loadNotificationSettings();
         await LocalReminderService.instance.reschedule(
           tasks: widget.tasks,
           assignments: widget.assignments,
         );
-        return granted || kIsWeb
+        return granted
             ? null
-            : 'Notification permission has not been granted.';
+            : 'Allow notifications in system settings, then try again.';
       },
-      kIsWeb
-          ? 'Web preview does not support local notifications.'
-          : 'Reminders enabled.',
+      enabled ? 'Reminders enabled.' : 'Reminders disabled.',
+      'Updating reminders…',
+      section: _AccountSection.preferences,
+    );
+  }
+
+  Future<void> _setNotificationTitles(bool show) async {
+    await _run(
+      () async {
+        await (await SharedPreferences.getInstance()).setBool(
+          LocalReminderService.showTitlesKey,
+          show,
+        );
+        await _loadNotificationSettings();
+        await LocalReminderService.instance.reschedule(
+          tasks: widget.tasks,
+          assignments: widget.assignments,
+        );
+        return null;
+      },
+      show
+          ? 'Task titles will appear in notifications.'
+          : 'Task titles are hidden from notifications.',
+      'Updating notification privacy…',
+      section: _AccountSection.preferences,
     );
   }
 
@@ -3991,54 +4454,69 @@ class _AccountPageState extends State<AccountPage> {
     await _run(
       () => widget.onChangePassword(_current.text, _next.text, _confirm.text),
       'Password updated.',
+      'Changing password…',
+      section: _AccountSection.password,
     );
-    _current.clear();
-    _next.clear();
-    _confirm.clear();
+    if (mounted && _message == 'Password updated.') {
+      _current.clear();
+      _next.clear();
+      _confirm.clear();
+      setState(() {
+        _showCurrentPassword = false;
+        _showNewPasswords = false;
+      });
+    }
   }
 
   Future<void> _checkUpdate() async {
-    await BackendConfig.saveUrl(_backend.text);
-    await _run(() async {
-      final baseUrl = await BackendConfig.loadUrl();
-      if (baseUrl.trim().isEmpty) {
-        return 'Enter a Backend URL in Account before checking updates.';
-      }
-      final service = AppUpdateService(baseUrl: baseUrl);
-      final info =
-          await (widget.checkLatestForTest?.call(baseUrl) ??
-              service.checkLatest());
-      if (!info.available) return 'App is up to date.';
-      if (!mounted) return null;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Update ${info.versionName}+${info.versionCode}'),
-          content: Text(
-            info.notes.isEmpty
-                ? 'A newer APK is available on the backend.'
-                : info.notes,
+    await _run(
+      () async {
+        await BackendConfig.saveUrl(_backend.text);
+        final baseUrl = await BackendConfig.loadUrl();
+        if (baseUrl.trim().isEmpty) {
+          return 'Enter a Backend URL in Account before checking updates.';
+        }
+        final service = AppUpdateService(baseUrl: baseUrl);
+        final info =
+            await (widget.checkLatestForTest?.call(baseUrl) ??
+                service.checkLatest());
+        if (!info.available) return 'App is up to date.';
+        if (!mounted) return null;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Update ${info.versionName}+${info.versionCode}'),
+            content: Text(
+              info.notes.isEmpty
+                  ? 'A newer APK is available on the backend.'
+                  : info.notes,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(true),
+                icon: const Icon(Icons.download_outlined),
+                label: Text(kIsWeb ? 'OK' : 'Download'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).pop(true),
-              icon: const Icon(Icons.download_outlined),
-              label: Text(kIsWeb ? 'OK' : 'Download'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed == true && !kIsWeb) {
-        await (widget.installUpdateForTest?.call(service, info) ??
-            _installUpdate(service, info));
-        return 'Update installer opened.';
-      }
-      return 'Version ${info.versionName}+${info.versionCode} is available.';
-    }, 'Update check complete.');
+        );
+        if (confirmed == true && !kIsWeb) {
+          if (mounted) {
+            setState(() => _activity = 'Downloading and verifying update…');
+          }
+          await (widget.installUpdateForTest?.call(service, info) ??
+              _installUpdate(service, info));
+          return 'Update installer opened.';
+        }
+        return 'Version ${info.versionName}+${info.versionCode} is available.';
+      },
+      'Update check complete.',
+      'Checking for updates…',
+    );
   }
 
   Future<void> _installUpdate(AppUpdateService service, UpdateInfo info) async {
@@ -4048,18 +4526,51 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.doodle;
+    final supportsNotifications =
+        !kIsWeb &&
+        const {
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+          TargetPlatform.macOS,
+        }.contains(defaultTargetPlatform);
     return PageList(
       children: [
+        SectionCard(
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+            title: Text(
+              widget.userName,
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+            subtitle: const Text(
+              'Tasks stay on this device until you choose Sync.',
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
         SectionCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                'Sync & updates',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 14),
               TextField(
                 controller: _backend,
+                enabled: !_busy,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                enableSuggestions: false,
                 decoration: const InputDecoration(
                   labelText: 'Backend URL',
                   hintText: BackendConfig.exampleUrl,
+                  helperText: 'Optional. Use an HTTPS server you trust.',
+                  helperMaxLines: 2,
                   prefixIcon: Icon(Icons.link),
                 ),
               ),
@@ -4071,15 +4582,59 @@ class _AccountPageState extends State<AccountPage> {
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(
-                onPressed: _busy ? null : _notification,
-                icon: const Icon(Icons.notifications_active_outlined),
-                label: const Text('Notification'),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
                 onPressed: _busy ? null : _checkUpdate,
                 icon: const Icon(Icons.system_update_alt),
                 label: const Text('Check update'),
+              ),
+              if (_section == _AccountSection.sync &&
+                  (_busy || _message != null))
+                _AccountActionStatus(
+                  busy: _busy,
+                  message: _busy ? _activity! : _message!,
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
+        SectionCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Preferences',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.notifications_outlined),
+                title: const Text('Task reminders'),
+                subtitle: Text(
+                  !supportsNotifications
+                      ? 'Available in the Android, iOS and macOS apps.'
+                      : _notificationsEnabled
+                      ? 'Enabled in app. System permission is also required.'
+                      : 'Off. Enable to receive scheduled reminders.',
+                ),
+                value: supportsNotifications && _notificationsEnabled,
+                onChanged: _busy || !supportsNotifications
+                    ? null
+                    : _notification,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.privacy_tip_outlined),
+                title: const Text('Show task titles'),
+                subtitle: Text(
+                  _showNotificationTitles
+                      ? 'Titles may be visible to others in notifications.'
+                      : 'Notifications hide task details. Open the app to view them.',
+                ),
+                value: _showNotificationTitles,
+                onChanged: _busy || !supportsNotifications
+                    ? null
+                    : _setNotificationTitles,
               ),
               const SizedBox(height: 10),
               ValueListenableBuilder<ThemeMode>(
@@ -4098,10 +4653,12 @@ class _AccountPageState extends State<AccountPage> {
                   );
                 },
               ),
-              if (_message != null) ...[
-                const SizedBox(height: 12),
-                Text(_message!, style: TextStyle(color: colors.muted)),
-              ],
+              if (_section == _AccountSection.preferences &&
+                  (_busy || _message != null))
+                _AccountActionStatus(
+                  busy: _busy,
+                  message: _busy ? _activity! : _message!,
+                ),
             ],
           ),
         ),
@@ -4119,21 +4676,66 @@ class _AccountPageState extends State<AccountPage> {
               const SizedBox(height: 14),
               TextField(
                 controller: _current,
-                obscureText: true,
-                decoration: const InputDecoration(
+                enabled: !_busy,
+                autocorrect: false,
+                enableSuggestions: false,
+                autofillHints: const [AutofillHints.password],
+                textInputAction: TextInputAction.next,
+                obscureText: !_showCurrentPassword,
+                decoration: InputDecoration(
                   labelText: 'Current password',
+                  suffixIcon: IconButton(
+                    tooltip: _showCurrentPassword
+                        ? 'Hide current password'
+                        : 'Show current password',
+                    onPressed: () => setState(
+                      () => _showCurrentPassword = !_showCurrentPassword,
+                    ),
+                    icon: Icon(
+                      _showCurrentPassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _next,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'New password'),
+                enabled: !_busy,
+                autocorrect: false,
+                enableSuggestions: false,
+                autofillHints: const [AutofillHints.newPassword],
+                textInputAction: TextInputAction.next,
+                obscureText: !_showNewPasswords,
+                decoration: InputDecoration(
+                  labelText: 'New password',
+                  suffixIcon: IconButton(
+                    tooltip: _showNewPasswords
+                        ? 'Hide new passwords'
+                        : 'Show new passwords',
+                    onPressed: () =>
+                        setState(() => _showNewPasswords = !_showNewPasswords),
+                    icon: Icon(
+                      _showNewPasswords
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _confirm,
-                obscureText: true,
+                enabled: !_busy,
+                autocorrect: false,
+                enableSuggestions: false,
+                autofillHints: const [AutofillHints.newPassword],
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  if (!_busy) _updatePassword();
+                },
+                obscureText: !_showNewPasswords,
                 decoration: const InputDecoration(
                   labelText: 'Confirm new password',
                 ),
@@ -4142,20 +4744,51 @@ class _AccountPageState extends State<AccountPage> {
               OutlinedButton.icon(
                 onPressed: _busy ? null : _updatePassword,
                 icon: const Icon(Icons.lock_reset),
-                label: const Text('Update'),
+                label: const Text('Change password'),
               ),
+              if (_section == _AccountSection.password &&
+                  (_busy || _message != null))
+                _AccountActionStatus(
+                  busy: _busy,
+                  message: _busy ? _activity! : _message!,
+                ),
             ],
           ),
         ),
         const SizedBox(height: 22),
         OutlinedButton.icon(
-          onPressed: widget.onLogout,
+          onPressed: _busy ? null : widget.onLogout,
           icon: const Icon(Icons.logout),
           label: const Text('Sign out'),
         ),
       ],
     );
   }
+}
+
+class _AccountActionStatus extends StatelessWidget {
+  const _AccountActionStatus({required this.busy, required this.message});
+
+  final bool busy;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (busy && ModalRoute.of(context)?.isCurrent != false) ...[
+            const LinearProgressIndicator(),
+            const SizedBox(height: 8),
+          ],
+          Text(message),
+        ],
+      ),
+    ),
+  );
 }
 
 @immutable
@@ -4221,12 +4854,13 @@ ParsedQuickTask parseQuickTask(String raw) {
     '!low': TaskPriority.low,
   };
   for (final entry in priorities.entries) {
-    if (text.toLowerCase().contains(entry.key)) {
+    final token = RegExp(
+      '(^|\\s)${RegExp.escape(entry.key)}(?=\\s|\$)',
+      caseSensitive: false,
+    );
+    if (token.hasMatch(text)) {
       priority = entry.value;
-      text = text.replaceAll(
-        RegExp(RegExp.escape(entry.key), caseSensitive: false),
-        ' ',
-      );
+      text = text.replaceAll(token, ' ');
       break;
     }
   }
@@ -4244,26 +4878,32 @@ ParsedQuickTask parseQuickTask(String raw) {
     '#travel': TaskIconKind.travel,
   };
   for (final entry in icons.entries) {
-    if (text.toLowerCase().contains(entry.key)) {
+    final token = RegExp(
+      '(^|\\s)${RegExp.escape(entry.key)}(?=\\s|\$)',
+      caseSensitive: false,
+    );
+    if (token.hasMatch(text)) {
       iconKind = entry.value;
-      text = text.replaceAll(
-        RegExp(RegExp.escape(entry.key), caseSensitive: false),
-        ' ',
-      );
+      text = text.replaceAll(token, ' ');
       break;
     }
   }
 
-  final lower = text.toLowerCase();
-  if (lower.contains('hom nay') ||
-      lower.contains('hôm nay') ||
-      lower.contains('today')) {
+  final todayToken = RegExp(
+    r'\b(hom nay|hôm nay|today)\b',
+    caseSensitive: false,
+  );
+  final tomorrowToken = RegExp(
+    r'\b(ngay mai|ngày mai|mai|tomorrow)\b',
+    caseSensitive: false,
+  );
+  if (todayToken.hasMatch(text)) {
     dates = [dateOnly(now)];
     text = text.replaceAll(
       RegExp(r'\b(hom nay|hôm nay|today)\b', caseSensitive: false),
       ' ',
     );
-  } else if (lower.contains('mai') || lower.contains('tomorrow')) {
+  } else if (tomorrowToken.hasMatch(text)) {
     dates = [dateOnly(now.add(const Duration(days: 1)))];
     text = text.replaceAll(
       RegExp(r'\b(ngay mai|ngày mai|mai|tomorrow)\b', caseSensitive: false),
@@ -4288,12 +4928,13 @@ ParsedQuickTask parseQuickTask(String raw) {
       'chủ nhật': 7,
     };
     for (final entry in weekdays.entries) {
-      if (lower.contains(entry.key)) {
+      final token = RegExp(
+        '(^|\\s)${RegExp.escape(entry.key)}(?=\\s|\$)',
+        caseSensitive: false,
+      );
+      if (token.hasMatch(text)) {
         dates = nextWeekdayDates(entry.value);
-        text = text.replaceAll(
-          RegExp(RegExp.escape(entry.key), caseSensitive: false),
-          ' ',
-        );
+        text = text.replaceAll(token, ' ');
         break;
       }
     }

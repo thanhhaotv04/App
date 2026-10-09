@@ -2,6 +2,65 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:task_reminder/src/models.dart';
 
 void main() {
+  test(
+    'sync timestamps use UTC while schedule dates remain calendar dates',
+    () {
+      final local = DateTime(2026, 9, 23, 9);
+      final task = TaskItem(
+        id: 'utc',
+        title: 'UTC',
+        createdAt: local,
+        updatedAt: local,
+      );
+      final schedule = TaskAssignment(
+        id: 'a',
+        taskId: task.id,
+        date: local,
+        createdAt: local,
+        updatedAt: local,
+        completedAt: local,
+      );
+      expect(task.toJson()['updatedAt'], local.toUtc().toIso8601String());
+      expect(task.toJson()['updatedAt'], endsWith('Z'));
+      expect(schedule.toJson()['completedAt'], endsWith('Z'));
+      expect(schedule.toJson()['date'], '2026-09-23T00:00:00.000');
+    },
+  );
+  test(
+    'stale devices cannot resurrect deleted parents or drop unrelated tasks',
+    () {
+      final now = DateTime.utc(2026, 9, 22);
+      final task = TaskItem(
+        id: '1',
+        title: 'Task',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final other = TaskItem(
+        id: '2',
+        title: 'Task',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final assignment = TaskAssignment(
+        id: 'a',
+        taskId: '1',
+        date: now,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final merged = mergeTaskData(
+        TaskSyncData([task.copyWith(deletedAt: now)], []),
+        TaskSyncData(
+          [task.copyWith(updatedAt: now.add(const Duration(days: 1))), other],
+          [assignment],
+        ),
+      );
+      expect(merged.tasks, hasLength(2));
+      expect(merged.tasks.firstWhere((t) => t.id == '1').isDeleted, isTrue);
+      expect(merged.assignments.single.isDeleted, isTrue);
+    },
+  );
   test('task JSON keeps stable id and timestamps', () {
     final original = TaskItem(
       id: 'task-1',
@@ -57,5 +116,27 @@ void main() {
     expect(restored.reminderMinute, 45);
     expect(restored.done, isTrue);
     expect(restored.completedAt, original.completedAt);
+  });
+
+  test('task and assignment JSON preserve deletion tombstones', () {
+    final now = DateTime.utc(2026, 9, 22);
+    final task = TaskItem(
+      id: 'task-deleted',
+      title: 'Removed task',
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: now,
+    );
+    final assignment = TaskAssignment(
+      id: 'assignment-deleted',
+      taskId: task.id,
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: now,
+    );
+
+    expect(TaskItem.fromJson(task.toJson()).isDeleted, isTrue);
+    expect(TaskAssignment.fromJson(assignment.toJson()).isDeleted, isTrue);
   });
 }

@@ -11,6 +11,14 @@ BUILD_APK="$ROOT_DIR/build/app/outputs/flutter-apk/$APK_FILE"
 BACKEND_PORT="${BACKEND_PORT:-3002}"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 HOST_IP="${HOST_IP:-127.0.0.1}"
+BACKEND_SCHEME="http"
+SERVE_BIND_HOST="127.0.0.1"
+ENDPOINT_HOST="127.0.0.1"
+if [[ -n "${TLS_CERT_FILE:-}" && -n "${TLS_KEY_FILE:-}" ]]; then
+  BACKEND_SCHEME="https"
+  SERVE_BIND_HOST="0.0.0.0"
+  ENDPOINT_HOST="$HOST_IP"
+fi
 
 usage() {
   cat <<USAGE
@@ -29,6 +37,8 @@ Environment:
   VERSION_CODE    Override the next Android version code. Default: +1.
   RELEASE_NOTES   Notes shown in the app update dialog.
   BACKEND_PORT    Backend port when using --serve. Default: 3002.
+  TLS_CERT_FILE   TLS certificate; with TLS_KEY_FILE, expose HTTPS on the LAN.
+  TLS_KEY_FILE    TLS private key; required with TLS_CERT_FILE.
 USAGE
 }
 
@@ -191,17 +201,17 @@ echo "Release is ready."
 echo "Version: $NEXT_NAME+$NEXT_CODE"
 echo "APK: $BUILD_APK"
 echo "Backend APK: $BACKEND_APK"
-echo "Update endpoint: http://$HOST_IP:$BACKEND_PORT/api/update/latest"
+echo "Update endpoint: $BACKEND_SCHEME://$ENDPOINT_HOST:$BACKEND_PORT/api/update/latest"
 
 if (( SERVE_BACKEND == 1 )); then
   echo
   if command -v ss >/dev/null 2>&1 &&
     ss -ltn | awk '{print $4}' | grep -Eq "(^|:)$BACKEND_PORT$"; then
     echo "Backend already appears to be running on port $BACKEND_PORT."
-    echo "Use: http://$HOST_IP:$BACKEND_PORT/api/update/latest"
+    echo "Use: $BACKEND_SCHEME://$ENDPOINT_HOST:$BACKEND_PORT/api/update/latest"
     exit 0
   fi
-  echo "Starting backend on 0.0.0.0:$BACKEND_PORT"
+  echo "Starting backend on $SERVE_BIND_HOST:$BACKEND_PORT"
   cd "$ROOT_DIR/backend"
-  PORT="$BACKEND_PORT" npm start
+  HOST="$SERVE_BIND_HOST" PORT="$BACKEND_PORT" npm start
 fi

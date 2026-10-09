@@ -4,6 +4,13 @@ import 'package:task_reminder/src/app.dart';
 import 'package:task_reminder/src/models.dart';
 
 void main() {
+  test('does not interpret email or partial tags as schedule commands', () {
+    final parsed = parseQuickTask('Read email #workshop !highway');
+    expect(parsed.title, 'Read email #workshop !highway');
+    expect(parsed.dates, isEmpty);
+    expect(parsed.iconKind, isNull);
+    expect(parsed.priority, isNull);
+  });
   test('parses convenient quick-add tokens without keeping them in title', () {
     final parsed = parseQuickTask('Nộp báo cáo mai 9:30 !cao ~45p #laptop');
 

@@ -33,6 +33,16 @@ migrate_working_dir/
 backend/node_modules/
 backend/server-data/
 backend/releases/*.apk
+# Local credentials, certificates and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+key.properties
 .pub-cache/
 .pub/
 /build/

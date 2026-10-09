@@ -15,6 +15,7 @@ class TaskItem {
     this.estimateMinutes = 15,
     required this.createdAt,
     required this.updatedAt,
+    this.deletedAt,
   });
 
   final String id;
@@ -25,6 +26,9 @@ class TaskItem {
   final int estimateMinutes;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final DateTime? deletedAt;
+
+  bool get isDeleted => deletedAt != null;
 
   TaskItem copyWith({
     String? title,
@@ -33,6 +37,8 @@ class TaskItem {
     TaskIconKind? iconKind,
     int? estimateMinutes,
     DateTime? updatedAt,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) => TaskItem(
     id: id,
     title: title ?? this.title,
@@ -42,6 +48,7 @@ class TaskItem {
     estimateMinutes: estimateMinutes ?? this.estimateMinutes,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
+    deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
   );
 
   Map<String, Object?> toJson() => {
@@ -51,8 +58,9 @@ class TaskItem {
     'priority': priority.name,
     'iconKind': iconKind.name,
     'estimateMinutes': estimateMinutes,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+    'deletedAt': deletedAt?.toUtc().toIso8601String(),
   };
 
   factory TaskItem.fromJson(Map<String, Object?> json) {
@@ -73,6 +81,7 @@ class TaskItem {
       createdAt: created,
       updatedAt:
           DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? created,
+      deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),
     );
   }
 }
@@ -88,6 +97,7 @@ class TaskAssignment {
     this.reminderHour = 8,
     this.reminderMinute = 0,
     this.completedAt,
+    this.deletedAt,
   });
 
   final String id;
@@ -98,8 +108,10 @@ class TaskAssignment {
   final int reminderHour;
   final int reminderMinute;
   final DateTime? completedAt;
+  final DateTime? deletedAt;
 
   bool get done => completedAt != null;
+  bool get isDeleted => deletedAt != null;
 
   TaskAssignment copyWith({
     DateTime? date,
@@ -108,6 +120,8 @@ class TaskAssignment {
     int? reminderMinute,
     DateTime? completedAt,
     bool clearCompletedAt = false,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) => TaskAssignment(
     id: id,
     taskId: taskId,
@@ -117,17 +131,19 @@ class TaskAssignment {
     reminderHour: reminderHour ?? this.reminderHour,
     reminderMinute: reminderMinute ?? this.reminderMinute,
     completedAt: clearCompletedAt ? null : completedAt ?? this.completedAt,
+    deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
   );
 
   Map<String, Object?> toJson() => {
     'id': id,
     'taskId': taskId,
     'date': dateOnly(date).toIso8601String(),
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
     'reminderHour': reminderHour,
     'reminderMinute': reminderMinute,
-    'completedAt': completedAt?.toIso8601String(),
+    'completedAt': completedAt?.toUtc().toIso8601String(),
+    'deletedAt': deletedAt?.toUtc().toIso8601String(),
   };
 
   factory TaskAssignment.fromJson(Map<String, Object?> json) {
@@ -142,6 +158,7 @@ class TaskAssignment {
       reminderHour: (json['reminderHour'] as num?)?.toInt() ?? 8,
       reminderMinute: (json['reminderMinute'] as num?)?.toInt() ?? 0,
       completedAt: DateTime.tryParse(json['completedAt']?.toString() ?? ''),
+      deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),
     );
   }
 }
@@ -152,6 +169,39 @@ class TaskSyncData {
 
   final List<TaskItem> tasks;
   final List<TaskAssignment> assignments;
+}
+
+/// Merge stable IDs, preserving deletion records and newer local edits.
+TaskSyncData mergeTaskData(TaskSyncData local, TaskSyncData remote) {
+  final tasks = {for (final item in local.tasks) item.id: item};
+  for (final item in remote.tasks) {
+    final previous = tasks[item.id];
+    if (previous == null ||
+        (!previous.isDeleted && item.isDeleted) ||
+        (previous.isDeleted == item.isDeleted &&
+            item.updatedAt.isAfter(previous.updatedAt))) {
+      tasks[item.id] = item;
+    }
+  }
+  final assignments = {for (final item in local.assignments) item.id: item};
+  for (final item in remote.assignments) {
+    final previous = assignments[item.id];
+    if (previous == null ||
+        item.updatedAt.isAfter(previous.updatedAt) ||
+        (item.updatedAt == previous.updatedAt && item.isDeleted)) {
+      assignments[item.id] = item;
+    }
+  }
+  for (final item in assignments.values.toList()) {
+    final parent = tasks[item.taskId];
+    if (parent?.isDeleted == true && !item.isDeleted) {
+      assignments[item.id] = item.copyWith(
+        deletedAt: parent!.deletedAt,
+        updatedAt: parent.updatedAt,
+      );
+    }
+  }
+  return TaskSyncData(tasks.values.toList(), assignments.values.toList());
 }
 
 DateTime dateOnly(DateTime value) =>

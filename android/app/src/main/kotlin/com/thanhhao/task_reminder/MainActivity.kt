@@ -32,9 +32,22 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    @Suppress("DEPRECATION")
     private fun installApk(path: String) {
-        val apk = File(path)
-        require(apk.exists()) { "APK file does not exist: $path" }
+        val apk = File(path).canonicalFile
+        val updateDirectory = File(cacheDir, "updates").canonicalFile
+        require(apk.isFile && apk.path.startsWith(updateDirectory.path + File.separator)) {
+            "Only a verified APK from the app update cache can be installed."
+        }
+        val archive = packageManager.getPackageArchiveInfo(apk.path, 0)
+            ?: throw IllegalArgumentException("The downloaded file is not a valid APK.")
+        require(archive.packageName == applicationContext.packageName) {
+            "The downloaded APK belongs to a different application."
+        }
+        val installed = packageManager.getPackageInfo(applicationContext.packageName, 0)
+        val nextVersion = if (android.os.Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
+        val currentVersion = if (android.os.Build.VERSION.SDK_INT >= 28) installed.longVersionCode else installed.versionCode.toLong()
+        require(nextVersion > currentVersion) { "This APK is not newer than the installed app." }
         val uri = FileProvider.getUriForFile(
             this,
             "${applicationContext.packageName}.fileprovider",

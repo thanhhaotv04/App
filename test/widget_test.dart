@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:task_reminder/src/app.dart';
@@ -12,7 +14,142 @@ import 'package:task_reminder/src/storage.dart';
 void main() {
   setUp(() {
     TaskReminderApp.themeMode.value = ThemeMode.light;
+    FlutterSecureStorage.setMockInitialValues({});
   });
+
+  testWidgets('a legacy short password still works after explicit sign out', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AuthCache.userKey: 'legacy',
+      AuthCache.passwordKey: '1234',
+    });
+    await tester.runAsync(() async {
+      await AuthCache.load();
+      await AuthCache.clear();
+    });
+    await tester.pumpWidget(const TaskReminderApp());
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'legacy');
+    await tester.enterText(find.byType(TextField).at(1), '1234');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('account action errors are visible and the busy state recovers', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: const [DoodlePalette.light]),
+        home: AccountPage(
+          tasks: const [],
+          assignments: const [],
+          userName: 'preview',
+          onSync: () async => throw Exception('Network unavailable'),
+          onReload: () async {},
+          onLogout: () {},
+          onChangePassword: (_, _, _) async => null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sync = find.widgetWithText(FilledButton, 'Sync');
+    await tester.ensureVisible(sync);
+    await tester.tap(sync);
+    await tester.pumpAndSettle();
+    expect(find.text('Network unavailable'), findsOneWidget);
+    expect(tester.widget<FilledButton>(sync).onPressed, isNotNull);
+  });
+
+  testWidgets(
+    'sync shows progress, blocks repeated taps and announces completion',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final result = Completer<String?>();
+      var requests = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const [DoodlePalette.light]),
+          home: AccountPage(
+            tasks: const [],
+            assignments: const [],
+            userName: 'preview',
+            onSync: () {
+              requests++;
+              return result.future;
+            },
+            onReload: () async {},
+            onLogout: () {},
+            onChangePassword: (_, _, _) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final sync = find.widgetWithText(FilledButton, 'Sync');
+      await tester.tap(sync);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Syncing tasks…'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(tester.widget<FilledButton>(sync).onPressed, isNull);
+      expect(requests, 1);
+      result.complete('Network unavailable');
+      await tester.pumpAndSettle();
+      expect(find.text('Network unavailable'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(tester.widget<FilledButton>(sync).onPressed, isNotNull);
+      final status = tester.widgetList<Semantics>(
+        find.ancestor(
+          of: find.text('Network unavailable'),
+          matching: find.byType(Semantics),
+        ),
+      );
+      expect(
+        status.any((widget) => widget.properties.liveRegion == true),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'a new sync destination requires consent before sending credentials or tasks',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        AuthCache.userKey: 'preview',
+        AuthCache.passwordKey: 'preview-password',
+        BackendConfig.key: 'https://new-server.example',
+      });
+      await tester.pumpWidget(const TaskReminderApp());
+      await tester.pumpAndSettle();
+      await openTab(tester, 3);
+      await tester.tap(find.widgetWithText(FilledButton, 'Sync'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sync with this server?'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.textContaining('https://new-server.example'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Sync cancelled. Data stayed on this device.'),
+        findsOneWidget,
+      );
+      expect(await AuthCache.linkedBackend('preview'), isEmpty);
+      expect(
+        (await SharedPreferences.getInstance()).containsKey(
+          TaskStore.tasksKeyFor('preview'),
+        ),
+        isFalse,
+      );
+    },
+  );
 
   testWidgets('shows the task reminder sign-in screen', (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -23,6 +160,8 @@ void main() {
     expect(find.text('Sign in'), findsWidgets);
     expect(find.text('Create account'), findsWidgets);
     expect(find.text('Backend URL'), findsNothing);
+    expect(find.textContaining('No server is required.'), findsOneWidget);
+    expect(find.text('Confirm password'), findsOneWidget);
   });
 
   testWidgets('can sign in offline without backend URL', (tester) async {
@@ -33,13 +172,81 @@ void main() {
 
     await tester.enterText(find.byType(TextField).at(0), 'offline-user');
     await tester.enterText(find.byType(TextField).at(1), 'offline-pass');
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.enterText(find.byType(TextField).at(2), 'offline-pass');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create account'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString(AuthCache.userKey), 'offline-user');
     expect(find.byType(NavigationBar), findsOneWidget);
   });
+
+  testWidgets('server password recovery requires an explicit user action', (
+    tester,
+  ) async {
+    var serverLogins = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: const [DoodlePalette.light]),
+        home: AuthScreen(
+          hasAccount: true,
+          onLogin: (_, _) async => 'Incorrect password.',
+          onRegister: (_, _) async => null,
+          onServerLogin: (name, password) async {
+            serverLogins++;
+            expect(name, 'Alice');
+            expect(password, 'new-password-456');
+            return 'Server unavailable. Local tasks were kept.';
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'Alice');
+    await tester.enterText(find.byType(TextField).at(1), 'new-password-456');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pumpAndSettle();
+    expect(serverLogins, 0);
+    final recovery = find.widgetWithText(
+      TextButton,
+      'Sign in with server password',
+    );
+    await tester.ensureVisible(recovery);
+    await tester.tap(recovery);
+    await tester.pumpAndSettle();
+    expect(serverLogins, 1);
+    expect(
+      find.text('Server unavailable. Local tasks were kept.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'offline registration validates confirmation and switches modes',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(const TaskReminderApp());
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(0), 'offline-user');
+      await tester.enterText(find.byType(TextField).at(1), 'offline-pass');
+      await tester.enterText(find.byType(TextField).at(2), 'different-pass');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create account'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Password confirmation does not match.'),
+        findsOneWidget,
+      );
+      expect(
+        (await SharedPreferences.getInstance()).getString(AuthCache.userKey),
+        isNull,
+      );
+
+      await tester.tap(find.text('Sign in'));
+      await tester.pumpAndSettle();
+      expect(find.text('Confirm password'), findsNothing);
+      expect(find.text('Backend URL'), findsNothing);
+    },
+  );
 
   testWidgets('can switch to the dark doodle theme', (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -77,7 +284,7 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
-      BackendConfig.key: 'http://127.0.0.1:3002',
+      BackendConfig.key: 'https://sync.example.com',
     });
     var installRequests = 0;
 
@@ -88,7 +295,6 @@ void main() {
           tasks: const [],
           assignments: const [],
           userName: 'preview',
-          password: 'preview-password',
           onSync: () async => null,
           onReload: () async {},
           onLogout: () {},
@@ -138,7 +344,10 @@ void main() {
     await addTaskFromAllTasks(tester, 'Viết báo cáo');
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString(TaskStore.tasksKey), contains('Viết báo cáo'));
+    expect(
+      prefs.getString(TaskStore.tasksKeyFor('preview')),
+      contains('Viết báo cáo'),
+    );
   });
 
   testWidgets('quick add creates a task for today', (tester) async {
@@ -158,8 +367,14 @@ void main() {
     await addTaskFromAllTasks(tester, 'Gọi điện cho mẹ', scheduleToday: true);
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString(TaskStore.tasksKey), contains('Gọi điện cho mẹ'));
-    expect(prefs.getString(TaskStore.assignmentsKey), contains('taskId'));
+    expect(
+      prefs.getString(TaskStore.tasksKeyFor('preview')),
+      contains('Gọi điện cho mẹ'),
+    );
+    expect(
+      prefs.getString(TaskStore.assignmentsKeyFor('preview')),
+      contains('taskId'),
+    );
   });
 
   testWidgets('all tasks can schedule by weekday', (tester) async {
@@ -200,10 +415,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
-    final assignments = prefs.getString(TaskStore.assignmentsKey) ?? '';
+    final assignments =
+        prefs.getString(TaskStore.assignmentsKeyFor('preview')) ?? '';
     expect(assignments, contains('taskId'));
     expect(
-      RegExp('Lịch tuần').hasMatch(prefs.getString(TaskStore.tasksKey) ?? ''),
+      RegExp(
+        'Lịch tuần',
+      ).hasMatch(prefs.getString(TaskStore.tasksKeyFor('preview')) ?? ''),
       isTrue,
     );
   });
@@ -243,7 +461,9 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     final assignments =
-        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+        jsonDecode(
+              prefs.getString(TaskStore.assignmentsKeyFor('preview')) ?? '[]',
+            )
             as List<Object?>;
     expect(assignments.length, 30);
   });
@@ -287,7 +507,9 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     final assignments =
-        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+        jsonDecode(
+              prefs.getString(TaskStore.assignmentsKeyFor('preview')) ?? '[]',
+            )
             as List<Object?>;
     expect(assignments.length, 36);
   });
@@ -334,7 +556,9 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     final assignments =
-        jsonDecode(prefs.getString(TaskStore.assignmentsKey) ?? '[]')
+        jsonDecode(
+              prefs.getString(TaskStore.assignmentsKeyFor('preview')) ?? '[]',
+            )
             as List<Object?>;
     expect(assignments.length, greaterThanOrEqualTo(20));
   });
@@ -366,7 +590,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString(TaskStore.tasksKey), contains('"priority":"none"'));
+    expect(
+      prefs.getString(TaskStore.tasksKeyFor('preview')),
+      contains('"priority":"none"'),
+    );
   });
 
   testWidgets('all tasks can save a custom icon', (tester) async {
@@ -399,7 +626,7 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     expect(
-      prefs.getString(TaskStore.tasksKey),
+      prefs.getString(TaskStore.tasksKeyFor('preview')),
       contains('"iconKind":"travel"'),
     );
   });
@@ -437,7 +664,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
-    final tasks = prefs.getString(TaskStore.tasksKey) ?? '';
+    final tasks = prefs.getString(TaskStore.tasksKeyFor('preview')) ?? '';
     expect(tasks, contains('Task mới'));
     expect(tasks, contains('Ghi chú mới'));
   });
@@ -586,8 +813,9 @@ void main() {
     );
 
     final prefs = await SharedPreferences.getInstance();
-    final tasks = prefs.getString(TaskStore.tasksKey) ?? '';
-    final assignments = prefs.getString(TaskStore.assignmentsKey) ?? '';
+    final tasks = prefs.getString(TaskStore.tasksKeyFor('preview')) ?? '';
+    final assignments =
+        prefs.getString(TaskStore.assignmentsKeyFor('preview')) ?? '';
     expect(tasks, contains('Nộp báo cáo'));
     expect(tasks, contains('"priority":"high"'));
     expect(tasks, contains('"estimateMinutes":45'));
@@ -751,6 +979,69 @@ void main() {
       }
     }
   });
+
+  testWidgets(
+    'task views and add dialog support large text and phone rotation',
+    (tester) async {
+      final now = DateTime.now();
+      SharedPreferences.setMockInitialValues({
+        AuthCache.userKey: 'preview',
+        AuthCache.passwordKey: 'preview-password',
+        TaskStore.tasksKeyFor('preview'): jsonEncode([
+          TaskItem(
+            id: 'long-task',
+            title: 'Kiểm tra lịch hẹn và hoàn thành báo cáo quan trọng',
+            note: 'Ghi chú dài để kiểm tra khả năng đọc trên điện thoại.',
+            createdAt: now,
+            updatedAt: now,
+          ).toJson(),
+        ]),
+        TaskStore.assignmentsKeyFor('preview'): jsonEncode([
+          TaskAssignment(
+            id: 'long-schedule',
+            taskId: 'long-task',
+            date: now,
+            createdAt: now,
+            updatedAt: now,
+          ).toJson(),
+        ]),
+      });
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      for (final size in [const Size(375, 812), const Size(812, 375)]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(const TaskReminderApp());
+        await tester.pumpAndSettle();
+        for (var tab = 0; tab < 4; tab++) {
+          await openTab(tester, tab);
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: 'size $size, tab $tab',
+          );
+        }
+        await openTab(tester, 2);
+        await tester.scrollUntilVisible(
+          find.byTooltip('Add task'),
+          200,
+          scrollable: find
+              .descendant(
+                of: find.byType(WorkListPage),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.tap(find.byTooltip('Add task'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: 'add dialog at $size');
+        await tester.tap(find.byTooltip('Close'));
+        await tester.pumpAndSettle();
+      }
+    },
+  );
 
   testWidgets('add task options stay stable at phone scale', (tester) async {
     SharedPreferences.setMockInitialValues({

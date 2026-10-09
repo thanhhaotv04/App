@@ -20,11 +20,14 @@ with a Node.js backend only when the user chooses to sync.
 ## Where Data Is Stored
 
 - Local app data:
-  - `task-reminder-tasks-v1`
-  - `task-reminder-assignments-v1`
+  - `task-reminder-tasks-v1:<account hash>`
+  - `task-reminder-assignments-v1:<account hash>`
   - `task-reminder-backend-url`
   - `task-reminder-auth-user`
-  - `task-reminder-auth-password`
+  - Password and bearer session: platform secure storage, not plaintext preferences.
+  - Salted password verifier for offline sign-in; sign-out keeps the account's tasks.
+  - Legacy unscoped task keys are retained as migration backups and copied only
+    for their known owner. Unowned legacy data is not assigned to a new account.
 - Backend data:
   - default folder: `backend/server-data/`
   - override with the `DATA_DIR` environment variable
@@ -38,31 +41,85 @@ Start the backend when you want sync/update features:
 
 ```bash
 cd backend
-npm install
-ALLOWED_ORIGINS=http://192.168.1.142:8081 npm start
+npm ci
+ALLOWED_ORIGINS=http://localhost:8081 npm start
 ```
 
 Start the web preview:
 
 ```bash
 flutter pub get
-flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081
+flutter run -d web-server --web-hostname 127.0.0.1 --web-port 8081
 ```
 
 Open:
 
 ```text
-http://192.168.1.142:8081
+http://localhost:8081
 ```
 
-Backend URL for the Account tab:
+Backend URL for local desktop/web development:
 
 ```text
-http://192.168.1.142:3002
+http://127.0.0.1:3002
 ```
 
 The Backend URL is only needed in the Account tab when syncing data or checking
 updates.
+
+Secure storage on the web requires HTTPS or localhost; a plain HTTP LAN browser
+preview cannot save credentials. Native Android and every non-loopback backend
+must use HTTPS; cleartext Android traffic is disabled. Signing in, registering,
+changing an offline-only password, and managing local tasks never require a
+backend. The app connects only after the user explicitly chooses Sync, Check
+update, or Sign in with server password. The first Sync to a new server asks for
+confirmation before sending credentials and tasks.
+
+## Security and migration
+
+- Back up `backend/server-data/` before deploying the new backend. Use one Node
+  process per `DATA_DIR`; JSON locking is process-local, not a clustered database.
+- Upgrade client and backend together. Sync now uses bearer tokens (30-day
+  lifetime, at most 10 sessions/account). Password-header authentication has been
+  removed. Public password reset is disabled unconditionally.
+- Create account establishes a local account. The first explicit Sync signs in
+  to the backend or registers the account if it does not exist. Existing server
+  accounts require the correct password; offline account creation is not proof of
+  ownership of a server account.
+- A successfully synced account keeps its backend binding after sign-out. Pending
+  server-session revocation is retained securely and retried when connectivity
+  returns. Change its password while that backend is reachable. After a password
+  change on another device, sign out, enter the new password and choose
+  **Sign in with server password** after a failed local sign-in. This requires
+  connectivity and uses the previously linked server to refresh the local verifier;
+  editing Backend URL cannot redirect recovery credentials. Offline-only accounts
+  can change passwords without a backend.
+- Deleted records remain as sync tombstones. Merge preserves IDs and concurrent
+  records; parent deletion wins over stale edits. Limits: 1000 tasks, 5000 schedules
+  per account including tombstones, and 1 MiB per request. Keep device clocks correct.
+- Malformed saved JSON reports an error and is not silently reset. Keep backups;
+  local preferences are not a transactional database or an encrypted task vault.
+- Enable **Task reminders** explicitly in Account; switch it off to cancel reminders.
+  Task titles are hidden in notifications by default. **Show task titles** is an
+  optional setting; Android marks notifications private on the lock screen.
+  Only future, pending reminders are scheduled (up to the next 64); past reminders
+  are not replayed on app launch.
+  Android uses inexact alarms, so delivery time depends on OS battery policies.
+- APK downloads must stay on the configured backend origin, match size and SHA-256,
+  and pass Android package/version checks. Android still verifies update signing.
+  Keep the existing release certificate; hashes over HTTP do not prevent a network
+  attacker from replacing both the APK and its manifest. Use HTTPS for deployment.
+- TLS can terminate in Node using `TLS_CERT_FILE` and `TLS_KEY_FILE`, or at a trusted
+  reverse proxy with `TLS_TERMINATED_BY_PROXY=1`. `NODE_ENV=production` refuses to
+  start without either. Bind to loopback behind the proxy and set `ALLOWED_ORIGINS`
+  to exact web origins. Login failures use the same response for missing accounts
+  and wrong passwords. Authentication limits are separated by IP and account;
+  the general API limit remains per process because this JSON backend supports a
+  single process only.
+- `fastUpdate.sh --serve` binds to loopback over HTTP by default. Supplying both
+  TLS files switches it to LAN HTTPS; it no longer exposes a cleartext LAN backend.
+
+See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for validation and remaining device checks.
 
 ## APK Export Commands
 
@@ -129,5 +186,5 @@ ls -lh backend/releases/app-release-task-reminder.apk
 
 ```bash
 cd backend
-ALLOWED_ORIGINS=http://192.168.1.142:8081 npm start
+ALLOWED_ORIGINS=http://localhost:8081 npm start
 ```
