@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.thanhhao.money_manager"
+        applicationId = "com.thanhhao.money_manager.lan"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
@@ -25,11 +25,25 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val keystore = System.getenv("MM_KEYSTORE")
+            if (!keystore.isNullOrBlank()) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("MM_STORE_PASSWORD")
+                keyAlias = System.getenv("MM_KEY_ALIAS")
+                keyPassword = System.getenv("MM_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
-            // Intentionally left unsigned. Do not substitute the debug key:
-            // Android can update the recovered app only with its original key.
-            signingConfig = null
+            // Local validation may build unsigned; publishing requires the owner's key.
+            signingConfig = if (System.getenv("MM_KEYSTORE").isNullOrBlank()) null else signingConfigs.getByName("release")
         }
     }
 }

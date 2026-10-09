@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.8+9
+version: 260919.1.0+260919001
 
 environment:
   sdk: ^3.12.2
@@ -38,6 +38,10 @@ dependencies:
   intl: ^0.20.2
   shared_preferences: ^2.5.4
   uuid: ^4.5.2
+  flutter_secure_storage: ^11.2.0
+  crypto: ^3.0.7
+  cryptography: ^2.9.0
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -60,6 +64,18 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/certificates/lan-ca.pem
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Roboto-Black.ttf
+          weight: 900
 
   # To add assets to your application, add an assets section, like this:
   # assets:

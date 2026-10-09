@@ -35,6 +35,18 @@ TMP_APK=""
 
 cd "$ROOT_DIR"
 
+CONFIG_FILE="${MM_CONFIG_FILE:-$HOME/.config/money-manager/release.env}"
+if [[ -f "$CONFIG_FILE" ]]; then
+  set -a
+  source "$CONFIG_FILE"
+  set +a
+fi
+SDK_DIR="$(sed -n 's/^sdk.dir=//p' "$ROOT_DIR/android/local.properties" 2>/dev/null)"
+if [[ -d "$SDK_DIR/build-tools" ]]; then
+  BUILD_TOOLS="$(find "$SDK_DIR/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+  export PATH="$BUILD_TOOLS:$PATH"
+fi
+
 usage() {
   cat <<'EOF'
 Usage: ./fastUpdate.sh [options]
@@ -45,8 +57,19 @@ Options:
   --dry-run       Show the next version without changing files or starting a server.
   -h, --help      Show this help.
 
+Required environment variables for publishing:
+  PUBLIC_BACKEND_URL   Public HTTPS URL used by the app.
+  MM_KEYSTORE          Android release keystore path.
+  MM_STORE_PASSWORD    Keystore password.
+  MM_KEY_ALIAS         Signing key alias.
+  MM_KEY_PASSWORD      Signing key password.
+
+When this script must start the backend itself:
+  TLS_CERT             TLS certificate chain path.
+  TLS_KEY              TLS private-key path.
+
 Optional environment variable:
-  LAN_IP=<IPv4>   LAN address printed for the phone to use.
+  ALLOWED_ORIGINS      Comma-separated HTTPS origins for Flutter web.
 EOF
 }
 
@@ -296,9 +319,9 @@ if [[ -z "$NOTES" ]]; then
 fi
 
 APK_FILENAME="money_manager-${NEW_VERSION_NAME}.apk"
-APK_SOURCE="$ROOT_DIR/build/app/outputs/flutter-apk/app-debug.apk"
+APK_SOURCE="$ROOT_DIR/build/app/outputs/flutter-apk/app-release.apk"
 APK_TARGET="$RELEASES_DIR/$APK_FILENAME"
-LOCAL_BASE_URL="http://127.0.0.1:${PORT}"
+LOCAL_BASE_URL="${PUBLIC_BACKEND_URL:-https://127.0.0.1:${PORT}}"
 
 echo "Release label: ${NEW_VERSION_NAME}"
 echo "Flutter version: ${NEW_PUBSPEC_VERSION}"
@@ -308,6 +331,17 @@ if ((DRY_RUN)); then
   echo "Dry run only: no files were changed and no backend was started."
   exit 0
 fi
+
+for variable in MM_KEYSTORE MM_STORE_PASSWORD MM_KEY_ALIAS MM_KEY_PASSWORD MM_SIGNER_SHA256 MM_APPLICATION_ID PUBLIC_BACKEND_URL; do
+  [[ -n "${!variable:-}" ]] || die "Set $variable before publishing a signed HTTPS update"
+done
+[[ "$PUBLIC_BACKEND_URL" == https://* ]] || die "PUBLIC_BACKEND_URL must use HTTPS"
+[[ -f "$MM_KEYSTORE" ]] || die "Signing keystore was not found"
+command -v apksigner >/dev/null 2>&1 || die "Add Android SDK build-tools to PATH (apksigner is required)"
+command -v aapt >/dev/null 2>&1 || die "Add Android SDK build-tools to PATH (aapt is required)"
+[[ "$MM_APPLICATION_ID" == com.thanhhao.money_manager.lan ]] || die "Unexpected release application ID"
+[[ "$MM_SIGNER_SHA256" =~ ^[a-f0-9]{64}$ ]] || die "Configure the fixed signing certificate fingerprint"
+curl --fail --silent --show-error --max-time 5 "$LOCAL_BASE_URL/api/health" >/dev/null || die "Start the configured HTTPS backend before publishing"
 
 [[ ! -e "$APK_TARGET" ]] || die "Refusing to overwrite an existing release APK: $APK_TARGET"
 
@@ -331,10 +365,27 @@ dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test
 node --check "$BACKEND_DIR/server.js"
+(cd "$BACKEND_DIR" && npm test && npm audit --omit=dev)
 git diff --check -- pubspec.yaml lib/src/services.dart
-flutter build apk --debug --build-name "$NEW_VERSION_NAME" --build-number "$NEW_VERSION_CODE"
+flutter build apk --release --no-tree-shake-icons --build-name "$NEW_VERSION_NAME" --build-number "$NEW_VERSION_CODE"
 
 [[ -s "$APK_SOURCE" ]] || die "Expected APK was not produced: $APK_SOURCE"
+apksigner verify "$APK_SOURCE" || die "Release APK signature verification failed"
+signer="$(apksigner verify --print-certs "$APK_SOURCE" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+[[ "$signer" == "$MM_SIGNER_SHA256" ]] || die "Signing key changed; refusing to publish an uninstall-requiring update"
+badging="$(aapt dump badging "$APK_SOURCE")"
+[[ "$badging" == *"package: name='$MM_APPLICATION_ID' versionCode='$NEW_VERSION_CODE' versionName='$NEW_VERSION_NAME'"* ]] || die "APK identity/version does not match this release"
+if [[ -f "$RELEASES_DIR/$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).apkFile' "$MANIFEST_FILE")" ]]; then
+  previous_apk="$RELEASES_DIR/$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).apkFile' "$MANIFEST_FILE")"
+  previous_signer="$(apksigner verify --print-certs "$previous_apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+  [[ "$previous_signer" == "$MM_SIGNER_SHA256" ]] || die "Previous published APK uses another signing key"
+fi
+if aapt dump badging "$APK_SOURCE" | grep -q 'application-debuggable'; then
+  die "Refusing to publish a debuggable APK"
+fi
+if apksigner verify --print-certs "$APK_SOURCE" | grep -q 'CN=Android Debug'; then
+  die "Refusing to publish an APK signed with the Android debug key"
+fi
 TMP_APK="$(mktemp "$RELEASES_DIR/.${APK_FILENAME}.fast-update.XXXXXX")"
 cp "$APK_SOURCE" "$TMP_APK"
 mv -f -- "$TMP_APK" "$APK_TARGET"
@@ -344,9 +395,12 @@ APK_TARGET_CREATED=1
 write_manifest() {
   node --input-type=module - "$MANIFEST_FILE" "$NEW_VERSION_NAME" "$NEW_VERSION_CODE" "$APK_FILENAME" "$NOTES" <<'NODE'
 import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const [manifestPath, versionName, versionCode, apkFile, notes] = process.argv.slice(2);
-const manifest = {versionName, versionCode: Number(versionCode), apkFile, notes};
+const bytes = fs.readFileSync(path.join(path.dirname(manifestPath), apkFile));
+const manifest = {versionName, versionCode: Number(versionCode), applicationId: process.env.MM_APPLICATION_ID, signerSha256: process.env.MM_SIGNER_SHA256, apkFile, notes, sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex')};
 const tempPath = `${manifestPath}.fast-update-${process.pid}.tmp`;
 fs.writeFileSync(tempPath, `${JSON.stringify(manifest, null, 2)}\n`);
 fs.renameSync(tempPath, manifestPath);
@@ -366,18 +420,32 @@ port_is_in_use() {
   ss -ltnH | awk -v port="$PORT" '$4 ~ (":" port "$") { found = 1 } END { exit !found }'
 }
 
+if systemctl --user is-active --quiet money-manager-backend.service; then
+  systemctl --user restart money-manager-backend.service
+  for _ in $(seq 1 30); do
+    backend_healthy && break
+    sleep 0.5
+  done
+fi
+
 if backend_healthy; then
   echo "Backend is already running on port ${PORT}."
 elif port_is_in_use; then
   die "Port ${PORT} is occupied by a process that is not this backend"
 else
+  for variable in TLS_CERT TLS_KEY; do
+    [[ -n "${!variable:-}" ]] || die "Set $variable so the backend can start with HTTPS"
+  done
+  [[ -f "$TLS_CERT" ]] || die "TLS certificate was not found"
+  [[ -f "$TLS_KEY" ]] || die "TLS private key was not found"
   if [[ ! -d "$BACKEND_DIR/node_modules/express" ]]; then
-    (cd "$BACKEND_DIR" && npm install)
+    (cd "$BACKEND_DIR" && npm ci)
   fi
   echo "Starting backend on port ${PORT}..."
   (
     cd "$BACKEND_DIR"
-    nohup env PORT="$PORT" npm start >>"$LOG_FILE" 2>&1 &
+    nohup env PORT="$PORT" TLS_CERT="$TLS_CERT" TLS_KEY="$TLS_KEY" \
+      ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-}" npm start >>"$LOG_FILE" 2>&1 &
     echo "$!" >"$PID_FILE"
   )
   for _ in $(seq 1 30); do
@@ -388,7 +456,7 @@ else
 fi
 
 update_json="$(curl --fail --silent --show-error --max-time 5 "$LOCAL_BASE_URL/api/update/latest")"
-printf '%s' "$update_json" | node --input-type=module -e 'import fs from "node:fs"; const [name, code, file] = process.argv.slice(1); const value = JSON.parse(fs.readFileSync(0, "utf8")); if (value.versionName !== name || value.versionCode !== Number(code) || value.apkUrl !== `/releases/${encodeURIComponent(file)}`) process.exit(1);' "$NEW_VERSION_NAME" "$NEW_VERSION_CODE" "$APK_FILENAME" || die "Backend returned an unexpected update manifest"
+printf '%s' "$update_json" | node --input-type=module -e 'import fs from "node:fs"; const [name, code, file] = process.argv.slice(1); const value = JSON.parse(fs.readFileSync(0, "utf8")); if (value.versionName !== name || value.versionCode !== Number(code) || value.apkUrl !== `/releases/${encodeURIComponent(file)}` || !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes <= 0 || !/^[a-f0-9]{64}$/.test(value.sha256 ?? "")) process.exit(1);' "$NEW_VERSION_NAME" "$NEW_VERSION_CODE" "$APK_FILENAME" || die "Backend returned an unexpected update manifest"
 curl --fail --silent --show-error --range 0-0 --output /dev/null "$LOCAL_BASE_URL/releases/$APK_FILENAME" || die "Backend cannot serve the published APK"
 
 RELEASE_SUCCEEDED=1
@@ -400,19 +468,8 @@ PUBSPEC_BACKUP=""
 SERVICE_BACKUP=""
 MANIFEST_BACKUP=""
 
-detect_lan_ip() {
-  if [[ -n "${LAN_IP:-}" ]]; then
-    printf '%s\n' "$LAN_IP"
-    return
-  fi
-  hostname -I | tr ' ' '\n' | awk '$1 ~ /^[0-9]+\./ && $1 !~ /^(127|169\.254)\./ { print; exit }'
-}
-
-lan_ip="$(detect_lan_ip)"
-[[ -n "$lan_ip" ]] || lan_ip="<IP-LAN-MAY-CHAY>"
-
 echo
 echo "Published ${NEW_VERSION_NAME} (versionCode ${NEW_VERSION_CODE})."
-echo "Backend URL: http://${lan_ip}:${PORT}"
+echo "Backend URL: ${PUBLIC_BACKEND_URL}"
 echo "On Android: Account > save Backend URL > Check for update."
-echo "The APK is debug-signed; it can update only an app installed with the same signing key."
+echo "The release APK can update only an app installed with the same signing key."

@@ -48,3 +48,21 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Private signing and TLS material
+.env
+.env.*
+*.jks
+*.keystore
+*.key
+*.pem
+*.p12
+!assets/certificates/lan-ca.pem
+android/key.properties
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pfx
+*.der
+test/failures/

@@ -1,12 +1,15 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:money_manager/src/app.dart';
 import 'package:money_manager/src/storage.dart';
+import 'package:money_manager/src/models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
   testWidgets('overview stays visually stable', (tester) async {
     await _pumpPreview(tester);
     await expectLater(
@@ -91,6 +94,22 @@ Future<void> _pumpPreview(WidgetTester tester) async {
       },
     ]),
   });
+  await AuthCache.save(
+    const AuthSession(
+      name: 'thanhhao',
+      id: 'preview-id',
+      token: 'preview-token',
+      backendUrl: 'https://192.168.1.141:3002',
+    ),
+  );
+  final prefs = await SharedPreferences.getInstance();
+  final store = await MoneyStore.load();
+  await store.saveTransactions(
+    (jsonDecode(prefs.getString(MoneyStore.transactionsKey)!) as List)
+        .map((v) => Tx.fromJson(Map<String, Object?>.from(v as Map)))
+        .toList(),
+  );
+  await prefs.remove(MoneyStore.transactionsKey);
   tester.view.physicalSize = const Size(465, 1024);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);

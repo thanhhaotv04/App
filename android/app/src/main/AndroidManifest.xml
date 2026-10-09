@@ -3,12 +3,15 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
-        android:label="money_manager"
+        android:label="Money Manager LAN"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:allowBackup="false">
         <activity
-            android:name=".MainActivity"
+            android:name="com.thanhhao.money_manager.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""

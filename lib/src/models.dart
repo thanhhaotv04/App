@@ -135,8 +135,43 @@ class RecurringExpense {
 
 @immutable
 class MoneySyncData {
-  const MoneySyncData(this.transactions, this.recurring);
+  const MoneySyncData(
+    this.transactions,
+    this.recurring, {
+    this.deletedTransactions = const [],
+    this.deletedRecurring = const [],
+  });
 
   final List<Tx> transactions;
   final List<RecurringExpense> recurring;
+  final List<String> deletedTransactions;
+  final List<String> deletedRecurring;
+}
+
+class AuthSession {
+  const AuthSession({
+    required this.name,
+    required this.backendUrl,
+    this.id = '',
+    this.token,
+  });
+  final String name;
+  final String backendUrl;
+  final String id;
+  final String? token;
+
+  bool get isOffline => token == null && id.startsWith('offline-');
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'backendUrl': backendUrl,
+    'id': id,
+    'token': token,
+  };
+  factory AuthSession.fromJson(Map<String, dynamic> json) => AuthSession(
+    name: json['name'] as String,
+    backendUrl: json['backendUrl'] as String,
+    id: json['id'] as String? ?? '',
+    token: json['token'] as String?,
+  );
 }

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'models.dart';
@@ -14,6 +17,9 @@ final moneyFormat = NumberFormat.currency(
 );
 final dateFormat = DateFormat('MMM d, HH:mm', 'en_US');
 final fullDateFormat = DateFormat('EEEE, MMMM d, y', 'en_US');
+
+String moneyText(num amount) =>
+    MoneyManagerApp.hideAmounts.value ? '••••••' : moneyFormat.format(amount);
 
 abstract final class AppColors {
   static const primary = Color(0xFF2E7D32);
@@ -37,6 +43,8 @@ class MoneyManagerApp extends StatefulWidget {
   });
 
   static final themeMode = ValueNotifier(ThemeMode.light);
+  static final hideAmounts = ValueNotifier(false);
+  static const hideAmountsKey = 'money-manager-hide-amounts';
 
   /// Keeps visual previews deterministic without changing production time.
   final DateTime? now;
@@ -49,76 +57,152 @@ class MoneyManagerApp extends StatefulWidget {
   State<MoneyManagerApp> createState() => _MoneyManagerAppState();
 }
 
-class _MoneyManagerAppState extends State<MoneyManagerApp> {
+class _MoneyManagerAppState extends State<MoneyManagerApp>
+    with WidgetsBindingObserver {
   bool _loading = true;
-  String? _userName;
-  String? _password;
+  AuthSession? _session;
+  String? _loadError;
+  bool _retryingLogouts = false;
+  int _pendingLogoutsCount = 0;
+  bool _obscured = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadAuth();
   }
 
-  Future<void> _loadAuth() async {
-    final auth = await AuthCache.load();
-    if (!mounted) return;
-    setState(() {
-      _userName = auth?.$1;
-      _password = auth?.$2;
-      _loading = false;
-    });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
-  Future<String?> _login(String user, String password) async {
-    try {
-      final baseUrl = await BackendConfig.loadUrl();
-      final name = await AuthService(
-        baseUrl: baseUrl,
-      ).signIn(user.trim(), password);
-      await AuthCache.save(name, password);
-      if (mounted) {
-        setState(() {
-          _userName = name;
-          _password = password;
-        });
-      }
-      return null;
-    } catch (error) {
-      return error is AuthException
-          ? error.message
-          : 'Cannot reach backend. Start backend and check the URL.';
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadAuth();
+    } else {
+      setState(() => _obscured = true);
     }
   }
 
-  Future<String?> _register(String user, String password) async {
+  Future<void> _retryLogouts() async {
+    if (_retryingLogouts) return;
+    _retryingLogouts = true;
     try {
-      final baseUrl = await BackendConfig.loadUrl();
-      final name = await AuthService(
-        baseUrl: baseUrl,
-      ).register(user.trim(), password);
-      await AuthCache.save(name, password);
+      final pending = await AuthCache.pendingLogouts();
+      if (mounted) setState(() => _pendingLogoutsCount = pending.length);
+      if (pending.isEmpty) return;
+      final remaining = await AuthService.retryPendingLogouts();
+      if (mounted) setState(() => _pendingLogoutsCount = remaining);
+    } catch (_) {
+      // Keep the queued revocation for the next app launch.
+    } finally {
+      _retryingLogouts = false;
+    }
+  }
+
+  Future<void> _loadAuth() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      MoneyManagerApp.hideAmounts.value =
+          prefs.getBool(MoneyManagerApp.hideAmountsKey) ?? false;
+      final session = await AuthCache.load();
       if (mounted) {
         setState(() {
-          _userName = name;
-          _password = password;
+          _session = session?.id.isNotEmpty == true ? session : null;
+          _loadError = null;
         });
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _session = null;
+          _loadError = null;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          if (WidgetsBinding.instance.lifecycleState ==
+              AppLifecycleState.resumed) {
+            _obscured = false;
+          }
+        });
+      }
+    }
+    unawaited(_retryLogouts());
+  }
+
+  Future<String?> _authenticate(
+    String user,
+    String password, {
+    required bool register,
+  }) async {
+    try {
+      final session = register
+          ? await AuthCache.registerOffline(user, password)
+          : await AuthCache.signInOffline(user, password);
+      if (mounted) setState(() => _session = session);
       return null;
     } catch (error) {
-      return error is AuthException
+      return error is FormatException
           ? error.message
-          : 'Cannot reach backend. Start backend and check the URL.';
+          : 'Could not access local storage in this browser. Check browser privacy settings and try again.';
+    }
+  }
+
+  Future<String?> _login(String user, String password) =>
+      _authenticate(user, password, register: false);
+
+  Future<String?> _register(String user, String password) =>
+      _authenticate(user, password, register: true);
+
+  Future<String?> _authenticateOnline(
+    String user,
+    String password, {
+    required bool register,
+  }) async {
+    try {
+      final service = AuthService(baseUrl: await BackendConfig.loadUrl());
+      final session = register
+          ? await service.register(user, password)
+          : await service.signIn(user, password);
+      await AuthCache.save(session);
+      if (mounted) setState(() => _session = session);
+      return null;
+    } catch (error) {
+      return friendlyError(error);
+    }
+  }
+
+  Future<String?> _resetPassword(
+    String user,
+    String password,
+    String code,
+  ) async {
+    try {
+      await AuthService(
+        baseUrl: await BackendConfig.loadUrl(),
+      ).resetPassword(user, password, code);
+      return null;
+    } catch (error) {
+      return friendlyError(error);
     }
   }
 
   Future<void> _logout() async {
-    await AuthCache.clear();
-    if (!mounted) return;
-    setState(() {
-      _userName = null;
-      _password = null;
-    });
+    final session = _session;
+    if (session == null) return;
+    try {
+      await AuthCache.signOutLocally(session);
+      await _loadAuth();
+    } catch (error) {
+      if (mounted) setState(() => _loadError = friendlyError(error));
+    }
   }
 
   Future<String?> _changePassword(
@@ -126,27 +210,33 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
     String newPassword,
     String confirmation,
   ) async {
-    if (_password != currentPassword) return 'Current password is incorrect.';
-    if (newPassword.length < 4) {
-      return 'New password must be at least 4 characters.';
+    if (newPassword.length < 12 || newPassword.length > 128) {
+      return 'New password must have 12–128 characters.';
     }
     if (newPassword != confirmation) {
       return 'New password confirmation does not match.';
     }
     try {
-      final baseUrl = await BackendConfig.loadUrl();
-      await AuthService(baseUrl: baseUrl).updatePassword(
-        name: _userName!,
-        currentPassword: currentPassword,
-        newPassword: newPassword,
-      );
-      await AuthCache.save(_userName!, newPassword);
-      if (mounted) setState(() => _password = newPassword);
+      final previous = await AuthCache.requireCurrent(_session!);
+      if (previous.isOffline) {
+        await AuthCache.updateOfflinePassword(
+          session: previous,
+          currentPassword: currentPassword,
+          newPassword: newPassword,
+        );
+        return null;
+      }
+      final session = await AuthService(baseUrl: previous.backendUrl)
+          .updatePassword(
+            session: previous,
+            currentPassword: currentPassword,
+            newPassword: newPassword,
+          );
+      await AuthCache.saveIfCurrent(session, previous);
+      if (mounted) setState(() => _session = session);
       return null;
     } catch (error) {
-      return error is AuthException
-          ? error.message
-          : 'Cannot update password on backend.';
+      return friendlyError(error);
     }
   }
 
@@ -160,13 +250,54 @@ class _MoneyManagerAppState extends State<MoneyManagerApp> {
         themeMode: themeMode,
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
+        builder: (context, child) => Stack(
+          children: [
+            if (child != null)
+              ExcludeSemantics(excluding: _obscured, child: child),
+            if (_obscured)
+              Positioned.fill(
+                key: const ValueKey('privacy-cover'),
+                child: ColoredBox(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: const Center(
+                    child: Icon(Icons.lock_outline, size: 48),
+                  ),
+                ),
+              ),
+          ],
+        ),
         home: _loading
             ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-            : _userName == null || _password == null
-            ? AuthScreen(onLogin: _login, onRegister: _register)
+            : _loadError != null
+            ? Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_loadError!),
+                      TextButton(
+                        onPressed: _loadAuth,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : _session == null
+            ? AuthScreen(
+                onLogin: _login,
+                onRegister: _register,
+                onServerLogin: (user, password) =>
+                    _authenticateOnline(user, password, register: false),
+                onServerRegister: (user, password) =>
+                    _authenticateOnline(user, password, register: true),
+                onResetPassword: _resetPassword,
+                pendingLogouts: _pendingLogoutsCount,
+                onRetryLogouts: _retryLogouts,
+              )
             : HomeScreen(
-                userName: _userName!,
-                password: _password!,
+                key: ValueKey(MoneyStore.scopeFor(_session!)),
+                session: _session!,
                 now: widget.now,
                 versionName: widget.previewVersionName,
                 versionCode: widget.previewVersionCode,
@@ -287,15 +418,28 @@ typedef ChangePasswordCallback =
       String confirmation,
     );
 
+enum LocalAuthMode { signIn, register, resetPassword }
+
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
     required this.onLogin,
     required this.onRegister,
+    this.onServerLogin,
+    this.onServerRegister,
+    this.onResetPassword,
+    this.pendingLogouts = 0,
+    this.onRetryLogouts,
   });
 
   final AuthCallback onLogin;
   final AuthCallback onRegister;
+  final AuthCallback? onServerLogin;
+  final AuthCallback? onServerRegister;
+  final Future<String?> Function(String user, String password, String code)?
+  onResetPassword;
+  final int pendingLogouts;
+  final VoidCallback? onRetryLogouts;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -304,53 +448,52 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _user = TextEditingController();
   final _password = TextEditingController();
-  final _backend = TextEditingController();
-  bool _registering = false;
+  final _confirmation = TextEditingController();
+  final _recovery = TextEditingController();
+  bool _online = false;
+  LocalAuthMode _mode = LocalAuthMode.signIn;
+  bool _obscurePassword = true;
   bool _busy = false;
   String? _error;
 
-  @override
-  void initState() {
-    super.initState();
-    BackendConfig.loadUrl().then((value) {
-      if (mounted) _backend.text = value;
-    });
-  }
+  bool get _registering => _mode == LocalAuthMode.register;
+  bool get _resetting => _mode == LocalAuthMode.resetPassword;
 
   @override
   void dispose() {
     _user.dispose();
     _password.dispose();
-    _backend.dispose();
+    _confirmation.dispose();
+    _recovery.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (_user.text.trim().isEmpty || _password.text.length < 4) {
-      setState(() => _error = 'Enter a username and a 4+ character password.');
-      return;
-    }
+  void _setMode(LocalAuthMode mode) {
     setState(() {
-      _busy = true;
+      _mode = mode;
       _error = null;
-    });
-    await BackendConfig.saveUrl(_backend.text);
-    final error = _registering
-        ? await widget.onRegister(_user.text, _password.text)
-        : await widget.onLogin(_user.text, _password.text);
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _error = error;
+      _password.clear();
+      _confirmation.clear();
+      _recovery.clear();
+      _obscurePassword = true;
     });
   }
 
-  Future<void> _resetPassword() async {
-    if (_user.text.trim().isEmpty || _password.text.length < 4) {
-      setState(
-        () => _error =
-            'Enter the username and new password, then reset password.',
-      );
+  Future<void> _submit() async {
+    if (_busy) return;
+    final user = _user.text.trim();
+    if (user.isEmpty || user.length > 80) {
+      setState(() => _error = 'Enter a user name of 1–80 characters.');
+      return;
+    }
+    final password = _password.text;
+    final minimum = _registering || _resetting ? 12 : 4;
+    if (password.length < minimum || password.length > 128) {
+      setState(() => _error = 'Use a password of $minimum–128 characters.');
+      return;
+    }
+    if ((_registering || _resetting) && password != _confirmation.text) {
+      setState(() => _error = 'The passwords do not match.');
       return;
     }
     setState(() {
@@ -358,17 +501,83 @@ class _AuthScreenState extends State<AuthScreen> {
       _error = null;
     });
     try {
-      await BackendConfig.saveUrl(_backend.text);
-      final baseUrl = await BackendConfig.loadUrl();
-      await AuthService(
-        baseUrl: baseUrl,
-      ).resetPassword(_user.text.trim(), _password.text);
-      if (mounted) setState(() => _error = 'Password reset. Sign in now.');
+      final error = _resetting
+          ? await widget.onResetPassword!(user, password, _recovery.text.trim())
+          : _registering
+          ? await (_online ? widget.onServerRegister! : widget.onRegister)(
+              user,
+              password,
+            )
+          : await (_online ? widget.onServerLogin! : widget.onLogin)(
+              user,
+              password,
+            );
+      if (!mounted) return;
+      if (_resetting && error == null) {
+        _setMode(LocalAuthMode.signIn);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Password reset. Sign in with your new password.'),
+          ),
+        );
+      }
+      setState(() => _error = error);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = friendlyError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _serverSettings() async {
+    final controller = TextEditingController(
+      text: await BackendConfig.loadUrl(),
+    );
+    if (!mounted) {
+      controller.dispose();
+      return;
+    }
+    String? error;
+    final route = DialogRoute<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Sync server'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: 'Server address',
+              hintText: 'https://your-server:3002',
+              errorText: error,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await BackendConfig.saveUrl(controller.text);
+                  if (context.mounted) Navigator.pop(context);
+                } catch (failure) {
+                  if (context.mounted) {
+                    update(() => error = friendlyError(failure));
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    await Navigator.of(context).push(route);
+    await route.completed;
+    controller.dispose();
   }
 
   @override
@@ -387,20 +596,69 @@ class _AuthScreenState extends State<AuthScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      _registering ? 'Create account' : 'Welcome back',
+                      _resetting
+                          ? 'Reset password'
+                          : _registering
+                          ? 'Create account'
+                          : 'Welcome back',
                       style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      _registering
-                          ? 'Create an account to sync your spending.'
-                          : 'Sign in to continue managing your spending.',
+                      _online
+                          ? 'Use your sync account to access data on your other devices.'
+                          : _registering
+                          ? 'Create an account stored only on this device.'
+                          : 'Sign in without a server or Wi-Fi connection.',
                       style: const TextStyle(color: AppColors.muted),
                     ),
                     const SizedBox(height: 24),
+                    if (widget.pendingLogouts > 0) ...[
+                      const Text(
+                        'Signed out on this device. Reconnect to finish signing out on the server.',
+                      ),
+                      TextButton(
+                        onPressed: _busy ? null : widget.onRetryLogouts,
+                        child: const Text('Retry sign-out'),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (!_resetting)
+                      SegmentedButton<LocalAuthMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: LocalAuthMode.signIn,
+                            icon: Icon(Icons.login),
+                            label: Text('Sign in'),
+                          ),
+                          ButtonSegment(
+                            value: LocalAuthMode.register,
+                            icon: Icon(Icons.person_add_alt_1),
+                            label: Text('Register'),
+                          ),
+                        ],
+                        selected: {_mode},
+                        onSelectionChanged: _busy
+                            ? null
+                            : (selection) => _setMode(selection.first),
+                        showSelectedIcon: false,
+                        expandedInsets: EdgeInsets.zero,
+                      ),
+                    if (_resetting)
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => _setMode(LocalAuthMode.signIn),
+                        child: const Text('Back to sign in'),
+                      ),
+                    const SizedBox(height: 20),
                     TextField(
                       controller: _user,
+                      enabled: !_busy,
+                      autocorrect: false,
+                      autofillHints: const [AutofillHints.username],
+                      textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
                         labelText: 'Username',
                         prefixIcon: Icon(Icons.person_outline),
@@ -409,28 +667,83 @@ class _AuthScreenState extends State<AuthScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _password,
-                      obscureText: true,
-                      onSubmitted: (_) => _submit(),
-                      decoration: const InputDecoration(
-                        labelText: 'Password',
-                        prefixIcon: Icon(Icons.lock_outline),
+                      enabled: !_busy,
+                      obscureText: _obscurePassword,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      autofillHints: _registering || _resetting
+                          ? const [AutofillHints.newPassword]
+                          : const [AutofillHints.password],
+                      textInputAction: _registering || _resetting
+                          ? TextInputAction.next
+                          : TextInputAction.done,
+                      onSubmitted: _registering || _resetting
+                          ? null
+                          : (_) => _submit(),
+                      decoration: InputDecoration(
+                        labelText: _resetting ? 'New password' : 'Password',
+                        helperText: _registering || _resetting
+                            ? 'Use at least 12 characters.'
+                            : null,
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          tooltip: _obscurePassword
+                              ? 'Show password'
+                              : 'Hide password',
+                          onPressed: _busy
+                              ? null
+                              : () => setState(
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _backend,
-                      decoration: const InputDecoration(
-                        labelText: 'Backend URL',
-                        hintText: BackendConfig.defaultUrl,
-                        prefixIcon: Icon(Icons.link),
+                    if (_registering || _resetting) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _confirmation,
+                        enabled: !_busy,
+                        obscureText: _obscurePassword,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        autofillHints: const [AutofillHints.newPassword],
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _submit(),
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm password',
+                          prefixIcon: Icon(Icons.lock_reset_outlined),
+                        ),
                       ),
-                    ),
+                    ],
+                    if (_resetting) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _recovery,
+                        enabled: !_busy,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Recovery code',
+                          helperText:
+                              'Ask the server owner for a one-time code.',
+                          helperMaxLines: 3,
+                        ),
+                      ),
+                    ],
                     if (_error != null) ...[
                       const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       ),
                     ],
@@ -442,31 +755,44 @@ class _AuthScreenState extends State<AuthScreen> {
                               dimension: 22,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : Text(_registering ? 'Create account' : 'Sign in'),
+                          : Text(
+                              _resetting
+                                  ? 'Reset password'
+                                  : _registering
+                                  ? 'Create account'
+                                  : 'Sign in',
+                            ),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      children: [
+                    if (_online) ...[
+                      if (!_registering && !_resetting)
                         TextButton(
                           onPressed: _busy
                               ? null
-                              : () => setState(() {
-                                  _registering = !_registering;
-                                  _error = null;
-                                }),
-                          child: Text(
-                            _registering
-                                ? 'Already registered? Sign in'
-                                : 'Create account',
-                          ),
+                              : () => _setMode(LocalAuthMode.resetPassword),
+                          child: const Text('Forgot password?'),
                         ),
-                        TextButton(
-                          onPressed: _busy ? null : _resetPassword,
-                          child: const Text('Reset password'),
+                      TextButton.icon(
+                        onPressed: _busy ? null : _serverSettings,
+                        icon: const Icon(Icons.settings_outlined),
+                        label: const Text('Server settings'),
+                      ),
+                    ],
+                    if (widget.onServerLogin != null &&
+                        widget.onServerRegister != null &&
+                        widget.onResetPassword != null)
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () {
+                                setState(() => _online = !_online);
+                                _setMode(LocalAuthMode.signIn);
+                              },
+                        child: Text(
+                          _online
+                              ? 'Use a local account'
+                              : 'Use a sync account',
                         ),
-                      ],
-                    ),
+                      ),
                   ],
                 ),
               ),
@@ -479,7 +805,9 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
-  const BrandAppBar({super.key});
+  const BrandAppBar({super.key, this.actions});
+
+  final List<Widget>? actions;
 
   @override
   Size get preferredSize => const Size.fromHeight(80);
@@ -489,6 +817,7 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return AppBar(
       toolbarHeight: 80,
+      actions: actions,
       elevation: 0,
       scrolledUnderElevation: 0,
       backgroundColor: dark ? const Color(0xFF1A251C) : AppColors.header,
@@ -522,8 +851,7 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
-    required this.userName,
-    required this.password,
+    required this.session,
     this.now,
     this.versionName,
     this.versionCode,
@@ -531,8 +859,7 @@ class HomeScreen extends StatefulWidget {
     required this.onChangePassword,
   });
 
-  final String userName;
-  final String password;
+  final AuthSession session;
   final DateTime? now;
   final String? versionName;
   final int? versionCode;
@@ -548,33 +875,76 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Tx> _transactions = [];
   List<RecurringExpense> _recurring = [];
   int _page = 0;
+  String? _storageError;
 
   @override
   void initState() {
     super.initState();
+    MoneyManagerApp.hideAmounts.addListener(_privacyChanged);
     _load();
   }
 
+  void _privacyChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    MoneyManagerApp.hideAmounts.removeListener(_privacyChanged);
+    super.dispose();
+  }
+
+  Future<void> _toggleAmounts() async {
+    try {
+      final hidden = !MoneyManagerApp.hideAmounts.value;
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.setBool(MoneyManagerApp.hideAmountsKey, hidden)) {
+        throw const FormatException(
+          'Could not save the privacy setting. Try again.',
+        );
+      }
+      MoneyManagerApp.hideAmounts.value = hidden;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      }
+    }
+  }
+
   Future<void> _load() async {
-    final store = _store ?? await MoneyStore.load();
-    if (!mounted) return;
-    setState(() {
-      _store = store;
-      _transactions = store.transactions();
-      _recurring = store.recurring();
-    });
+    try {
+      final store = _store ?? await MoneyStore.load(session: widget.session);
+      await store.refresh();
+      if (!mounted) return;
+      setState(() {
+        _store = store;
+        _transactions = store.transactions();
+        _recurring = store.recurring();
+        _storageError = null;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _storageError = friendlyError(error));
+    }
   }
 
   Future<void> _saveExpense(Tx tx, RecurringExpense? recurring) async {
-    await _store!.addExpense(tx);
-    if (recurring != null) await _store!.addRecurring(recurring);
+    await _store!.addEntry(tx, recurring);
     await _load();
     if (mounted) setState(() => _page = 0);
   }
 
   Future<void> _removeTransaction(Tx tx) async {
-    await _store!.removeTransaction(tx.id);
-    await _load();
+    try {
+      await _store!.removeTransaction(tx.id);
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      }
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -590,19 +960,54 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _restoreTransaction(Tx tx) async {
-    await _store!.addExpense(tx);
-    await _load();
+    try {
+      await _store!.restoreTransaction(tx);
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      }
+    }
   }
 
   Future<void> _removeRecurring(RecurringExpense item) async {
-    await _store!.removeRecurring(item.id);
-    await _load();
+    try {
+      await _store!.removeRecurring(item.id);
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_store == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        body: Center(
+          child: _storageError == null
+              ? const CircularProgressIndicator()
+              : Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_storageError!),
+                      TextButton(onPressed: _load, child: const Text('Retry')),
+                      TextButton(
+                        onPressed: widget.onLogout,
+                        child: const Text('Sign Out'),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      );
     }
     final pages = [
       OverviewPage(
@@ -618,8 +1023,7 @@ class _HomeScreenState extends State<HomeScreen> {
         store: _store!,
         transactions: _transactions,
         recurring: _recurring,
-        userName: widget.userName,
-        password: widget.password,
+        session: widget.session,
         versionName: widget.versionName,
         versionCode: widget.versionCode,
         onReload: _load,
@@ -628,7 +1032,22 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
     return Scaffold(
-      appBar: const BrandAppBar(),
+      appBar: BrandAppBar(
+        actions: [
+          IconButton(
+            tooltip: MoneyManagerApp.hideAmounts.value
+                ? 'Show amounts'
+                : 'Hide amounts',
+            onPressed: _toggleAmounts,
+            icon: Icon(
+              MoneyManagerApp.hideAmounts.value
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+            ),
+          ),
+          const SizedBox(width: 12),
+        ],
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 900),
@@ -777,9 +1196,9 @@ class _OverviewPageState extends State<OverviewPage> {
                               title: Text(item.title),
                               subtitle: Text(
                                 item.frequency == RecurringFrequency.daily
-                                    ? 'Every day • ${moneyFormat.format(item.amount)}'
+                                    ? 'Every day • ${moneyText(item.amount)}'
                                     : 'Monthly on day ${item.dayOfMonth} • '
-                                          '${moneyFormat.format(item.amount)}',
+                                          '${moneyText(item.amount)}',
                               ),
                               trailing: IconButton(
                                 tooltip: 'Delete scheduled expense',
@@ -904,9 +1323,11 @@ class _OverviewPageState extends State<OverviewPage> {
               FittedBox(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  moneyFormat.format(balance),
+                  moneyText(balance),
                   style: TextStyle(
-                    color: balance < 0 ? AppColors.danger : AppColors.ink,
+                    color: balance < 0
+                        ? Theme.of(context).colorScheme.error
+                        : Theme.of(context).colorScheme.onSurface,
                     fontSize: 46,
                     height: 1,
                     fontWeight: FontWeight.w900,
@@ -920,19 +1341,21 @@ class _OverviewPageState extends State<OverviewPage> {
                   final metrics = [
                     CashFlowMetric(
                       label: 'Income this month',
-                      value: moneyFormat.format(monthIncome),
+                      value: moneyText(monthIncome),
                       icon: Icons.south_west_rounded,
                       color: AppColors.primary,
                     ),
                     CashFlowMetric(
                       label: 'Spent this month',
-                      value: moneyFormat.format(monthExpenses),
+                      value: moneyText(monthExpenses),
                       icon: Icons.north_east_rounded,
                       color: AppColors.danger,
                     ),
                   ];
-                  if (constraints.maxWidth < 350) {
+                  if (constraints.maxWidth < 260 ||
+                      MediaQuery.textScalerOf(context).scale(14) > 20) {
                     return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         metrics.first,
                         const SizedBox(height: 12),
@@ -1173,7 +1596,7 @@ class SpendingTrend extends StatelessWidget {
           child: Semantics(
             label:
                 '${DateFormat.MMM('en_US').format(months[index])} spending '
-                '${moneyFormat.format(amounts[index])}',
+                '${moneyText(amounts[index])}',
             child: ExcludeSemantics(
               child: Row(
                 children: [
@@ -1200,7 +1623,7 @@ class SpendingTrend extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        moneyFormat.format(amounts[index]),
+                        moneyText(amounts[index]),
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
@@ -1248,7 +1671,7 @@ class ScheduledExpenseRow extends StatelessWidget {
           ),
         ),
         Text(
-          moneyFormat.format(item.amount),
+          moneyText(item.amount),
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ],
@@ -1310,7 +1733,7 @@ class TransactionRow extends StatelessWidget {
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerRight,
               child: Text(
-                '${income ? '+' : '-'} ${moneyFormat.format(tx.amount)}',
+                '${income ? '+' : '-'} ${moneyText(tx.amount)}',
                 style: TextStyle(
                   color: income ? AppColors.primary : AppColors.danger,
                   fontWeight: FontWeight.w900,
@@ -1387,7 +1810,13 @@ class _AddExpensePageState extends State<AddExpensePage> {
   }
 
   Future<void> _save() async {
-    if (_amount <= 0) return;
+    if (_busy || _amount <= 0) return;
+    if (_note.text.trim().length > 500) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Keep the note under 500 characters.')),
+      );
+      return;
+    }
     setState(() => _busy = true);
     final now = widget.now ?? DateTime.now();
     const uuid = Uuid();
@@ -1416,7 +1845,18 @@ class _AddExpensePageState extends State<AddExpensePage> {
         lastAppliedAt: now,
       );
     }
-    await widget.onSave(tx, rule);
+    try {
+      await widget.onSave(tx, rule);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      }
+      return;
+    }
+    if (!mounted) return;
     _note.clear();
     if (mounted) {
       setState(() {
@@ -1522,30 +1962,27 @@ class _AddExpensePageState extends State<AddExpensePage> {
                           'backspace',
                         ]
                         .map(
-                          (value) => Semantics(
-                            button: true,
-                            label: value == 'backspace'
-                                ? 'Delete last digit'
-                                : value,
-                            child: FilledButton(
-                              onPressed: () => _key(value),
-                              style: FilledButton.styleFrom(
-                                minimumSize: const Size(44, 52),
-                                padding: EdgeInsets.zero,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
+                          (value) => FilledButton(
+                            onPressed: () => _key(value),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(44, 52),
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
                               ),
-                              child: value == 'backspace'
-                                  ? const Icon(Icons.backspace_outlined)
-                                  : Text(
-                                      value,
-                                      style: const TextStyle(
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w900,
-                                      ),
-                                    ),
                             ),
+                            child: value == 'backspace'
+                                ? const Icon(
+                                    Icons.backspace_outlined,
+                                    semanticLabel: 'Delete last digit',
+                                  )
+                                : Text(
+                                    value,
+                                    style: const TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
                           ),
                         )
                         .toList(),
@@ -1842,8 +2279,7 @@ class _HistoryPageState extends State<HistoryPage> {
                             ),
                           ),
                           Text(
-                            (net >= 0 ? '+' : '-') +
-                                moneyFormat.format(net.abs()),
+                            (net >= 0 ? '+' : '-') + moneyText(net.abs()),
                             style: TextStyle(
                               color: net >= 0
                                   ? AppColors.primary
@@ -1880,8 +2316,7 @@ class AccountPage extends StatefulWidget {
     required this.store,
     required this.transactions,
     required this.recurring,
-    required this.userName,
-    required this.password,
+    required this.session,
     this.versionName,
     this.versionCode,
     required this.onReload,
@@ -1892,8 +2327,7 @@ class AccountPage extends StatefulWidget {
   final MoneyStore store;
   final List<Tx> transactions;
   final List<RecurringExpense> recurring;
-  final String userName;
-  final String password;
+  final AuthSession session;
   final String? versionName;
   final int? versionCode;
   final Future<void> Function() onReload;
@@ -1910,13 +2344,22 @@ class _AccountPageState extends State<AccountPage> {
   final _newPassword = TextEditingController();
   final _confirmPassword = TextEditingController();
   bool _busy = false;
+  bool _hasRecoveryData = false;
 
   @override
   void initState() {
     super.initState();
-    BackendConfig.loadUrl().then((value) {
-      if (mounted) _backend.text = value;
-    });
+    _backend.text = widget.session.isOffline
+        ? BackendConfig.defaultUrl
+        : widget.session.backendUrl;
+    widget.store
+        .hasRecoveryData()
+        .then((value) {
+          if (mounted) setState(() => _hasRecoveryData = value);
+        })
+        .catchError((Object error) {
+          _toast(friendlyError(error));
+        });
   }
 
   @override
@@ -1935,39 +2378,68 @@ class _AccountPageState extends State<AccountPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<AuthSession> _activeSession() async {
+    final current = await AuthCache.requireCurrent(widget.session);
+    final normalized = BackendConfig.normalize(_backend.text);
+    final next = AuthSession(
+      name: current.name,
+      id: current.id,
+      token: current.token,
+      backendUrl: normalized,
+    );
+    if (MoneyStore.scopeFor(next) != widget.store.scope) {
+      throw const FormatException(
+        'To use another server, sign out first. Your data will stay with this account.',
+      );
+    }
+    await BackendConfig.saveUrl(normalized);
+    return next;
+  }
+
   Future<void> _saveBackendUrl() async {
-    await BackendConfig.saveUrl(_backend.text);
-    _toast('Backend URL saved');
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _activeSession();
+      _toast('Server address saved');
+    } catch (error) {
+      _toast(friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _syncNow() async {
+    if (_busy) return;
     setState(() => _busy = true);
     try {
-      await BackendConfig.saveUrl(_backend.text);
-      final baseUrl = await BackendConfig.loadUrl();
+      final session = await _activeSession();
+      await widget.store.refresh();
       final data = await MoneySyncService(
-        baseUrl: baseUrl,
-        userName: widget.userName,
-        password: widget.password,
-      ).syncTwoWay(widget.transactions, widget.recurring);
+        session: session,
+      ).syncTwoWay(widget.store.snapshot);
+      await AuthCache.requireCurrent(session);
       await widget.store.replaceAll(data);
       await widget.onReload();
-      _toast('Synced ${data.transactions.length} transactions');
+      _toast('Synced ${widget.store.transactions().length} transactions');
     } catch (error) {
-      _toast('Sync failed: $error');
+      _toast(friendlyError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _checkAndInstallUpdate() async {
+    if (_busy) return;
     if (kIsWeb) {
       _toast('APK updates are available in the Android app.');
       return;
     }
     setState(() => _busy = true);
     try {
-      final baseUrl = await BackendConfig.loadUrl();
+      final baseUrl = widget.session.isOffline
+          ? await BackendConfig.loadUrl()
+          : (await _activeSession()).backendUrl;
       final service = AppUpdateService(baseUrl: baseUrl);
       final info = await service.checkLatest();
       if (!info.available) {
@@ -2001,13 +2473,14 @@ class _AccountPageState extends State<AccountPage> {
       final path = await service.downloadApk(info);
       await service.installApk(path);
     } catch (error) {
-      _toast('Update failed: $error');
+      _toast(friendlyError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _changePassword() async {
+    if (_busy) return;
     setState(() => _busy = true);
     final error = await widget.onChangePassword(
       _currentPassword.text,
@@ -2047,7 +2520,15 @@ class _AccountPageState extends State<AccountPage> {
         ],
       ),
     );
-    if (shouldClear == true) await onConfirm();
+    if (shouldClear != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await onConfirm();
+    } catch (error) {
+      _toast(friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _clearThisMonth() async {
@@ -2075,13 +2556,136 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  Future<void> _recoverData() async {
+    if (_busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Recover older data?'),
+        content: Text(
+          'Older versions may have mixed data from different people. Continue only if you own or are authorized to recover this device’s older data. You will select which records belong to ${widget.session.name}. The original copy will be kept.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('I am authorized'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await _activeSession();
+      final data = await widget.store.readRecoveryData(confirmed: true);
+      if (!mounted) return;
+      final txIds = <String>{};
+      final ruleIds = <String>{};
+      final selected = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+            title: Text('Recover into ${widget.session.name}'),
+            content: SizedBox(
+              width: 480,
+              height: 360,
+              child: Column(
+                children: [
+                  const Text(
+                    'Select only your records. Recovered schedules will be paused to avoid unexpected charges.',
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount:
+                          data.transactions.length + data.recurring.length,
+                      itemBuilder: (context, index) {
+                        final isTx = index < data.transactions.length;
+                        final tx = isTx ? data.transactions[index] : null;
+                        final rule = isTx
+                            ? null
+                            : data.recurring[index - data.transactions.length];
+                        final id = tx?.id ?? rule!.id;
+                        final ids = isTx ? txIds : ruleIds;
+                        return CheckboxListTile(
+                          title: Text(tx?.title ?? rule!.title),
+                          subtitle: Text(
+                            '${moneyText(tx?.amount ?? rule!.amount)} · ${isTx ? dateFormat.format(tx!.date) : 'Schedule (paused)'}',
+                          ),
+                          value: ids.contains(id),
+                          onChanged: (value) => update(
+                            () => value == true ? ids.add(id) : ids.remove(id),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: txIds.isEmpty && ruleIds.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: const Text('Recover selected'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (selected != true) return;
+      await _activeSession();
+      await widget.store.replaceAll(
+        MoneySyncData(
+          data.transactions.where((tx) => txIds.contains(tx.id)).toList(),
+          data.recurring
+              .where((rule) => ruleIds.contains(rule.id))
+              .map((rule) => rule.copyWith(active: false))
+              .toList(),
+        ),
+      );
+      await widget.onReload();
+      _toast('Selected records recovered. The original copy was preserved.');
+    } catch (error) {
+      _toast(friendlyError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final dark = MoneyManagerApp.themeMode.value == ThemeMode.dark;
+    final offline = widget.session.isOffline;
     return PageList(
       children: [
         const PageTitle('Account'),
         const SizedBox(height: 22),
+        if (_hasRecoveryData) ...[
+          SectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'An older copy is preserved on this device. Recover only records that belong to you.',
+                ),
+                TextButton(
+                  onPressed: _busy ? null : _recoverData,
+                  child: const Text('Recover older data'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
         SectionCard(
           child: Row(
             children: [
@@ -2096,12 +2700,22 @@ class _AccountPageState extends State<AccountPage> {
               ),
               const SizedBox(width: 18),
               Expanded(
-                child: Text(
-                  widget.userName,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.session.name,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (offline)
+                      const Text(
+                        'Stored on this device',
+                        style: TextStyle(color: AppColors.muted),
+                      ),
+                  ],
                 ),
               ),
             ],
@@ -2128,47 +2742,49 @@ class _AccountPageState extends State<AccountPage> {
             ),
           ),
         ),
-        const SizedBox(height: 20),
-        SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Sync data',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _backend,
-                decoration: const InputDecoration(
-                  labelText: 'Backend URL',
-                  prefixIcon: Icon(Icons.link),
+        if (!offline) ...[
+          const SizedBox(height: 20),
+          SectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Sync data',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
                 ),
-              ),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: _busy ? null : _saveBackendUrl,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Save URL'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _syncNow,
-                icon: const Icon(Icons.sync),
-                label: const Text('Sync now'),
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _backend,
+                  decoration: const InputDecoration(
+                    labelText: 'Backend URL',
+                    prefixIcon: Icon(Icons.link),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _saveBackendUrl,
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save URL'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _syncNow,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Sync now'),
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
         const SizedBox(height: 20),
         SectionCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'LAN update',
+                'App updates',
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
@@ -2193,31 +2809,42 @@ class _AccountPageState extends State<AccountPage> {
         ),
         const SizedBox(height: 20),
         SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(top: 16),
+            title: const Text('Change password'),
+            leading: const Icon(Icons.lock_outline),
+            onExpansionChanged: (expanded) {
+              if (!expanded) {
+                _currentPassword.clear();
+                _newPassword.clear();
+                _confirmPassword.clear();
+              }
+            },
             children: [
-              Text(
-                'Change password',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 16),
               TextField(
                 controller: _currentPassword,
                 obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
                 decoration: const InputDecoration(hintText: 'Current password'),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _newPassword,
                 obscureText: true,
-                decoration: const InputDecoration(hintText: 'New password'),
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  hintText: 'New password (12–128 characters)',
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _confirmPassword,
                 obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
                 decoration: const InputDecoration(
                   hintText: 'Confirm new password',
                 ),
@@ -2233,16 +2860,12 @@ class _AccountPageState extends State<AccountPage> {
         ),
         const SizedBox(height: 20),
         SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(top: 16),
+            title: const Text('Delete transactions'),
+            leading: const Icon(Icons.delete_outline, color: AppColors.danger),
             children: [
-              Text(
-                'Reset local data',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 16),
               OutlinedButton.icon(
                 onPressed: _busy
                     ? null
@@ -2250,7 +2873,7 @@ class _AccountPageState extends State<AccountPage> {
                         title: 'Clear today’s transactions?',
                         message:
                             'This removes every transaction dated today from '
-                            'this device.',
+                            'this account. ${offline ? 'The change stays on this device.' : 'The deletion will sync to your other devices.'}',
                         onConfirm: _clearToday,
                       ),
                 icon: const Icon(Icons.today_outlined),
@@ -2268,7 +2891,7 @@ class _AccountPageState extends State<AccountPage> {
                         title: 'Clear this month’s transactions?',
                         message:
                             'This removes every transaction dated this month '
-                            'from this device.',
+                            'from this account. ${offline ? 'The change stays on this device.' : 'The deletion will sync to your other devices.'}',
                         onConfirm: _clearThisMonth,
                       ),
                 icon: const Icon(Icons.calendar_month_outlined),
@@ -2283,9 +2906,9 @@ class _AccountPageState extends State<AccountPage> {
         ),
         const SizedBox(height: 20),
         OutlinedButton.icon(
-          onPressed: widget.onLogout,
-          icon: const Icon(Icons.logout),
-          label: const Text('Sign Out'),
+          onPressed: _busy ? null : widget.onLogout,
+          icon: Icon(offline ? Icons.switch_account_outlined : Icons.logout),
+          label: Text(offline ? 'Switch account' : 'Sign Out'),
         ),
         if (_busy) ...[
           const SizedBox(height: 14),

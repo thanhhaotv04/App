@@ -1,6 +1,10 @@
 {
-  "versionName": "1.0.8",
-  "versionCode": 9,
-  "apkFile": "money_manager.apk",
-  "notes": "Recovered Money Manager release."
+  "versionName": "260919.1",
+  "versionCode": 260919001,
+  "applicationId": "com.thanhhao.money_manager.lan",
+  "signerSha256": "39c21f841d87bc42c6d6b103b6ff95452f4503d2aa61d475c46031ce48ab9d5f",
+  "apkFile": "money_manager-260919.1.apk",
+  "notes": "Sửa bảo mật, tách dữ liệu theo tài khoản, đồng bộ ổn định và khóa ký cố định cho Money Manager LAN.",
+  "sizeBytes": 53186550,
+  "sha256": "c18a8fb2808c7fb89ad240c15e7ae5b054b0249b6fffb26e910c5589eb879a83"
 }
