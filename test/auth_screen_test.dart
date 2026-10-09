@@ -21,7 +21,7 @@ void main() {
           onSubmit: (mode, name, password) async {
             submitted.add(mode);
             expect(name, 'Traveler');
-            expect(password, 'secret1');
+            expect(password, 'secret123');
             return mode == AuthMode.register
                 ? 'This user name is already registered.'
                 : null;
@@ -40,7 +40,7 @@ void main() {
     );
     await tester.enterText(
       find.widgetWithText(TextField, 'Password'),
-      'secret1',
+      'secret123',
     );
     await tester.enterText(
       find.widgetWithText(TextField, 'Confirm password'),
@@ -54,7 +54,7 @@ void main() {
 
     await tester.enterText(
       find.widgetWithText(TextField, 'Confirm password'),
-      'secret1',
+      'secret123',
     );
     await tester.ensureVisible(find.text('Create account'));
     await tester.tap(find.text('Create account'));

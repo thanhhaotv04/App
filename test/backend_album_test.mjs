@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { scryptSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -188,15 +189,20 @@ test('renaming a legacy account keeps its check-ins available by account ID', as
   const dataDir = path.join(temp, 'data');
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
+  await mkdir(dataDir, { recursive: true });
+  const salt = 'legacy-test-salt';
+  await writeFile(path.join(dataDir, 'accounts.json'), JSON.stringify([{
+    id: 'legacy-owner-id', name: 'thanhhao',
+    passwordHash: `${salt}:${scryptSync('test-password', salt, 32).toString('hex')}`,
+  }]));
+  const legacy = [{ id: 'old-trip', city: 'Lâm Đồng', place: 'Hồ Xuân Hương' }];
+  await writeFile(path.join(dataDir, 'checkins.json'), JSON.stringify(legacy));
   const server = spawn('node', ['backend/server.js'], {
     cwd: projectRoot,
     env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, PHOTO_ROOT: path.join(temp, 'photos') },
     stdio: 'ignore',
   });
   try {
-    await mkdir(dataDir, { recursive: true });
-    const legacy = [{ id: 'old-trip', city: 'Lâm Đồng', place: 'Hồ Xuân Hương' }];
-    await writeFile(path.join(dataDir, 'checkins.json'), JSON.stringify(legacy));
     let ready = false;
     for (let attempt = 0; attempt < 80; attempt += 1) {
       try {
@@ -205,12 +211,6 @@ test('renaming a legacy account keeps its check-ins available by account ID', as
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     assert.ok(ready, 'backend started');
-    const registered = await fetch(`${base}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'thanhhao', password: 'test-password' }),
-    });
-    assert.equal(registered.status, 201);
     const oldHeaders = { 'X-User-Name': 'thanhhao', 'X-Password': 'test-password' };
     assert.equal((await (await fetch(`${base}/api/checkins`, { headers: oldHeaders })).json()).length, 1);
 
@@ -225,6 +225,16 @@ test('renaming a legacy account keeps its check-ins available by account ID', as
     });
     assert.equal(current.status, 200);
     assert.equal((await current.json())[0].id, 'old-trip');
+    const replacement = await fetch(`${base}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'thanhhao', password: 'replacement-password' }),
+    });
+    assert.equal(replacement.status, 201);
+    const replacementToken = (await replacement.json()).token;
+    const isolated = await fetch(`${base}/api/checkins`, {
+      headers: { Authorization: `Bearer ${replacementToken}` },
+    });
+    assert.deepEqual(await isolated.json(), []);
     const stored = JSON.parse(await readFile(path.join(dataDir, 'checkins.json'), 'utf8'));
     assert.ok(Object.values(stored).some((items) => Array.isArray(items) && items[0]?.id === 'old-trip'));
   } finally {

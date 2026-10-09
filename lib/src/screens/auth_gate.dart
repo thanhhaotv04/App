@@ -44,8 +44,19 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
+    if (_loading) return;
     final name = _nameCtrl.text.trim();
     final password = _passwordCtrl.text;
+    if (_mode == AuthMode.register &&
+        (!RegExp(r'^[\p{L}\p{N}_. -]{3,40}$', unicode: true).hasMatch(name) ||
+            password.length < 8 ||
+            password.length > 128)) {
+      setState(
+        () => _error =
+            'Use a 3-40 character user name and an 8-128 character password.',
+      );
+      return;
+    }
     if (name.isEmpty || password.length < 4) {
       setState(
         () =>
@@ -186,6 +197,8 @@ class _AuthScreenState extends State<AuthScreen> {
                           TextField(
                             controller: _passwordCtrl,
                             obscureText: _obscure,
+                            autocorrect: false,
+                            enableSuggestions: false,
                             textInputAction: _mode == AuthMode.register
                                 ? TextInputAction.next
                                 : TextInputAction.done,
@@ -213,6 +226,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             TextField(
                               controller: _confirmCtrl,
                               obscureText: _obscure,
+                              autocorrect: false,
+                              enableSuggestions: false,
                               textInputAction: TextInputAction.done,
                               onSubmitted: (_) => _submit(),
                               decoration: const InputDecoration(

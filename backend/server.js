@@ -17,6 +17,7 @@ const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const ALBUMS_FILE = path.join(DATA_DIR, "albums.json");
 const PHOTO_ROOT = process.env.PHOTO_ROOT || path.join(__dirname, "user", "Picture");
 const LEGACY_CHECKINS_KEY = "__legacy";
+const LEGACY_OWNER_KEY = "__legacyOwnerId";
 const RELEASES_DIR = path.join(__dirname, "releases");
 const UPDATE_MANIFEST = path.join(RELEASES_DIR, "latest.json");
 const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
@@ -194,8 +195,7 @@ async function saveAllAlbums(albums) {
 
 const validAlbumId = (value) => /^[a-zA-Z0-9_-]{1,100}$/.test(String(value || ""));
 
-function albumPhotos(value, accountName, albumId) {
-  const prefixes = Array.isArray(accountName) ? accountName : [accountName];
+function albumPhotos(value, ownedPaths) {
   if (!Array.isArray(value)) return [];
   return value.filter((photo) => validAlbumId(photo?.id))
     .map((photo) => ({
@@ -206,7 +206,7 @@ function albumPhotos(value, accountName, albumId) {
       note: String(photo.note || "").slice(0, 4000),
       createdAt: Number(photo.createdAt) || 0,
     }))
-    .filter((photo) => prefixes.some((prefix) => photo.photo.startsWith(`user/Picture/${safeSegment(prefix)}/albums/${albumId}/`)));
+    .filter((photo) => ownedPaths.has(photo.photo));
 }
 
 function imageType(file) {
@@ -344,7 +344,7 @@ function userCheckins(allCheckins, account) {
   const legacyItems = allCheckins[LEGACY_CHECKINS_KEY];
   if (
     Array.isArray(legacyItems) &&
-    cleanSegment(account.name).toLocaleLowerCase("vi") === "thanhhao"
+    allCheckins[LEGACY_OWNER_KEY] === account.id
   ) {
     return legacyItems;
   }
@@ -353,8 +353,9 @@ function userCheckins(allCheckins, account) {
 
 function setUserCheckins(allCheckins, account, items) {
   allCheckins[account.id] = items;
-  if (cleanSegment(account.name).toLocaleLowerCase("vi") === "thanhhao") {
+  if (allCheckins[LEGACY_OWNER_KEY] === account.id) {
     delete allCheckins[LEGACY_CHECKINS_KEY];
+    delete allCheckins[LEGACY_OWNER_KEY];
   }
 }
 
@@ -369,6 +370,10 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // Tokens, travel history and private photos must never enter shared caches.
+  if (!req.path.startsWith("/releases/") && req.path !== "/api/health") {
+    res.setHeader("Cache-Control", "no-store");
+  }
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -406,30 +411,57 @@ function authRateLimit(req, res, next) {
       else authAttempts.set(key, recent);
     }
   }
-  const name = normalizedName(req.body?.name || req.body?.userName || req.body?.username).toLocaleLowerCase("vi");
+  const name = normalizedName(req.get("X-User-Name") || req.body?.name || req.body?.userName || req.body?.username).toLocaleLowerCase("vi");
   const key = `${req.ip}:${name}`;
+  const ipKey = `ip:${req.ip}`;
+  const ipRecent = (authAttempts.get(ipKey) || []).filter((time) => now - time < 15 * 60 * 1000);
   const recent = (authAttempts.get(key) || []).filter((time) => now - time < 15 * 60 * 1000);
-  if (recent.length >= 20) {
+  if (recent.length >= 20 || ipRecent.length >= 100) {
     res.setHeader("Retry-After", "900");
     return res.status(429).json({ error: "too_many_attempts", message: "Too many attempts. Try again later." });
   }
   recent.push(now);
+  ipRecent.push(now);
+  authAttempts.set(ipKey, ipRecent);
   authAttempts.set(key, recent);
   res.once("finish", () => {
-    if (res.statusCode < 400) authAttempts.delete(key);
+    if (res.statusCode < 400) {
+      authAttempts.delete(key);
+      const attempts = authAttempts.get(ipKey) || [];
+      const index = attempts.indexOf(now);
+      if (index >= 0) attempts.splice(index, 1);
+    }
   });
   next();
 }
 
+// Legacy password headers are accepted on data routes too. Apply the same
+// attempt limit there so they cannot bypass the sign-in endpoint's protection.
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/auth/") &&
+      (req.get("X-Password") || req.body?.password || req.body?.currentPassword)) {
+    return authRateLimit(req, res, next);
+  }
+  return next();
+});
+
+function ownedPhotoPaths(checkins, albums) {
+  const paths = new Set();
+  for (const item of [...checkins, ...albums]) {
+    for (const photo of [...(item.photos || []), { photo: item.photo }]) {
+      const value = String(photo?.photo || "");
+      if (value.startsWith("user/Picture/") &&
+          !value.split("/").some((part) => !part || part === "." || part === "..") &&
+          !/[\\\u0000-\u001f]/.test(value)) paths.add(value);
+    }
+  }
+  return paths;
+}
+
 async function accountOwnsPhoto(account, logicalPath) {
   const checkins = userCheckins(await loadAllCheckins(), account);
-  for (const item of checkins) {
-    const paths = Array.isArray(item.photos) ? item.photos.map((photo) => photo.photo) : [item.photo];
-    if (paths.includes(logicalPath)) return true;
-  }
   const albums = await loadAllAlbums();
-  return (albums[account.id] || []).some((album) =>
-    (album.photos || []).some((photo) => photo.photo === logicalPath));
+  return ownedPhotoPaths(checkins, albums[account.id] || []).has(logicalPath);
 }
 
 app.get(/^\/user\/Picture\/(.+)$/, asyncRoute(async (req, res) => {
@@ -495,6 +527,10 @@ app.delete("/api/account", (req, res) => runAccountWrite(res, async () => {
     for (const photo of album.photos || []) if (photo?.photo) photos.add(photo.photo);
   }
   delete allCheckins[authenticated.account.id];
+  if (allCheckins[LEGACY_OWNER_KEY] === authenticated.account.id) {
+    delete allCheckins[LEGACY_CHECKINS_KEY];
+    delete allCheckins[LEGACY_OWNER_KEY];
+  }
   delete allAlbums[authenticated.account.id];
   await saveAllCheckins(allCheckins);
   await saveAllAlbums(allAlbums);
@@ -538,7 +574,8 @@ app.post("/api/albums", asyncRoute(async (req, res) => {
     .map((value) => String(value)).filter((value) => ownedCheckins.has(value) && !excludedCheckInIds.has(value)))];
   const removedPhotos = (previous?.photos || []).filter((photo) => isDeleted || deletedPhotoIds.has(photo.id));
   const photos = new Map((previous?.photos || []).filter((photo) => !deletedPhotoIds.has(photo.id)).map((photo) => [photo.id, photo]));
-  for (const photo of albumPhotos(req.body.photos, [authenticated.account.id, authenticated.account.name], id)) {
+  const ownedPaths = ownedPhotoPaths(visibleCheckins, albums);
+  for (const photo of albumPhotos(req.body.photos, ownedPaths)) {
     if (!deletedPhotoIds.has(photo.id)) photos.set(photo.id, photo);
   }
   let orderedPhotos = [...photos.values()];
@@ -689,7 +726,7 @@ app.post("/api/auth/update", authRateLimit, (req, res) => runAccountWrite(res, a
     if (!Array.isArray(allCheckins[account.id])) {
       const legacy = userCheckins(allCheckins, account);
       if (legacy.length > 0) {
-        allCheckins[account.id] = legacy;
+        setUserCheckins(allCheckins, account, legacy);
         await saveAllCheckins(allCheckins);
       }
     }
@@ -704,8 +741,10 @@ app.post("/api/auth/update", authRateLimit, (req, res) => runAccountWrite(res, a
   res.json({ ok: true, name: account.name, token });
 }));
 
-app.post("/api/auth/logout", requireAuthenticated, (req, res) => runAccountWrite(res, async () => {
-  const { account, accounts } = req.authenticated;
+app.post("/api/auth/logout", (req, res) => runAccountWrite(res, async () => {
+  const authenticated = await authenticate(req, res);
+  if (!authenticated) return;
+  const { account, accounts } = authenticated;
   const bearer = String(req.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   const hashed = tokenHash(bearer);
   account.sessions = (account.sessions || []).filter((session) => session?.hash !== hashed);
@@ -759,8 +798,9 @@ app.post(
     const place = cleanText(req.body.place, 200);
     const notes = cleanText(req.body.notes, 4000);
     const album = cleanText(req.body.album, 120);
-    const lat = Number(req.body.lat);
-    const lng = Number(req.body.lng);
+    const hideLocation = req.body.hideLocation === "true" || req.body.hideLocation === true;
+    const lat = hideLocation ? 0 : Number(req.body.lat);
+    const lng = hideLocation ? 0 : Number(req.body.lng);
     if (!city) return res.status(400).json({ error: "city_required" });
     if (incomingId && !/^[a-zA-Z0-9_-]{1,100}$/.test(String(incomingId))) {
       return res.status(400).json({ error: "invalid_checkin_id" });
@@ -774,7 +814,8 @@ app.post(
     const id = incomingId || randomUUID();
     const createdAt = Number(incomingCreatedAt) || Date.now();
     const expectedPhotoPrefix = `user/Picture/${safeSegment(authenticated.account.id)}/`;
-    const legacyPhotoPrefix = `user/Picture/${safeSegment(authenticated.account.name)}/`;
+    const allAlbums = await loadAllAlbums();
+    const ownedPaths = ownedPhotoPaths(checkins, allAlbums[authenticated.account.id] || []);
     const previous = checkins.find((entry) => entry.id === id);
     const baseUpdatedAt = Number(req.body.baseUpdatedAt) || 0;
     if (previous && req.body.force !== "true" && baseUpdatedAt > 0 && Number(previous.updatedAt || previous.createdAt || 0) > baseUpdatedAt) {
@@ -788,7 +829,7 @@ app.post(
     const requestedPhotoPath = String(photoPath || "")
       .replace(/\\/g, "/")
       .replace(/^\/+/, "");
-    let savedPhotoPath = requestedPhotoPath.startsWith(expectedPhotoPrefix) || requestedPhotoPath.startsWith(legacyPhotoPrefix) || previousPhotos.includes(requestedPhotoPath)
+    let savedPhotoPath = ownedPaths.has(requestedPhotoPath)
       ? requestedPhotoPath
       : "";
 
@@ -819,7 +860,7 @@ app.post(
     if (hasPhotoAlbum) {
       let uploadIndex = 0;
       for (const asset of photoAssets) {
-        let photo = asset.photo.startsWith(expectedPhotoPrefix) || asset.photo.startsWith(legacyPhotoPrefix) || previousPhotos.includes(asset.photo)
+        let photo = ownedPaths.has(asset.photo)
           ? asset.photo
           : "";
         if (!photo && uploadIndex < uploadedPhotos.length) {
@@ -865,7 +906,7 @@ app.post(
       rating: Math.max(0, Math.min(5, Number(rating) || 0)),
       tags: parseTags(tags),
       localOnly: false,
-      hideLocation: req.body.hideLocation === "true" || req.body.hideLocation === true,
+      hideLocation,
     };
 
     const existingIndex = checkins.findIndex((x) => x.id === id);
@@ -997,6 +1038,15 @@ async function startServer(port) {
 }
 
 async function boot() {
+  const checkins = await loadAllCheckins();
+  if (Array.isArray(checkins[LEGACY_CHECKINS_KEY]) &&
+      !Object.prototype.hasOwnProperty.call(checkins, LEGACY_OWNER_KEY)) {
+    // Bind once, before accepting registrations. An unclaimed legacy store
+    // stays private until its owner is recovered by the server operator.
+    const accounts = await loadAccounts();
+    checkins[LEGACY_OWNER_KEY] = findAccount(accounts, "thanhhao")?.id || "";
+    await saveAllCheckins(checkins);
+  }
   for (let port = preferredPort; port < preferredPort + 20; port += 1) {
     try {
       await startServer(port);

@@ -81,10 +81,11 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
   bool _authenticated = false;
 
   Future<void> _signOut() async {
-    final tokenFuture = _credentials.readToken();
+    final tokenFuture = _credentials.readToken(allowSignedOut: true);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_sessionKey, false);
-    unawaited(_credentials.clearToken());
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
     if (!mounted) return;
     setState(() => _authenticated = false);
     _router.go('/checkin');
@@ -94,6 +95,7 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
   Future<void> _revokeRemoteSession(Future<String> tokenFuture) async {
     try {
       final token = await tokenFuture;
+      await _credentials.clearToken();
       if (token.isEmpty) return;
       await AuthService(
         baseUrl: await BackendConfig.loadUrl(),
@@ -196,6 +198,7 @@ class _VietNamMapAppState extends State<VietNamMapApp> {
         userName: accountName,
         password: password,
         token: token,
+        baseUrl: backendUrl,
       );
     } else {
       await prefs.setString(_userKey, accountName);

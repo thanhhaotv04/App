@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/travel_album.dart';
 import 'backend_config.dart';
+import 'private_photo.dart';
+import 'image_optimizer.dart';
 import 'credential_store.dart';
 import 'local_image_storage.dart';
 
@@ -58,7 +60,10 @@ class AlbumRepository {
       RegExp(r'/+$'),
       '',
     );
-    final headers = await const CredentialStore().authHeaders(userName: name);
+    final headers = await const CredentialStore().authHeaders(
+      userName: name,
+      baseUrl: url,
+    );
     final remoteResponse = await http
         .get(Uri.parse('$url/api/albums'), headers: headers)
         .timeout(const Duration(seconds: 12));
@@ -100,6 +105,10 @@ class AlbumRepository {
         if (photo.photo.isEmpty && photo.localPhoto.isNotEmpty) {
           final bytes = await LocalImageStorage.readImage(photo.localPhoto);
           if (bytes != null && bytes.isNotEmpty) {
+            final clean = await const ImageOptimizer().optimize(
+              bytes,
+              photo.name.isEmpty ? 'album-photo.jpg' : photo.name,
+            );
             final upload = http.MultipartRequest(
               'POST',
               Uri.parse(
@@ -113,8 +122,8 @@ class AlbumRepository {
             upload.files.add(
               http.MultipartFile.fromBytes(
                 'photo',
-                bytes,
-                filename: photo.name.isEmpty ? 'album-photo.jpg' : photo.name,
+                clean.bytes,
+                filename: clean.fileName,
               ),
             );
             final streamed = await upload.send().timeout(
@@ -128,13 +137,14 @@ class AlbumRepository {
         }
         if (current.photo.isNotEmpty && current.localPhoto.isEmpty) {
           try {
-            final downloaded = await http
-                .get(Uri.parse('$url/${current.photo}'), headers: headers)
-                .timeout(const Duration(seconds: 20));
-            if (downloaded.statusCode == 200 &&
-                downloaded.bodyBytes.isNotEmpty) {
+            final downloaded = await PrivatePhoto.read(
+              baseUrl: url,
+              photo: current.photo,
+              headers: headers,
+            );
+            if (downloaded != null && downloaded.isNotEmpty) {
               final localRef = await LocalImageStorage.saveImage(
-                bytes: downloaded.bodyBytes,
+                bytes: downloaded,
                 originalName: current.name.isEmpty
                     ? 'album-photo.jpg'
                     : current.name,

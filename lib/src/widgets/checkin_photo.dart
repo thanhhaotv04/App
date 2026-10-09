@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../models/checkin.dart';
 import '../repositories/local_image_storage.dart';
 import '../repositories/credential_store.dart';
+import '../repositories/backend_config.dart';
+import '../repositories/private_photo.dart';
 import '../theme/app_colors.dart';
 
 class CheckInPhoto extends StatefulWidget {
@@ -146,16 +148,29 @@ class _AuthenticatedNetworkImage extends StatefulWidget {
 
 class _AuthenticatedNetworkImageState
     extends State<_AuthenticatedNetworkImage> {
-  late final Future<Map<String, String>> _headers = const CredentialStore()
-      .authHeaders();
+  late Future<Uint8List?> _photo = _load();
+
+  Future<Uint8List?> _load() async => PrivatePhoto.read(
+    baseUrl: await BackendConfig.loadUrl(),
+    photo: widget.url,
+    headers: await const CredentialStore().authHeaders(),
+  );
+
+  @override
+  void didUpdateWidget(covariant _AuthenticatedNetworkImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) _photo = _load();
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    return FutureBuilder<Map<String, String>>(
-      future: _headers,
+    return FutureBuilder<Uint8List?>(
+      future: _photo,
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
+        if (snapshot.hasError ||
+            (snapshot.connectionState == ConnectionState.done &&
+                (snapshot.data == null || snapshot.data!.isEmpty))) {
           return Icon(
             Icons.broken_image_outlined,
             size: widget.emptyIconSize,
@@ -169,9 +184,8 @@ class _AuthenticatedNetworkImageState
             color: colors.muted,
           );
         }
-        return Image.network(
-          widget.url,
-          headers: snapshot.data,
+        return Image.memory(
+          snapshot.data!,
           fit: widget.fit,
           semanticLabel: widget.semanticLabel,
           errorBuilder: (context, error, stackTrace) {

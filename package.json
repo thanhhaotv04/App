@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "backend": "node backend/server.js",
-    "test": "node --test test/backend_auth_test.mjs test/backend_album_test.mjs"
+    "test": "node --test test/backend_auth_test.mjs test/backend_album_test.mjs test/backend_privacy_test.mjs"
   },
   "dependencies": {
     "express": "^4.22.3",

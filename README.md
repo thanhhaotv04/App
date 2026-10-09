@@ -18,10 +18,10 @@ Album và ảnh đã xóa được đánh dấu theo tài khoản để không x
 
 - **GPS:** nút Use current location xin quyền vị trí, lưu tọa độ và tự nhận diện tỉnh/thành từ GeoJSON ngoại tuyến.
 - **Sync Center:** hiển thị thao tác đang chờ, số lần thử/lỗi; xóa offline không bị tải lại từ server; xung đột cho phép chọn bản local hoặc server.
-- **Privacy:** Local only không upload bản ghi mới; Hide exact coordinates không gửi tọa độ lên server và loại tọa độ khỏi file chia sẻ.
+- **Privacy:** công tắc tự lưu ngay. Local only áp dụng cho check-in mới; Hide exact coordinates áp dụng cho tọa độ của check-in mới và mọi album được chia sẻ. Không tự xóa tọa độ đã đồng bộ trước đó.
 - **Backup:** file `.vmcbackup` dùng PBKDF2-SHA256 và AES-256-GCM, có thể gồm ảnh; backup tự động lưu hàng ngày/hàng tuần trong thư mục dữ liệu ứng dụng.
-- **Ảnh:** kiểm tra chữ ký JPEG/PNG/GIF/WebP ở backend, giới hạn 12 MB/file, quota mặc định 500 MB/tài khoản, ảnh lớn được thu nhỏ tối đa 2048 px và nén trước khi lưu.
-- **Phiên đăng nhập:** token được lưu bằng secure storage; backend giới hạn thử đăng nhập, cho phép nhiều thiết bị, chặn truy cập ảnh của tài khoản khác và không còn public static ảnh.
+- **Ảnh:** loại EXIF/GPS và metadata khi thêm, upload hoặc chia sẻ; giữ chiều ảnh, độ trong suốt và ảnh động. Backend kiểm tra chữ ký JPEG/PNG/GIF/WebP, giới hạn 12 MB/file, quota mặc định 500 MB/tài khoản. URL ảnh phải thuộc backend đã cấu hình; không chuyển tiếp token qua redirect.
+- **Phiên đăng nhập:** token chỉ lưu trong secure storage và gắn với backend đã đăng nhập. Khi đổi địa chỉ máy chủ, đăng xuất rồi đăng nhập lại để đồng bộ; dữ liệu offline vẫn còn. Backend giới hạn thử mật khẩu trên cả API đăng nhập và API dữ liệu, kiểm tra quyền sở hữu ảnh bằng bản ghi thực tế và cấm cache dữ liệu riêng tư.
 - **Update:** APK được kiểm tra SHA-256 do backend cung cấp trước khi chuyển cho Android cài đặt.
 
 ## Chạy và kiểm tra
@@ -31,7 +31,7 @@ flutter pub get
 flutter analyze
 npm install
 flutter test
-node --test test/backend_auth_test.mjs test/backend_album_test.mjs
+npm test
 npm audit --audit-level=moderate
 npm run backend
 ```
@@ -42,14 +42,18 @@ HTTP chỉ phù hợp để thử nghiệm trong LAN tin cậy. Khi triển khai
 
 Các APK đang phát hành dùng cùng certificate debug cũ để giữ khả năng cập nhật đè. `fastUpdate.sh` tự tạo/dùng `android/vietnam-map-debug.keystore`, alias `thanhhaodebugkey`, mật khẩu `thanhhao`; có thể ghi đè bằng `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` và `ANDROID_KEY_PASSWORD`. Đây là lựa chọn tương thích nhanh nhưng có rủi ro bảo mật; giữ nguyên certificate hiện tại giữa các lần cập nhật.
 
-`npm run backend` **chỉ phục vụ bản phát hành đang có** trong `backend/releases/`; lệnh này không build hoặc thay APK. `flutter build apk` cũng chỉ tạo APK trong `build/app/outputs/flutter-apk/`. Bản đang phát hành là `1.2.3+32`: `backend/releases/latest.json` trỏ tới `app-release.apk`; APK `app-1.2.0-29.apk` vẫn được giữ để dự phòng. Để phát hành bản tiếp theo qua nút **Check for update**, dùng `./fastUpdate.sh` sau khi đã duyệt bản phát hành; script tăng versionCode, build, kiểm tra phiên bản/chữ ký bên trong APK, rồi cập nhật APK và `latest.json`. Nếu tự thay file, phải kiểm tra `versionName`/`versionCode` bên trong APK khớp `latest.json`; chỉ sửa `latest.json` sẽ khiến Android tải lại APK cũ và báo đã cài.
+`npm run backend` **chỉ phục vụ bản phát hành đang có** trong `backend/releases/`; lệnh này không build hoặc thay APK. `flutter build apk` cũng chỉ tạo APK trong `build/app/outputs/flutter-apk/`. Để phát hành bản tiếp theo qua nút **Check for update**, dùng `./fastUpdate.sh` sau khi đã duyệt bản phát hành; script tăng versionCode, build, kiểm tra phiên bản/chữ ký bên trong APK, rồi cập nhật APK và `latest.json`. Nếu tự thay file, phải kiểm tra `versionName`/`versionCode` bên trong APK khớp `latest.json`; chỉ sửa `latest.json` sẽ khiến Android tải lại APK cũ và báo đã cài.
 
 ## Quy tắc phiên bản
 
-- Phiên bản hiển thị dùng `MAJOR.MINOR.PATCH`: tăng MAJOR khi thay đổi không tương thích, MINOR khi thêm tính năng tương thích, PATCH khi sửa lỗi. Ví dụ lần tổ chức lại năm mục của app là `1.2.0`.
-- Android `versionCode` là số build nội bộ, luôn tăng sau mỗi lần phát hành; bản `1.2.3` dùng build `32`. Trong `pubspec.yaml` ghi `1.2.3+32`; màn hình Account hiển thị `v1.2.3 (build 32)`.
+- Nhãn phát hành dùng `YYMMDD.N` theo múi giờ Việt Nam, ví dụ `260919.1`. Android `versionCode` luôn tăng; bản hiện tại dùng `26091901`.
+- Chỉnh sửa mã nguồn và push GitHub không tự phát hành APK hay tăng phiên bản. Chỉ chạy `fastUpdate.sh` khi có yêu cầu phát hành.
 - Trước khi công bố Update, kiểm tra `versionName`/`versionCode` **bên trong APK** khớp với `backend/releases/latest.json`, và APK có cùng application ID, chữ ký với bản đang cài. Không sửa nội dung APK của một phiên bản đã công bố; mỗi APK thay đổi phải có versionCode mới.
 
 ## Dữ liệu cần giữ khi cập nhật
 
 Backend sử dụng `backend/server-data/accounts.json`, `backend/server-data/checkins.json`, `backend/server-data/albums.json` và toàn bộ `backend/user/Picture/`. Các file/thư mục này bị Git bỏ qua và **không được xóa khi dọn hoặc cập nhật mã nguồn**. Giữ `backend/releases/latest.json` và APK trong `backend/releases/` nếu tiếp tục dùng Update. Ảnh/check-in cục bộ trên điện thoại nằm trong dữ liệu của ứng dụng Android, không nằm trong thư mục mã nguồn. Chức năng Update chỉ cài APK khi có bản phát hành mới trên backend.
+
+## Kiểm tra quyền riêng tư
+
+Xem [báo cáo rà soát và giới hạn kiểm chứng](docs/privacy-review.md). Android không sao lưu dữ liệu riêng tư qua Auto Backup hoặc chuyển thiết bị tự động; dùng backup mã hóa trong app để tự chuyển dữ liệu. Album ZIP vẫn chứa ảnh, địa điểm, ghi chú và ngày do người dùng chủ động chia sẻ, nhưng không chứa đường dẫn lưu trữ nội bộ.

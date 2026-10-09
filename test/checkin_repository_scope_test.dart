@@ -72,7 +72,11 @@ void main() {
       ).load()).single;
       expect(moved.localPhoto, isNot(oldRef));
       expect(moved.photoItems.single.localPhoto, moved.localPhoto);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('vmc-auth-user', 'NewUser');
       expect(await LocalImageStorage.readImage(moved.localPhoto), [1, 2, 3]);
+      expect(await LocalImageStorage.readImage(oldRef), isNull);
+      await prefs.setString('vmc-auth-user', 'OldUser');
       expect(await LocalImageStorage.readImage(oldRef), [1, 2, 3]);
     } finally {
       Directory.current = originalDirectory;

@@ -85,6 +85,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Current password'), findsOneWidget);
+    expect(find.text('Change password'), findsOneWidget);
+    expect(find.text('New password'), findsNothing);
+    await tester.tap(find.text('Change password'));
+    await tester.pumpAndSettle();
     expect(find.text('New password'), findsOneWidget);
     expect(find.text('Toggle theme'), findsOneWidget);
     expect(find.text('Sync now'), findsOneWidget);

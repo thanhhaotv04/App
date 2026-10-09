@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LocalImageStorage {
@@ -35,19 +37,31 @@ class LocalImageStorage {
     return '$_prefix${file.path}';
   }
 
-  static Future<Uint8List?> readImage(String ref) async {
+  static Future<File?> _ownedFile(String ref) async {
     if (!isLocalRef(ref)) return null;
+    final root = await _rootDirectory(create: false);
     final file = File(ref.substring(_prefix.length));
-    if (!await file.exists()) return null;
-    return file.readAsBytes();
+    if (!p.isWithin(
+          p.normalize(root.absolute.path),
+          p.normalize(file.absolute.path),
+        ) ||
+        !await file.exists() ||
+        !await root.exists()) {
+      return null;
+    }
+    final canonicalRoot = await root.resolveSymbolicLinks();
+    final canonicalFile = await file.resolveSymbolicLinks();
+    return p.isWithin(canonicalRoot, canonicalFile)
+        ? File(canonicalFile)
+        : null;
+  }
+
+  static Future<Uint8List?> readImage(String ref) async {
+    return (await _ownedFile(ref))?.readAsBytes();
   }
 
   static Future<void> deleteImage(String ref) async {
-    if (!isLocalRef(ref)) return;
-    final file = File(ref.substring(_prefix.length));
-    if (await file.exists()) {
-      await file.delete();
-    }
+    await (await _ownedFile(ref))?.delete();
   }
 
   static Future<void> deleteAllImages({bool allUsers = false}) async {
@@ -148,7 +162,9 @@ class LocalImageStorage {
       RegExp(r'[<>:"/\\|?*\x00-\x1F]'),
       '_',
     );
-    return cleaned.isEmpty ? 'Unknown' : cleaned;
+    return cleaned.isEmpty || RegExp(r'^\.+$').hasMatch(cleaned)
+        ? 'Unknown'
+        : cleaned;
   }
 
   static String _baseName(String value) {

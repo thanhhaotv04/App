@@ -1,10 +1,10 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import 'local_image_storage.dart';
 import 'credential_store.dart';
+import 'private_photo.dart';
 
 /// Exports a private app photo to a location chosen by the user.
 class PhotoExport {
@@ -59,18 +59,11 @@ class PhotoExport {
   }) async {
     Uint8List? bytes = await LocalImageStorage.readImage(localPhoto);
     if ((bytes == null || bytes.isEmpty) && remotePhoto.isNotEmpty) {
-      final url =
-          remotePhoto.startsWith('http://') ||
-              remotePhoto.startsWith('https://')
-          ? remotePhoto
-          : '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/${remotePhoto.replaceFirst(RegExp(r'^/+'), '')}';
-      final response = await http
-          .get(
-            Uri.parse(url),
-            headers: await const CredentialStore().authHeaders(),
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode == 200) bytes = response.bodyBytes;
+      bytes = await PrivatePhoto.read(
+        baseUrl: baseUrl,
+        photo: remotePhoto,
+        headers: await const CredentialStore().authHeaders(baseUrl: baseUrl),
+      );
     }
     return bytes;
   }

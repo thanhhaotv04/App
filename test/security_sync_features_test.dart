@@ -1,14 +1,50 @@
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vietnam_map_01/src/models/checkin.dart';
 import 'package:vietnam_map_01/src/repositories/backup_service.dart';
 import 'package:vietnam_map_01/src/repositories/checkin_repository.dart';
 import 'package:vietnam_map_01/src/repositories/sync_queue_repository.dart';
+import 'package:vietnam_map_01/src/repositories/credential_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'secure storage failure removes plaintext tokens and legacy credentials migrate',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'vmc-auth-user': 'legacy-user',
+        'vmc-auth-password': 'legacy-password',
+        'vmc-auth-token-fallback': 'legacy-token',
+      });
+      const channel = MethodChannel(
+        'plugins.it_nomads.com/flutter_secure_storage',
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            channel,
+            (_) async => throw PlatformException(code: 'locked'),
+          );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      const store = CredentialStore();
+      expect(await store.readToken(), isEmpty);
+      await expectLater(store.writeToken('new-token'), throwsStateError);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('vmc-auth-token-fallback'), isNull);
+      expect(await store.hasOfflineAccount(), isTrue);
+      expect(prefs.getString('vmc-auth-password'), isNull);
+      expect(
+        await store.matchesOffline('legacy-user', 'legacy-password'),
+        isTrue,
+      );
+      await prefs.setBool('vmc-auth-session', false);
+      await expectLater(store.authHeaders(), throwsStateError);
+    },
+  );
 
   test('encrypted backup round-trips and rejects a wrong password', () async {
     SharedPreferences.setMockInitialValues({'vmc-auth-user': 'backup-user'});

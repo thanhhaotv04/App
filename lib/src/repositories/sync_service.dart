@@ -7,6 +7,8 @@ import '../models/sync_state.dart';
 import 'auth_service.dart';
 import 'credential_store.dart';
 import 'local_image_storage.dart';
+import 'image_optimizer.dart';
+import 'private_photo.dart';
 import 'sync_queue_repository.dart';
 
 class PhotoUpload {
@@ -38,6 +40,7 @@ class SyncService {
       userName: userName,
       migrationPassword: password,
       token: token,
+      baseUrl: baseUrl,
     );
   }
 
@@ -61,6 +64,7 @@ class SyncService {
       userName: session.name,
       password: pass,
       token: session.token,
+      baseUrl: baseUrl,
     );
   }
 
@@ -137,21 +141,29 @@ class SyncService {
     if (photoUploads != null) {
       for (final upload in photoUploads) {
         if (upload.bytes.isEmpty) continue;
+        final clean = await const ImageOptimizer().optimize(
+          upload.bytes,
+          upload.fileName,
+        );
         request.files.add(
           http.MultipartFile.fromBytes(
             'photos',
-            upload.bytes,
-            filename: upload.fileName,
+            clean.bytes,
+            filename: clean.fileName,
           ),
         );
       }
     } else {
       if (photoBytes != null && photoBytes.isNotEmpty) {
+        final clean = await const ImageOptimizer().optimize(
+          photoBytes,
+          photoFileName ?? 'checkin-photo.jpg',
+        );
         request.files.add(
           http.MultipartFile.fromBytes(
             'photos',
-            photoBytes,
-            filename: photoFileName ?? 'checkin-photo.jpg',
+            clean.bytes,
+            filename: clean.fileName,
           ),
         );
       }
@@ -161,11 +173,15 @@ class SyncService {
       for (final asset in assetsToRead) {
         final bytes = await LocalImageStorage.readImage(asset.localPhoto);
         if (bytes == null || bytes.isEmpty) continue;
+        final clean = await const ImageOptimizer().optimize(
+          bytes,
+          asset.name.isEmpty ? 'checkin-photo.jpg' : asset.name,
+        );
         request.files.add(
           http.MultipartFile.fromBytes(
             'photos',
-            bytes,
-            filename: asset.name.isEmpty ? 'checkin-photo.jpg' : asset.name,
+            clean.bytes,
+            filename: clean.fileName,
           ),
         );
       }
@@ -293,20 +309,16 @@ class SyncService {
       return item.copyWith(synced: true);
     }
     try {
-      final response =
-          await (client?.get(
-                    _photoUri(item.photo),
-                    headers: await _authHeaders(),
-                  ) ??
-                  http.get(
-                    _photoUri(item.photo),
-                    headers: await _authHeaders(),
-                  ))
-              .timeout(const Duration(seconds: 10));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
+      final bytes = await PrivatePhoto.read(
+        baseUrl: baseUrl,
+        photo: item.photo,
+        headers: await _authHeaders(),
+        client: client,
+      );
+      if (bytes != null && bytes.isNotEmpty) {
         final fileName = item.photo.split('/').last;
         final localPhoto = await LocalImageStorage.saveImage(
-          bytes: response.bodyBytes,
+          bytes: bytes,
           originalName: fileName,
           city: item.city,
           createdAt: item.createdAt,
@@ -344,15 +356,6 @@ class SyncService {
       lng: local.hideLocation ? local.lng : remote.lng,
       hideLocation: local.hideLocation,
     );
-  }
-
-  Uri _photoUri(String photo) {
-    final value = photo.trim();
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return Uri.parse(value);
-    }
-    final path = value.startsWith('/') ? value : '/$value';
-    return Uri.parse('$baseUrl$path');
   }
 
   Future<void> deleteCheckIn(String id) async {

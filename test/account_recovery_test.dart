@@ -56,7 +56,7 @@ void main() {
       return http.Response('{}', 404);
     });
 
-    const baseUrl = 'http://example.invalid';
+    const baseUrl = 'https://example.invalid';
     final repository = CheckInRepository();
     expect(await repository.load(), isEmpty);
     expect(

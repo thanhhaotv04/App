@@ -37,6 +37,13 @@ backend/releases/*.apk
 backend/server-data/*.tmp
 backend/server-data/
 backend/user/Picture/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.vmcbackup
+VietNamMapCheckin/
 flutter_*.log
 
 # Symbolication related

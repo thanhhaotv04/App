@@ -46,6 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _obscureCurrent = true;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
+  bool _savingPrivacy = false;
   bool _localOnly = false;
   bool _hideLocation = false;
   int _autoBackupDays = 7;
@@ -128,6 +129,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _showMessage('Current password is incorrect.');
       return;
     }
+    if (newPassword.isNotEmpty &&
+        (newPassword.length < 8 || newPassword.length > 128)) {
+      _showMessage('Use a new password with 8-128 characters.');
+      return;
+    }
     if (newPassword.isNotEmpty && newPassword != confirmation) {
       _showMessage('New passwords do not match.');
       return;
@@ -136,7 +142,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _savingAccount = true);
     try {
       final oldName = prefs.getString(_userKey)?.trim() ?? '';
-      await BackendConfig.saveUrl(_backendCtrl.text);
       final credentials = const CredentialStore();
       final session = await AuthService(baseUrl: await BackendConfig.loadUrl())
           .updateAccountSession(
@@ -176,7 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveBackendUrl() async {
     try {
       await BackendConfig.saveUrl(_backendCtrl.text);
-      _showMessage('Backend URL saved.');
+      _showMessage(
+        'Backend URL saved. If the server changed, sign out and sign in to reconnect.',
+      );
     } catch (error) {
       _showMessage(error.toString().replaceFirst('FormatException: ', ''));
     }
@@ -301,12 +308,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _savePrivacy() async {
-    await PrivacySettings(
+  Future<void> _setPrivacy({bool? localOnly, bool? hideLocation}) async {
+    final previous = PrivacySettings(
       localOnly: _localOnly,
       hideLocation: _hideLocation,
-    ).save();
-    _showMessage('Privacy defaults saved for new check-ins.');
+    );
+    final next = previous.copyWith(
+      localOnly: localOnly,
+      hideLocation: hideLocation,
+    );
+    setState(() {
+      _localOnly = next.localOnly;
+      _hideLocation = next.hideLocation;
+      _savingPrivacy = true;
+    });
+    try {
+      await next.save();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _localOnly = previous.localOnly;
+        _hideLocation = previous.hideLocation;
+      });
+      _showMessage('Could not save privacy settings. Please try again.');
+    } finally {
+      if (mounted) setState(() => _savingPrivacy = false);
+    }
   }
 
   Future<void> _setBackupInterval(int? days) async {
@@ -469,20 +496,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           setState(() => _obscureCurrent = !_obscureCurrent),
                     ),
                     const SizedBox(height: 12),
-                    _PasswordField(
-                      controller: _newPasswordCtrl,
-                      label: 'New password',
-                      obscureText: _obscureNew,
-                      onToggle: () =>
-                          setState(() => _obscureNew = !_obscureNew),
-                    ),
-                    const SizedBox(height: 12),
-                    _PasswordField(
-                      controller: _confirmPasswordCtrl,
-                      label: 'Confirm new password',
-                      obscureText: _obscureConfirm,
-                      onToggle: () =>
-                          setState(() => _obscureConfirm = !_obscureConfirm),
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: const EdgeInsets.only(bottom: 8),
+                      title: const Text('Change password'),
+                      subtitle: const Text(
+                        'Optional when changing your user name',
+                      ),
+                      children: [
+                        _PasswordField(
+                          controller: _newPasswordCtrl,
+                          label: 'New password',
+                          obscureText: _obscureNew,
+                          onToggle: () =>
+                              setState(() => _obscureNew = !_obscureNew),
+                        ),
+                        const SizedBox(height: 12),
+                        _PasswordField(
+                          controller: _confirmPasswordCtrl,
+                          label: 'Confirm new password',
+                          obscureText: _obscureConfirm,
+                          onToggle: () => setState(
+                            () => _obscureConfirm = !_obscureConfirm,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 18),
                     Align(
@@ -537,6 +575,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       decoration: InputDecoration(
                         labelText: 'Backend URL',
                         hintText: BackendConfig.defaultUrl,
+                        helperText:
+                            'HTTPS keeps your data encrypted. HTTP is for trusted LAN only.',
+                        helperMaxLines: 3,
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -618,7 +659,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _localOnly,
-                      onChanged: (value) => setState(() => _localOnly = value),
+                      onChanged: _savingPrivacy
+                          ? null
+                          : (value) => _setPrivacy(localOnly: value),
                       title: const Text('Local only'),
                       subtitle: const Text(
                         'Do not upload new check-ins to the server',
@@ -627,18 +670,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: _hideLocation,
-                      onChanged: (value) =>
-                          setState(() => _hideLocation = value),
+                      onChanged: _savingPrivacy
+                          ? null
+                          : (value) => _setPrivacy(hideLocation: value),
                       title: const Text('Hide exact coordinates'),
                       subtitle: const Text(
-                        'Keep coordinates out of shared exports',
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton(
-                        onPressed: _savePrivacy,
-                        child: const Text('Save privacy'),
+                        'Hide coordinates in new uploads and all shared albums',
                       ),
                     ),
                   ],
@@ -724,6 +761,8 @@ class _PasswordField extends StatelessWidget {
     return TextField(
       controller: controller,
       obscureText: obscureText,
+      autocorrect: false,
+      enableSuggestions: false,
       decoration: InputDecoration(
         labelText: label,
         suffixIcon: IconButton(

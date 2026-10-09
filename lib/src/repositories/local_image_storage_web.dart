@@ -33,7 +33,11 @@ class LocalImageStorage {
   static Future<Uint8List?> readImage(String ref) async {
     if (!isLocalRef(ref)) return null;
     final prefs = await SharedPreferences.getInstance();
-    final encoded = prefs.getString(ref.substring(_prefix.length));
+    final key = ref.substring(_prefix.length);
+    if (!key.startsWith('$_storagePrefix${await _accountToken(prefs)}_')) {
+      return null;
+    }
+    final encoded = prefs.getString(key);
     if (encoded == null || encoded.isEmpty) return null;
     try {
       return Uint8List.fromList(base64Decode(encoded));
@@ -45,7 +49,10 @@ class LocalImageStorage {
   static Future<void> deleteImage(String ref) async {
     if (!isLocalRef(ref)) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(ref.substring(_prefix.length));
+    final key = ref.substring(_prefix.length);
+    if (key.startsWith('$_storagePrefix${await _accountToken(prefs)}_')) {
+      await prefs.remove(key);
+    }
   }
 
   static Future<void> deleteAllImages({bool allUsers = false}) async {

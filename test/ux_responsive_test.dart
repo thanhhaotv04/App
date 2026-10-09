@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vietnam_map_01/src/screens/history_screen.dart';
+import 'package:vietnam_map_01/src/screens/settings_screen.dart';
+import 'package:vietnam_map_01/src/repositories/privacy_settings.dart';
 import 'package:vietnam_map_01/src/models/checkin.dart';
 import 'package:vietnam_map_01/src/screens/insights_screen.dart';
 import 'package:vietnam_map_01/src/screens/map_screen.dart';
@@ -137,4 +139,50 @@ void main() {
     expect(find.text('Start your travel story'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'privacy switches save immediately and account controls fit large text',
+    (tester) async {
+      for (final width in [375.0, 768.0, 1024.0, 1440.0]) {
+        await pumpScreen(
+          tester,
+          size: Size(width, 900),
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 900),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: const SettingsScreen(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('Local only'),
+          500,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Local only'));
+        await tester.pumpAndSettle();
+        expect((await PrivacySettings.load()).localOnly, isTrue);
+        await tester.scrollUntilVisible(
+          find.text('Hide exact coordinates'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Hide exact coordinates'));
+        await tester.pumpAndSettle();
+        expect((await PrivacySettings.load()).hideLocation, isTrue);
+        expect(find.text('Save privacy'), findsNothing);
+        await tester.scrollUntilVisible(
+          find.text('Check for update'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      }
+    },
+  );
 }
