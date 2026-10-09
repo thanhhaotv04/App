@@ -2,11 +2,23 @@ package com.thanhhao.esp32_navride
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONObject
 
 class OsmAndNotificationParserTest {
+    @Test
+    fun roundaboutAngleAcceptsNumericBundleTypesWithoutGuessingMissingAngle() {
+        assertEquals(-90, OsmAndDirectionMapper.angleFromBundle(-90f))
+        assertEquals(75, OsmAndDirectionMapper.angleFromBundle(75.4))
+        assertEquals(120, OsmAndDirectionMapper.angleFromBundle(120))
+        assertNull(OsmAndDirectionMapper.angleFromBundle(null))
+        assertNull(OsmAndDirectionMapper.angleFromBundle("90"))
+        assertNull(OsmAndDirectionMapper.angleFromBundle(Double.NaN))
+        assertNull(OsmAndDirectionMapper.fromNextTurn("RNDB3", 250, "Road")?.turnAngle)
+    }
+
     @Test
     fun roundaboutExitsOneThroughSixKeepRealAngleAndRoadInBlePacket() {
         for (exit in 1..6) {

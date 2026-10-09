@@ -1,0 +1,10 @@
+# Never publish local credentials, private QR payloads or signing material.
+**/.env
+**/.env.*
+!**/.env.example
+**/secrets.h
+**/qr_assets_private.h
+*.keystore
+*.jks
+*.pem
+*.key

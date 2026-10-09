@@ -13,18 +13,16 @@ test('serves only a verified update manifest and APK', async (context) => {
   const apk = Buffer.from('PK\u0003\u0004test-apk');
   const apkFile = 'esp32-navride-261001.1.apk';
   await fs.writeFile(path.join(releasesDir, apkFile), apk);
-  await fs.writeFile(
-    path.join(releasesDir, 'latest.json'),
-    JSON.stringify({
-      applicationId: 'com.thanhhao.esp32_monitor',
-      versionName: '261001.1',
-      versionCode: 26100101,
-      apkFile,
-      notes: 'Test update.',
-      sizeBytes: apk.length,
-      sha256: createHash('sha256').update(apk).digest('hex'),
-    }),
-  );
+  const manifest = {
+    applicationId: 'com.thanhhao.esp32_navride',
+    versionName: '261001.1',
+    versionCode: 26100101,
+    apkFile,
+    notes: 'Test update.',
+    sizeBytes: apk.length,
+    sha256: createHash('sha256').update(apk).digest('hex'),
+  };
+  await fs.writeFile(path.join(releasesDir, 'latest.json'), JSON.stringify(manifest));
 
   const server = createUpdateServer({ releasesDir });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -51,6 +49,13 @@ test('serves only a verified update manifest and APK', async (context) => {
 
   const post = await fetch(`${base}/api/update/latest`, { method: 'POST' });
   assert.equal(post.status, 405);
+
+  await fs.writeFile(
+    path.join(releasesDir, 'latest.json'),
+    JSON.stringify({ ...manifest, applicationId: 'com.thanhhao.esp32_monitor' }),
+  );
+  assert.equal((await fetch(`${base}/api/update/latest`)).status, 503);
+  await fs.writeFile(path.join(releasesDir, 'latest.json'), JSON.stringify(manifest));
 
   await fs.appendFile(path.join(releasesDir, apkFile), 'corrupt');
   assert.equal((await fetch(`${base}/api/update/latest`)).status, 503);

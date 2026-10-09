@@ -33,7 +33,7 @@ if (stat.size <= 0 || stat.size > 200 * 1024 * 1024) {
 const digest = createHash('sha256');
 for await (const chunk of createReadStream(temporaryApk)) digest.update(chunk);
 const manifest = {
-  applicationId: 'com.thanhhao.esp32_monitor',
+  applicationId: 'com.thanhhao.esp32_navride',
   versionName,
   versionCode,
   apkFile,

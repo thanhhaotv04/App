@@ -58,9 +58,9 @@ class TaskItem {
   final DateTime? dueAt;
   final bool done;
 
-  TaskItem copyWith({bool? done}) => TaskItem(
+  TaskItem copyWith({bool? done, String? title}) => TaskItem(
     id: id,
-    title: title,
+    title: title ?? this.title,
     createdAt: createdAt,
     dueAt: dueAt,
     done: done ?? this.done,
@@ -119,23 +119,27 @@ class NavRideConfig {
     this.mode = ConnectionMode.demo,
     this.baseUrl = 'http://192.168.4.1',
     this.bluetoothId = '',
+    this.pairingPin = '',
     this.updateBaseUrl = '',
   });
 
   final ConnectionMode mode;
   final String baseUrl;
   final String bluetoothId;
+  final String pairingPin;
   final String updateBaseUrl;
 
   NavRideConfig copyWith({
     ConnectionMode? mode,
     String? baseUrl,
     String? bluetoothId,
+    String? pairingPin,
     String? updateBaseUrl,
   }) => NavRideConfig(
     mode: mode ?? this.mode,
     baseUrl: baseUrl ?? this.baseUrl,
     bluetoothId: bluetoothId ?? this.bluetoothId,
+    pairingPin: pairingPin ?? this.pairingPin,
     updateBaseUrl: updateBaseUrl ?? this.updateBaseUrl,
   );
 
@@ -143,6 +147,7 @@ class NavRideConfig {
     'mode': mode.name,
     'baseUrl': baseUrl,
     'bluetoothId': bluetoothId,
+    'pairingPin': pairingPin,
     'updateBaseUrl': updateBaseUrl,
   };
 
@@ -153,6 +158,7 @@ class NavRideConfig {
     ),
     baseUrl: json['baseUrl'] as String? ?? 'http://192.168.4.1',
     bluetoothId: json['bluetoothId'] as String? ?? '',
+    pairingPin: json['pairingPin'] as String? ?? '',
     updateBaseUrl: json['updateBaseUrl'] as String? ?? '',
   );
 }

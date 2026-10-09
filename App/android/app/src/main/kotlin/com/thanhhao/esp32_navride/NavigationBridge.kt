@@ -20,6 +20,7 @@ import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.util.UUID
+import kotlin.math.roundToInt
 
 internal object NavigationBridgeStore {
     private const val preferencesName = "navigation_bridge"
@@ -47,6 +48,7 @@ internal object NavigationBridgeStore {
 internal object NavigationBleSender {
     private const val requestedMtu = 185
     private const val minimumPacketMtu = 183 // max 180-byte JSON + ATT header
+    private const val reconnectWindowMs = 20_000L // matches ESP32 advertising timeout
     private val reconnectHandler by lazy { Handler(Looper.getMainLooper()) }
     private val serviceUuid = UUID.fromString("7e6d0001-5b1a-4d8f-9a2c-320001000001")
     private val commandUuid = UUID.fromString("7e6d0002-5b1a-4d8f-9a2c-320001000002")
@@ -64,12 +66,14 @@ internal object NavigationBleSender {
     private var servicesRequested = false
     private var channelReady = false
     private var negotiatedMtu = 23
+    private var bondWaitStartedAt = 0L
     private var nextRequestId = 0
     private var wantedRequestId = 0
     private var acknowledgedRequestId = 0
     private var reconnectContext: Context? = null
     private var reconnectAttempt = 0
     private var reconnectScheduled = false
+    private var reconnectStartedAt = -1L
     @Volatile private var reconnectEnabled = false
     @Volatile private var connected = false
     @Volatile private var streetName = ""
@@ -118,10 +122,23 @@ internal object NavigationBleSender {
                 "straight", "u_turn", "u_turn_right", "off_route",
             )) return false
         if (distanceMeters !in 0..999_999) return false
-        return sendNavigation(
+        val sent = sendNavigation(
             context,
             roundaboutSample ?: OsmAndNavigation(maneuver, distanceMeters, streetName),
         )
+        if (sent) {
+            val sampleRequestId = synchronized(this) { wantedRequestId }
+            val appContext = context.applicationContext
+            reconnectHandler.postDelayed({
+                synchronized(NavigationBleSender) {
+                    // Never erase a live OsmAnd turn that arrived after this demo.
+                    if (wantedRequestId == sampleRequestId && isConnected()) {
+                        clearNavigation(appContext)
+                    }
+                }
+            }, 15_000)
+        }
+        return sent
     }
 
     @Synchronized
@@ -175,9 +192,23 @@ internal object NavigationBleSender {
     fun clearNavigation(context: Context): Boolean =
         send(context, "{\"apiVersion\":1,\"command\":\"clear_navigation\"}")
 
+    // Telemetry is disposable and must never replace queued directions/settings.
+    @Synchronized
+    fun sendSpeed(context: Context, payload: String): Boolean {
+        if (!isConnected() || writing || pendingPayload != null) return false
+        return send(context, payload)
+    }
+
+    private fun discardStaleSpeed() {
+        if (pendingPayload?.toString(StandardCharsets.UTF_8)?.contains("\"command\":\"speed\"") == true)
+            pendingPayload = null
+    }
+
     @SuppressLint("MissingPermission")
     @Synchronized
     fun send(context: Context, payload: String): Boolean {
+        // GPS heartbeats and route updates must not restart an expired retry window.
+        if (!reconnectEnabled && reconnectContext != null) return false
         val deviceId = NavigationBridgeStore.deviceId(context) ?: return false
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -231,6 +262,11 @@ internal object NavigationBleSender {
     @SuppressLint("MissingPermission")
     private fun connectGatt(context: Context, deviceId: String): Boolean {
         if (!reconnectEnabled || gatt != null) return gatt != null
+        if (reconnectStartedAt >= 0 &&
+            SystemClock.elapsedRealtime() - reconnectStartedAt >= reconnectWindowMs) {
+            stopAutoReconnect()
+            return false
+        }
         val manager = context.getSystemService(BluetoothManager::class.java)
         val adapter = manager?.adapter ?: run {
             scheduleReconnect()
@@ -273,19 +309,47 @@ internal object NavigationBleSender {
 
     private fun scheduleReconnect() {
         if (!reconnectEnabled || reconnectScheduled) return
-        val delay = minOf(30_000L, 1_000L shl reconnectAttempt.coerceAtMost(5))
-        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(5)
+        val now = SystemClock.elapsedRealtime()
+        if (reconnectStartedAt < 0) reconnectStartedAt = now
+        val remaining = reconnectWindowMs - (now - reconnectStartedAt)
+        if (remaining <= 0) {
+            stopAutoReconnect()
+            return
+        }
+        val delay = minOf(4_000L, 1_000L shl reconnectAttempt.coerceAtMost(2), remaining)
+        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(2)
         reconnectScheduled = true
         reconnectHandler.postDelayed({
             synchronized(NavigationBleSender) {
                 reconnectScheduled = false
                 if (!reconnectEnabled || gatt != null) return@postDelayed
+                if (SystemClock.elapsedRealtime() - reconnectStartedAt >= reconnectWindowMs) {
+                    stopAutoReconnect()
+                    return@postDelayed
+                }
                 val context = reconnectContext ?: return@postDelayed
                 val deviceId = NavigationBridgeStore.deviceId(context)
                     ?: return@postDelayed
                 connectGatt(context, deviceId)
             }
         }, delay)
+    }
+
+    private fun stopAutoReconnect() {
+        reconnectEnabled = false
+        reconnectScheduled = false
+        reconnectAttempt = 0
+        pendingPayload = null // do not replay stale navigation/settings later
+        inFlightPayload = null
+        Log.i("NavRide", "BLE auto-reconnect stopped after 20 seconds; retry from the app")
+    }
+
+    @Synchronized
+    fun retryConnection() {
+        if (gatt != null || reconnectEnabled) return
+        reconnectEnabled = true
+        reconnectStartedAt = -1L
+        reconnectAttempt = 0
     }
 
     @SuppressLint("MissingPermission")
@@ -295,6 +359,10 @@ internal object NavigationBleSender {
         characteristic: BluetoothGattCharacteristic,
     ): Boolean {
         val payload = pendingPayload ?: return false
+        if (bluetoothGatt.device.bondState != BluetoothDevice.BOND_BONDED) {
+            awaitBond(bluetoothGatt)
+            return true
+        }
         val started = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 bluetoothGatt.writeCharacteristic(
@@ -330,6 +398,36 @@ internal object NavigationBleSender {
     }
 
     @SuppressLint("MissingPermission")
+    private fun awaitBond(bluetoothGatt: BluetoothGatt) {
+        if (gatt !== bluetoothGatt || !channelReady || bondWaitStartedAt != 0L) return
+        bondWaitStartedAt = SystemClock.elapsedRealtime()
+        if (bluetoothGatt.device.bondState == BluetoothDevice.BOND_NONE) {
+            Log.i("NavRide", "BLE pairing requested; waiting for the PIN confirmation")
+            runCatching { bluetoothGatt.device.createBond() }
+        }
+        fun poll() {
+            synchronized(NavigationBleSender) {
+                if (gatt !== bluetoothGatt || !channelReady || bondWaitStartedAt == 0L) return
+                if (bluetoothGatt.device.bondState == BluetoothDevice.BOND_BONDED) {
+                    bondWaitStartedAt = 0L
+                    connected = true
+                    Log.i("NavRide", "BLE paired; command channel ready")
+                    commandCharacteristic?.let { writePending(bluetoothGatt, it) }
+                    return
+                }
+                if (SystemClock.elapsedRealtime() - bondWaitStartedAt >= 90_000) {
+                    Log.w("NavRide", "BLE pairing timed out; reconnecting")
+                    bondWaitStartedAt = 0L
+                    recoverGattWrite(bluetoothGatt)
+                    return
+                }
+                reconnectHandler.postDelayed(::poll, 1_000)
+            }
+        }
+        reconnectHandler.postDelayed(::poll, 1_000)
+    }
+
+    @SuppressLint("MissingPermission")
     private fun recoverGattWrite(bluetoothGatt: BluetoothGatt) {
         if (gatt !== bluetoothGatt) return
         if (inFlightPayload != null && pendingPayload == null) {
@@ -337,11 +435,13 @@ internal object NavigationBleSender {
             pendingIsNavigation = inFlightIsNavigation
         }
         inFlightPayload = null
+        discardStaleSpeed()
         commandCharacteristic = null
         writing = false
         servicesRequested = false
         channelReady = false
         negotiatedMtu = 23
+        bondWaitStartedAt = 0L
         connected = false
         acknowledgedRequestId = 0
         gatt = null
@@ -355,6 +455,7 @@ internal object NavigationBleSender {
     fun close() {
         reconnectEnabled = false
         reconnectAttempt = 0
+        reconnectStartedAt = -1L
         reconnectHandler.removeCallbacksAndMessages(null)
         reconnectScheduled = false
         reconnectContext = null
@@ -365,6 +466,7 @@ internal object NavigationBleSender {
         servicesRequested = false
         channelReady = false
         negotiatedMtu = 23
+        bondWaitStartedAt = 0L
         connected = false
         wantedRequestId = 0
         acknowledgedRequestId = 0
@@ -372,9 +474,13 @@ internal object NavigationBleSender {
         wifiSavedConfirmed = false
         popupConfirmed = false
         controlRequestId = 0
-        gatt?.disconnect()
-        gatt?.close()
+        streetName = ""
+        streetUpdatedAt = 0L
+        val previousGatt = gatt
         gatt = null
+        // Revoking Bluetooth access must not interrupt privacy cleanup.
+        runCatching { previousGatt?.disconnect() }
+        runCatching { previousGatt?.close() }
     }
 
     private val callback = object : BluetoothGattCallback() {
@@ -392,11 +498,13 @@ internal object NavigationBleSender {
                         pendingIsNavigation = inFlightIsNavigation
                     }
                     inFlightPayload = null
+                    discardStaleSpeed()
                     commandCharacteristic = null
                     writing = false
                     servicesRequested = false
                     channelReady = false
                     negotiatedMtu = 23
+                    bondWaitStartedAt = 0L
                     connected = false
                     bluetoothGatt.close()
                     gatt = null
@@ -481,11 +589,16 @@ internal object NavigationBleSender {
                         bluetoothGatt.disconnect()
                         return
                     }
-                    connected = true
                     channelReady = true
                     reconnectAttempt = 0
+                    reconnectStartedAt = -1L
                     reconnectScheduled = false
-                    commandCharacteristic?.let { writePending(bluetoothGatt, it) }
+                    if (bluetoothGatt.device.bondState == BluetoothDevice.BOND_BONDED) {
+                        connected = true
+                        commandCharacteristic?.let { writePending(bluetoothGatt, it) }
+                    } else {
+                        awaitBond(bluetoothGatt)
+                    }
                     OsmAndNotificationListener.replayActiveNavigation()
                 }
             }
@@ -529,6 +642,10 @@ internal object NavigationBleSender {
         synchronized(this) {
             if (gatt != bluetoothGatt || uuid != statusUuid) return
             val response = String(value, StandardCharsets.UTF_8)
+            if (response == "ok:speed") {
+                if (SpeedService.acknowledgedAt == 0L) Log.i("NavRide", "Speed telemetry acknowledged by ESP32")
+                SpeedService.acknowledgedAt = android.os.SystemClock.elapsedRealtime()
+            }
             if (controlRequestId > 0) {
                 if (response == "ok:mode:$controlRequestId") modeConfirmed = true
                 if (response == "ok:wifi_saved:$controlRequestId") wifiSavedConfirmed = true
@@ -620,6 +737,9 @@ internal object OsmAndNotificationParser {
 
 internal object OsmAndDirectionMapper {
     private val roundaboutTypePattern = Regex("^(RNDB|RNLB)(\\d+)$")
+
+    fun angleFromBundle(value: Any?): Int? = (value as? Number)?.toDouble()
+        ?.takeIf(Double::isFinite)?.roundToInt()
 
     fun map(turnType: Int, distanceMeters: Int, leftSide: Boolean): OsmAndNavigation? {
         if (distanceMeters < 0) return null

@@ -23,6 +23,8 @@ import net.osmand.aidlapi.search.SearchResult
 internal object OsmAndPackages {
     private val packageNames = listOf("net.osmand.plus", "net.osmand", "net.osmand.dev")
 
+    fun isAllowed(packageName: String): Boolean = packageName in packageNames
+
     fun installed(context: Context): String? = packageNames.firstOrNull { packageName ->
         runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.isSuccess
     }
@@ -52,6 +54,7 @@ internal class OsmAndAidlBridge(context: Context) {
     private var voiceCallbackId = -1L
     private var bound = false
     private var snapshotFailureReported = false
+    private var reportedTurnKeys: String? = null
 
     private val callback = object : IOsmAndAidlCallback.Stub() {
         override fun updateNavigationInfo(directionInfo: ADirectionInfo) {
@@ -131,13 +134,23 @@ internal class OsmAndAidlBridge(context: Context) {
     }
 
     private fun readNextTurn(): OsmAndNavigation? = runCatching {
-        service?.appInfo?.turnInfo?.let { info ->
+        val appInfo = service?.appInfo
+        if (appInfo != null && appInfo.turnInfo == null && reportedTurnKeys != "(none)") {
+            reportedTurnKeys = "(none)"
+            Log.i("NavRide", "OsmAnd AppInfo received; turnInfo absent (no active turn); no documented speed-limit field")
+        }
+        appInfo?.turnInfo?.let { info ->
+            // Diagnostic schema only: never log location, road names or other values.
+            val keys = info.keySet().sorted().joinToString(",")
+            if (keys != reportedTurnKeys) {
+                reportedTurnKeys = keys
+                Log.i("NavRide", "OsmAnd turnInfo keys=[$keys]; no documented speed-limit field")
+            }
             OsmAndDirectionMapper.fromNextTurn(
                 info.getString("next_turn_type"),
                 info.getInt("next_turn_distance", -1),
                 info.getString("next_turn_name"),
-                info.getFloat("next_turn_angle").takeIf { info.containsKey("next_turn_angle") && it.isFinite() }
-                    ?.roundToInt(),
+                OsmAndDirectionMapper.angleFromBundle(info.get("next_turn_angle")),
             )
         }
     }.onSuccess { snapshotFailureReported = false }.onFailure {

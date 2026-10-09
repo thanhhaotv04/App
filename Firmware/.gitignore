@@ -1,3 +1,6 @@
 .pio/
 .vscode/
 include/secrets.h
+
+# Personal payment/profile QR codes must stay local.
+include/qr_assets_private.h

@@ -4,6 +4,12 @@
 #include <initializer_list>
 
 int main() {
+  ClockTimers shortRun;
+  shortRun.toggleStopwatch(1000);
+  shortRun.toggleStopwatch(31000);
+  assert(!shortRun.stopwatchRunning && shortRun.elapsed(61000) == 30000);
+  assert(shortRun.elapsed(61000) / 60000 == 0); // Paused under one minute.
+
   ClockTimers clock;
   const uint64_t start = 0xfffffff0ULL; // Cross the 32-bit millis boundary.
   clock.toggleStopwatch(start);
@@ -14,9 +20,12 @@ int main() {
   assert(clock.elapsed(start + 90000) == 61000);
   clock.toggleStopwatch(start + 90000);
   assert(clock.elapsed(start + 120000) == 91000);
-  assert(!clock.update(start + 299999));
-  assert(clock.update(start + 300000) && clock.ringing);
-  assert(!clock.update(start + 300001));
+  const bool earlyExpiry = clock.update(start + 299999);
+  assert(!earlyExpiry);
+  const bool expired = clock.update(start + 300000);
+  assert(expired && clock.ringing);
+  const bool repeatedExpiry = clock.update(start + 300001);
+  assert(!repeatedExpiry);
   assert(clock.elapsed(start + 300001) == 271001); // Timer never stops stopwatch.
   clock.cancelTimer();
   assert(!clock.ringing && clock.remaining(start + 400000) == 0);
@@ -25,7 +34,8 @@ int main() {
   for (uint64_t minutes : {5ULL, 15ULL, 30ULL, 60ULL}) {
     clock.startTimer(start, minutes * 60000);
     assert(ClockTimers::remainingMinutes(clock.remaining(start)) == minutes);
-    assert(clock.update(start + minutes * 60000));
+    const bool presetExpired = clock.update(start + minutes * 60000);
+    assert(presetExpired);
   }
   assert(ClockTimers::remainingMinutes(60001) == 2);
   assert(ClockTimers::remainingMinutes(60000) == 1);

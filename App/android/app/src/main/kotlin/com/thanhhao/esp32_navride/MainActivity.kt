@@ -19,6 +19,53 @@ import java.security.MessageDigest
 class MainActivity : FlutterActivity() {
     private val navigationChannelName = "esp32_navride/navigation"
     private val updateChannelName = "esp32_navride/update"
+    private var speedPermissionResult: MethodChannel.Result? = null
+
+    private fun startSpeed(result: MethodChannel.Result) {
+        if (!NavigationBleSender.isConnected()) {
+            result.error("not_connected", "Connect ESP32 via Bluetooth first.", null)
+            return
+        }
+        val locations = getSystemService(android.location.LocationManager::class.java)
+        if (!locations.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+            result.error("gps_disabled", "Turn on phone location, then start GPS speed.", null)
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            if (speedPermissionResult != null) {
+                result.error("permission_pending", "Finish the location permission request first.", null)
+                return
+            }
+            speedPermissionResult = result
+            val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            requestPermissions(permissions.toTypedArray(), 7301)
+            return
+        }
+        try {
+            val intent = Intent(this, SpeedService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("gps_start_failed", "Could not start GPS speed. Keep NavRide open and try again.", null)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 7301) {
+            val result = speedPermissionResult ?: return
+            speedPermissionResult = null
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startSpeed(result)
+            else result.error("location_denied", "GPS speed needs precise location while using the app. You can still use navigation without it.", null)
+        }
+    }
+
+    override fun onDestroy() {
+        speedPermissionResult?.error("activity_closed", "Open NavRide to start GPS speed.", null)
+        speedPermissionResult = null
+        super.onDestroy()
+    }
 
     override fun onResume() {
         super.onResume()
@@ -38,6 +85,16 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, navigationChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "getSpeedStatus" -> result.success(SpeedService.status())
+                    "startSpeed" -> startSpeed(result)
+                    "stopSpeed" -> {
+                        stopService(Intent(this, SpeedService::class.java))
+                        result.success(true)
+                    }
+                    "sendSpeedSample" -> {
+                        result.success(!SpeedService.running &&
+                            NavigationBleSender.sendSpeed(this, SpeedReading.packet(42)))
+                    }
                     "configureOsmAndBridge" -> {
                         val deviceId = call.argument<String>("deviceId")?.trim().orEmpty()
                         if (deviceId.isEmpty()) {
@@ -92,9 +149,25 @@ class MainActivity : FlutterActivity() {
                         result.success(payload.isNotBlank() && NavigationBleSender.send(this, payload))
                     }
                     "disableOsmAndBridge" -> {
-                        OsmAndNotificationListener.stopBridge()
                         NavigationBridgeStore.clear(this)
+                        stopService(Intent(this, SpeedService::class.java))
+                        OsmAndNotificationListener.stopBridge()
                         NavigationBleSender.close()
+                        result.success(true)
+                    }
+                    "clearLocalData" -> {
+                        NavigationBridgeStore.clear(this)
+                        stopService(Intent(this, SpeedService::class.java))
+                        OsmAndNotificationListener.stopBridge()
+                        NavigationBleSender.close()
+                        val updates = File(cacheDir, "esp32-navride-updates")
+                        if (updates.exists() && !updates.deleteRecursively()) {
+                            result.error("clear_failed", "Could not delete cached updates. Try again.", null)
+                        } else result.success(true)
+                    }
+                    "openAppPrivacySettings" -> {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName")))
                         result.success(true)
                     }
                     else -> result.notImplemented()

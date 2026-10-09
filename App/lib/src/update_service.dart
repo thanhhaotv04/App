@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'connection_security.dart';
+
 class AppVersion {
   const AppVersion({required this.name, required this.code});
 
@@ -53,6 +55,9 @@ String normalizeUpdateBaseUrl(String value) {
     throw const FormatException(
       'Invalid update server. Example: http://192.168.1.10:3000',
     );
+  }
+  if (uri.scheme == 'http' && !isLocalNetworkHost(uri.host)) {
+    throw const FormatException('Use HTTPS for a public update server.');
   }
   return uri.replace(path: '').toString().replaceFirst(RegExp(r'/$'), '');
 }

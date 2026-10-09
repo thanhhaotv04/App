@@ -89,6 +89,21 @@ class NavRideStorage {
     }
   }
 
+  Future<void> clear() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys().where(
+      (key) =>
+          key == _snapshotKey ||
+          key == _legacySnapshotKey ||
+          key.startsWith('$_snapshotKey.recovery.'),
+    )) {
+      if (!await prefs.remove(key)) {
+        throw StateError('Could not delete all saved data. Please try again.');
+      }
+    }
+    recoveryWarning = null;
+  }
+
   NavRideSnapshot _emptySnapshot() => const NavRideSnapshot(
     profileName: 'You',
     notices: [],

@@ -6,11 +6,25 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
+import 'connection_security.dart';
 
 const navRideServiceUuid = '7e6d0001-5b1a-4d8f-9a2c-320001000001';
 const navRideCommandUuid = '7e6d0002-5b1a-4d8f-9a2c-320001000002';
 const navRideStatusUuid = '7e6d0003-5b1a-4d8f-9a2c-320001000003';
 int _requestSequence = DateTime.now().millisecondsSinceEpoch % 2147483647;
+
+String? bleConnectionRecoveryHint(Object error) {
+  if (error is! FlutterBluePlusException) return null;
+  if (error.function == 'setNotifyValue' &&
+      error.platform == ErrorPlatform.android &&
+      error.code == 3) {
+    return 'Android has an outdated pairing for this ESP32. Forget this ESP32 in phone Bluetooth settings, then press Button 2 and Find devices to pair again using the PIN in ESP32 Info.';
+  }
+  if (error.function == 'connect' && error.code == 1) {
+    return 'ESP32 is no longer advertising. Press Button 2, then Find devices and connect within 20 seconds.';
+  }
+  return null;
+}
 
 int nextDeviceRequestId() =>
     _requestSequence = (_requestSequence % 2147483647) + 1;
@@ -145,6 +159,11 @@ String normalizeEsp32BaseUrl(String value) {
       'Invalid address. Example: http://192.168.1.55',
     );
   }
+  if (uri.scheme == 'http' && !isLocalNetworkHost(uri.host)) {
+    throw const FormatException(
+      'Use a local ESP32 IP address, or HTTPS for a public address.',
+    );
+  }
   return uri.replace(path: '').toString().replaceFirst(RegExp(r'/$'), '');
 }
 
@@ -153,6 +172,13 @@ abstract class DeviceTransport {
   Future<void> send(Map<String, dynamic> command);
   Future<void> setupWifi(String ssid, String password);
   Future<void> disconnect();
+}
+
+class PairingPinException implements Exception {
+  const PairingPinException();
+
+  @override
+  String toString() => 'Enter the 6-digit PIN shown in ESP32 Info.';
 }
 
 class DemoTransport implements DeviceTransport {
@@ -175,20 +201,50 @@ class DemoTransport implements DeviceTransport {
 }
 
 class NetworkTransport implements DeviceTransport {
-  NetworkTransport(String baseUrl, {http.Client? client})
+  NetworkTransport(String baseUrl, {this.pairingPin = '', http.Client? client})
     : baseUrl = normalizeEsp32BaseUrl(baseUrl),
       _client = client ?? http.Client();
 
   final String baseUrl;
+  final String pairingPin;
   final http.Client _client;
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
 
+  Future<http.Response> _request(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    // Redirects must never forward the pairing PIN or personal content.
+    final request = http.Request(method, _uri(path))..followRedirects = false;
+    if (pairingPin.isNotEmpty) request.headers['X-NavRide-Pin'] = pairingPin;
+    if (body != null) {
+      request.headers['content-type'] = 'application/json';
+      request.body = jsonEncode(body);
+    }
+    final response = await _client
+        .send(request)
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      throw const FormatException(
+        'ESP32 redirected the request. Check its IP address before reconnecting.',
+      );
+    }
+    return http.Response.fromStream(
+      response,
+    ).timeout(const Duration(seconds: 5));
+  }
+
   @override
   Future<DeviceStatus> health() async {
-    final response = await _client
-        .get(_uri('/api/health'))
-        .timeout(const Duration(seconds: 4));
+    final response = await _request('GET', '/api/health');
+    if (response.statusCode == 401) {
+      throw const PairingPinException();
+    }
+    if (response.statusCode == 429) {
+      throw StateError('Too many incorrect PIN attempts. Wait one minute.');
+    }
     if (response.statusCode != 200) {
       throw Exception('ESP32 returned HTTP ${response.statusCode}.');
     }
@@ -204,13 +260,13 @@ class NetworkTransport implements DeviceTransport {
   }
 
   Future<void> _post(String path, Map<String, dynamic> body) async {
-    final response = await _client
-        .post(
-          _uri(path),
-          headers: const {'content-type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 5));
+    final response = await _request('POST', path, body: body);
+    if (response.statusCode == 401) {
+      throw const PairingPinException();
+    }
+    if (response.statusCode == 429) {
+      throw StateError('Too many incorrect PIN attempts. Wait one minute.');
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('ESP32 rejected the command (${response.statusCode}).');
     }
@@ -252,7 +308,11 @@ class BluetoothTransport implements DeviceTransport {
 
   bool get isConnected => _device?.isConnected ?? false;
 
+  Future<void> _disablePayloadLogs() =>
+      FlutterBluePlus.setLogLevel(LogLevel.none);
+
   Future<List<BleCandidate>> scan() async {
+    await _disablePayloadLogs();
     if (!await FlutterBluePlus.isSupported) {
       throw Exception('Bluetooth LE is not supported on this device.');
     }
@@ -287,6 +347,7 @@ class BluetoothTransport implements DeviceTransport {
   }
 
   Future<void> connect(BluetoothDevice device) async {
+    await _disablePayloadLogs();
     await disconnect();
     await device.connect(
       license: License.nonprofit,
@@ -294,6 +355,11 @@ class BluetoothTransport implements DeviceTransport {
     );
     _device = device;
     try {
+      // The command characteristic requires authenticated BLE pairing.
+      // Finish the Android PIN flow before exposing the link as connected.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        await device.createBond(timeout: 90);
+      }
       final services = await device.discoverServices();
       BluetoothCharacteristic? command;
       BluetoothCharacteristic? status;
@@ -362,7 +428,9 @@ class BluetoothTransport implements DeviceTransport {
         .timeout(const Duration(seconds: 5))
         .then((value) {
           if (!value.startsWith('ok:')) {
-            throw StateError('ESP32 rejected the command: $value');
+            throw StateError(
+              'ESP32 rejected the command. Check the connection and try again.',
+            );
           }
         });
     await Future.wait([
@@ -398,7 +466,10 @@ class BluetoothTransport implements DeviceTransport {
 DeviceTransport transportFor(NavRideConfig config, BluetoothTransport ble) =>
     switch (config.mode) {
       ConnectionMode.demo => DemoTransport(),
-      ConnectionMode.network => NetworkTransport(config.baseUrl),
+      ConnectionMode.network => NetworkTransport(
+        config.baseUrl,
+        pairingPin: config.pairingPin,
+      ),
       ConnectionMode.bluetooth => ble,
     };
 

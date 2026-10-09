@@ -1,12 +1,39 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:esp32_navride/src/transport.dart';
 
 void main() {
+  test('explains stale Android bond after replacing the ESP32', () {
+    expect(
+      bleConnectionRecoveryHint(
+        FlutterBluePlusException(
+          ErrorPlatform.android,
+          'setNotifyValue',
+          3,
+          'GATT_WRITE_NOT_PERMITTED',
+        ),
+      ),
+      allOf(contains('Forget this ESP32'), contains('ESP32 Info')),
+    );
+    expect(
+      bleConnectionRecoveryHint(
+        FlutterBluePlusException(
+          ErrorPlatform.fbp,
+          'connect',
+          1,
+          'Timed out after 12s',
+        ),
+      ),
+      contains('within 20 seconds'),
+    );
+    expect(bleConnectionRecoveryHint(StateError('unrelated')), isNull);
+  });
+
   test('BLE packets fit 180 bytes after escaping and retain request IDs', () {
     for (final text in ['Nguyễn Huệ', '"' * 120, '\\' * 120, '🛵' * 120]) {
       final encoded = encodeDeviceCommand({
@@ -26,7 +53,7 @@ void main() {
   test('credentials are byte-validated and never silently truncated', () {
     expect(() => validateWifiCredentials('é' * 17, ''), throwsFormatException);
     expect(
-      () => validateWifiCredentials('SuBo', 'x' * 64),
+      () => validateWifiCredentials('Example Wi-Fi', 'x' * 64),
       throwsFormatException,
     );
     final command = {
@@ -149,7 +176,9 @@ void main() {
     'network transport reads health and sends a timestamped command',
     () async {
       Map<String, dynamic>? sent;
+      final headersSeen = <String, String?>{};
       final client = MockClient((request) async {
+        headersSeen[request.url.path] = request.headers['x-navride-pin'];
         if (request.url.path == '/api/health') {
           return http.Response(
             '{"connected":true,"mode":"wifi","ip":"192.168.1.55"}',
@@ -159,13 +188,19 @@ void main() {
         sent = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response('{"ok":true}', 200);
       });
-      final transport = NetworkTransport('192.168.1.55', client: client);
+      final transport = NetworkTransport(
+        '192.168.1.55',
+        pairingPin: '123456',
+        client: client,
+      );
 
       final status = await transport.health();
       await transport.send({'command': 'push_notification', 'title': 'Test'});
 
       expect(status.connected, isTrue);
       expect(status.ip, '192.168.1.55');
+      expect(headersSeen['/api/health'], '123456');
+      expect(headersSeen['/api/command'], '123456');
       expect(sent?['apiVersion'], 1);
       expect(sent?['command'], 'push_notification');
       expect(sent?['timestamp'], isA<int>());
@@ -192,20 +227,44 @@ void main() {
 
   test('network transport sends Wi-Fi setup to the setup endpoint', () async {
     Uri? target;
+    String? sentPin;
     Map<String, dynamic>? sent;
     final transport = NetworkTransport(
       '192.168.4.1',
+      pairingPin: '123456',
       client: MockClient((request) async {
         target = request.url;
+        sentPin = request.headers['x-navride-pin'];
         sent = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response('{"ok":true}', 200);
       }),
     );
 
-    await transport.setupWifi('SuBo', 'secret');
+    await transport.setupWifi('Example Wi-Fi', 'secret');
 
     expect(target?.path, '/api/setup');
-    expect(sent, {'ssid': 'SuBo', 'password': 'secret'});
+    expect(sentPin, '123456');
+    expect(sent, {'ssid': 'Example Wi-Fi', 'password': 'secret'});
+  });
+
+  test('network commands explain missing and rejected pairing codes', () async {
+    final missing = NetworkTransport(
+      '192.168.1.55',
+      client: MockClient((_) async => http.Response('unauthorized', 401)),
+    );
+    await expectLater(
+      missing.send({'command': 'ping'}),
+      throwsA(predicate((error) => error.toString().contains('6-digit PIN'))),
+    );
+    final locked = NetworkTransport(
+      '192.168.1.55',
+      pairingPin: '123456',
+      client: MockClient((_) async => http.Response('locked', 429)),
+    );
+    await expectLater(
+      locked.send({'command': 'ping'}),
+      throwsA(predicate((error) => error.toString().contains('one minute'))),
+    );
   });
 
   test('network transport rejects non-success responses', () async {

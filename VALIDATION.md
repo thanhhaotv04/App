@@ -1,5 +1,318 @@
 # Local validation
 
+## Android application ID switch — 2026-10-08
+
+- Current source and debug APK now use `com.thanhhao.esp32_navride` for both
+  Android application ID and Kotlin namespace. `aapt` and `apkanalyzer`
+  independently confirmed the APK ID; display label remains ESP32-NavRide.
+- Flutter analyze, 57 Flutter tests, Android debug unit tests and the update
+  backend test passed. Backend now rejects manifests for the former ID.
+- The previously published `App/backend/releases/latest.json` and APK still
+  describe the former Android app; they were not relabeled or republished.
+  In-app updates remain unavailable until a new APK is built and published
+  under the new ID with a matching manifest and checksum.
+- No app was installed on a phone during this change. Android treats the new
+  ID as a second app; local data, permissions and BLE pairing do not migrate
+  automatically. Historical verification below refers to the former ID.
+
+## ESP32-S3 hardware compatibility and upload — 2026-10-08
+
+- Live bootloader identification on `/dev/ttyUSB0` succeeded: ESP32-S3
+  revision v0.2, embedded 8 MB Octal PSRAM (AP_3v3), 40 MHz crystal, external
+  16 MB Quad flash. `flash_id` reports flash voltage fixed by eFuse at 3.3 V.
+  The existing `qio_opi` / 16 MB configuration matches this board. No eFuse
+  programming or full-chip erase was performed.
+- Uploaded NavRide firmware 1.3.29 through CH340 at 921600 baud. The bootloader,
+  partition table, boot-app metadata and application each passed the uploader's
+  hash verification. Local application image SHA-256:
+  `96d4bc0549652709c400a4bdf05009375bacb466436bb2475e11f0d5453f8d31`.
+- TFT pins remain SCK=21, MOSI=47, CS=41, DC=40, RST=45, MISO disconnected;
+  buttons remain 38/39/0 with input pull-ups. `hardware_pins.h` now rejects
+  duplicate pins, invalid GPIOs and assignments to flash/PSRAM GPIO26–37,
+  native USB GPIO19/20, UART GPIO43/44 and unused strap pins GPIO3/46 at build
+  time. TFT runtime SPI is limited to 10 MHz; Adafruit's initialization
+  sequence is unchanged. BLE callbacks enqueue commands; TFT drawing and
+  timer updates remain on the Arduino loop thread.
+- Corrected the standalone `ESP32_TFT1.8inch/DATASHEET_1.8inch.md` note that
+  incorrectly said TFT RST connects to G21. The correct pin is G45; G21 is
+  SPI clock. TFT RST must not be wired to the board's EN/RST pin. GPIO0/BOOT
+  must be released at power-on/reset. Espressif documents GPIO33–37 as Octal
+  memory pins and notes that a forced VDD_SPI eFuse overrides GPIO45's voltage
+  strap: <https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html>.
+- Checks passed: PlatformIO build; four C++ host suites (hardware pin guard,
+  Stopwatch/Timer including at-time/midnight/expiry, speed timeout and wrap,
+  long street-name wrapping), compiled with warnings as errors plus Address
+  and UndefinedBehavior sanitizers; cppcheck warning/performance/portability
+  checks on the firmware source and all four suites; `git diff --check`.
+  Timer test updates now occur outside assertions so cppcheck reports no
+  assertion-side-effect warnings.
+- After upload, a normal reset through CH340 produced one ROM boot sequence
+  (`SPI_FAST_FLASH_BOOT`, image load and entry). A 22-second UART capture saw
+  no further reset or panic output. This only confirms the observed boot path;
+  application logs use native USB, which is not currently connected.
+- Pending on this board: native-USB application logs, physical TFT image and
+  button confirmation, Wi-Fi/BLE commands and real Android/OsmAnd delivery.
+  No Android debug device is connected. The older `tools/smoke_test.py` was
+  not run: its hardcoded firmware/address, missing PIN header and old blink
+  expectation do not match the current protocol. Firmware compilation and
+  ROM logs do not establish electrical safety, power stability, correct
+  external wiring, GPS accuracy or complete end-to-end operation.
+
+## Bounded BLE auto-reconnect — 2026-10-06
+
+- Android retries a dropped GATT link with short 1/2/4-second delays for at
+  most 20 seconds, matching the ESP32's BLE advertising window. On expiry it
+  discards stale queued commands and ignores automatic GPS/route sends until
+  the app explicitly retries. Opening NavRide or tapping `Reconnect ESP32`
+  starts a new window; the UI explains when to press ESP32 Button 2.
+- Regression tests cover a delayed retry callback at exactly 20 seconds,
+  suppression of automatic sends after expiry and explicit re-arming. Android
+  JVM tests, 46 Flutter tests, Flutter analyze and debug APK build passed.
+  The debug APK was installed only in personal Android user 0; work-profile
+  user 11 remains uninstalled. NavRide showed Bluetooth connected and OsmAnd
+  source connected after installation.
+- The physical disconnect-and-20-second expiry was not forced on the phone;
+  the live check only confirms that the new build can establish its normal
+  Bluetooth connection. Firmware was not changed or flashed.
+
+## GPS speed and UI status — 2026-10-06
+
+- Phone and vehicle were stationary. The NavRide sample sent `42 km/h` over
+  Bluetooth; firmware logged receipt and the user confirmed the TFT showed 42
+  then returned to `--` after about five seconds. This verifies the sample
+  transport and speed-field timeout, not speed accuracy while riding.
+- The opt-in Android GPS service sent live values over the same BLE link;
+  firmware serial showed `-1` (unknown), then 4, 5, 2, 1 and 0 km/h while
+  parked. NavRide showed 0 km/h with Bluetooth connected. OsmAnd was opened in
+  the foreground while the GPS service remained active; returning to NavRide
+  showed 0 km/h and a recent ESP32 acknowledgement. The service was stopped
+  afterward, returning the UI to `--` and `Start GPS speed`.
+- A right-turn sample was received while GPS speed was active. A widget
+  regression now prevents `ESP32 receiving` from appearing while the speed is
+  still unknown, even if the unknown-speed heartbeat was acknowledged.
+- Checks passed: 46 Flutter tests, Flutter analyze, 32 Android JVM tests,
+  PlatformIO build, three firmware host tests, debug APK and release Web build,
+  and `git diff --check`. The debug APK was installed on Android user 0. No
+  firmware change/flash, version bump or public release was made in this pass.
+- GPS measurements of 1–5 km/h while stationary indicate noise; moving speed
+  accuracy and long-duration background/locked-screen delivery were not tested.
+  The obsolete `Firmware/tools/smoke_test.py` was not run because it assumes
+  an earlier firmware/protocol and can switch the device out of BLE mode.
+
+## OsmAnd geometry and BLE recovery — 2026-10-06
+
+- Firmware 1.3.29 uses OsmAnd's roundabout exit ordinal **and** actual turn
+  angle for the TFT branch; a missing angle draws a neutral roundabout instead
+  of guessing an exit direction. The companion app accepts numeric AIDL angle
+  values and retains OsmAnd as the navigation source over BLE. The demo route
+  auto-clears after 15 seconds unless a live turn supersedes it.
+- Firmware flashed to ESP32-S3 MAC `14:c1:9f:27:03:44` on `/dev/ttyACM0`, with
+  image hashes verified. Debug APK installed in place on Android user 0. The
+  phone paired using the TFT PIN; NavRide showed `Connected · Bluetooth` and
+  `Navigation source connected`. A `Roundabout · exit 3` demo produced firmware
+  serial `exit=3 angle=-80`, followed by `DISPLAY: navigation cleared` after
+  the demo timeout.
+- With the phone/vehicle stationary, a saved OsmAnd route was simulated. The
+  actual OsmAnd screen showed Exit 3 toward QL.13. Firmware serial first
+  received a no-angle notification fallback (`angle=999`, neutral icon), then
+  the AIDL geometry (`exit=3 angle=-117`) and decreasing distance from 1.08 km
+  to 10 m. The next instruction replaced it after the roundabout. Simulation
+  was turned **off** and visually verified off; the route was dismissed and
+  NavRide returned to `Ready for directions`. Physical comparison of the live
+  TFT arrow with OsmAnd's icon awaits the user's visual confirmation.
+- The pairing timeout, Wi-Fi/API PIN handling, stale-route clearing and
+  notification behavior were also revised in this local worktree. Checks passed:
+  PlatformIO build, 3 firmware host tests, 46 Flutter tests, 32 Android JVM
+  tests, Flutter analyze, debug APK build, Web release build and
+  `git diff --check`. No public release or backend deployment was done.
+
+## Offline clock flush-top layout — 2026-10-06
+
+- Firmware 1.3.28 places offline `HH:MM` at y=2 px, almost flush with the
+  top edge, and the date at y=55 px. The two redraw regions do not overlap;
+  font sizes and navigation layout are unchanged.
+- PlatformIO build, ClockTimers/SpeedState/StreetLayout host tests and
+  `git diff --check` passed. Uploaded to ESP32-S3 MAC `14:c1:9f:27:03:44`
+  on `/dev/ttyACM0`; esptool verified all image hashes and reset the board.
+  Physical TFT appearance still needs visual confirmation.
+
+## Offline clock vertical alignment — 2026-10-06
+
+- Firmware 1.3.27 moves the large offline `HH:MM` and date up 20 pixels
+  (text y=43→23 and y=96→76). Font sizes, spacing, redraw-on-change behavior
+  and the navigation layout are unchanged.
+- PlatformIO build, ClockTimers/SpeedState/StreetLayout host tests and
+  `git diff --check` passed. Uploaded to ESP32-S3 MAC `14:c1:9f:27:03:44`
+  through `/dev/ttyACM0`; esptool verified every flashed image hash and reset
+  the board. Physical TFT alignment still needs visual confirmation.
+
+## Offline clock and bounded radio discovery — 2026-10-06
+
+- Firmware 1.3.26 uses a 2-second Button 3 hold to enter/leave a time-and-date
+  screen. `HH:MM` is rendered at 4× and `dd/mm/yyyy` at 2×; only the changed
+  time/date rectangles redraw. Entry clears navigation, disconnects Wi-Fi/BLE
+  clients and stops advertising. The already-synchronized ESP32 system clock
+  continues while powered without a phone or network. A cold power cycle
+  without a fresh sync still shows dashes because this board has no battery RTC.
+- New Wi-Fi, BLE and setup discovery windows expire after 20 seconds. Wi-Fi
+  retries stop and the Wi-Fi interface is turned off; BLE advertising stops
+  with the stack retained for safe reuse. Existing connections remain active;
+  after a disconnection, one new 20-second window starts. The TFT shows `OFF`
+  after expiry; Button 1/2 explicitly retry. Setup AP/advertising stop when
+  unused. Compile-time checks cover 1999/2000 ms, 19999/20000 ms and
+  `millis()` wraparound.
+- PlatformIO build, ClockTimers/SpeedState/StreetLayout host tests and
+  `git diff --check` passed. Firmware uploaded to ESP32-S3 MAC
+  `14:c1:9f:27:03:44` on `/dev/ttyACM0`; esptool verified each image hash.
+  Serial was opened after reset but emitted no new relevant event during the
+  observation window, so a live 20-second timeout and the physical Button 3
+  display still need user/hardware observation. App/APK unchanged.
+
+## Full year and clearer Stopwatch badge — 2026-10-06
+
+- Firmware 1.3.25 shows `dd/mm/yyyy` at the top left. The center badge has
+  its own 33-pixel area with a gap from the date and BLT/WiFi. Because the
+  four-digit year leaves room for one badge, active Stopwatch and Timer
+  alternate every three seconds. `S0m` means running under one minute;
+  `P0m` means paused under one minute. The stopwatch continues to retain its
+  exact seconds for the full Clock view.
+- ClockTimers host regression covers pausing after 30 seconds and retaining
+  that elapsed value. PlatformIO build, ClockTimers/SpeedState/StreetLayout
+  host tests and `git diff --check` passed. Firmware was uploaded to ESP32-S3
+  MAC `14:c1:9f:27:03:44` on `/dev/ttyACM0`; all image hashes verified.
+  Physical readability of the new top row still needs TFT inspection.
+
+## Stopwatch/Timer in the top status row — 2026-10-06
+
+- Firmware 1.3.24 moves the running-minute badges from the lower-left footer
+  to the space between the date and BLT/WiFi in the top row. Compact labels
+  are `S12m`, `T5m` and `S12mP` for a paused stopwatch. Both are shown together
+  when they fit; otherwise they alternate every three seconds. Date, badge
+  and connection status now clear separate rectangles to avoid erasing one
+  another. A compile-time bound checks the widths.
+- PlatformIO build, ClockTimers/SpeedState/StreetLayout host tests and
+  `git diff --check` passed. Firmware was uploaded to ESP32-S3 MAC
+  `14:c1:9f:27:03:44` on `/dev/ttyACM0` and all image hashes verified.
+  Physical visibility of the timer badge still needs checking on the TFT.
+  The app/APK was not changed.
+
+## Wider speed column and long street names — 2026-10-06
+
+- Firmware 1.3.23 allocates 81 usable pixels to the left street-name column
+  and 39 pixels to the right speed column (approximately a 2/3–1/3 split).
+  Short names retain large text; longer names use narrower, equally tall
+  text. The host test confirms `Nguyen Thi Minh Khai` fits as `Nguyen Thi` /
+  `Minh Khai` without paging. Compile-time bounds cover 1–3 speed digits.
+- PlatformIO build, ClockTimers/SpeedState/StreetLayout host tests and
+  `git diff --check` passed. Firmware 1.3.23 was uploaded to ESP32-S3 MAC
+  `14:c1:9f:27:03:44` on `/dev/ttyACM0`; esptool verified all flashed image
+  hashes and reset the board. Physical readability of this exact long name
+  has not yet been visually confirmed. No app code or APK changed in this step.
+
+## Turn-arrow blinking threshold — 2026-10-06
+
+- Firmware 1.3.22 keeps turn-arrow visibility below 2 km but starts blinking
+  only below 200 m; 200 m remains steady and 199 m blinks. The 500 ms
+  on/off interval and localized arrow redraw are unchanged. The strict
+  boundary is covered by a compile-time assertion.
+- PlatformIO build, ClockTimers/SpeedState host tests and `git diff --check`
+  passed. Firmware 1.3.22 was uploaded to ESP32-S3 MAC `14:c1:9f:27:03:44`
+  on `/dev/ttyACM0`; esptool verified the flashed image hashes and reset the
+  board. The 200/199 m transition was not exercised visually on a physical
+  route in this session. No app code or APK changed.
+
+## Larger speed readout — 2026-10-06
+
+- Firmware 1.3.21 removes the small `GPS` label from the right-hand column
+  and doubles the speed digits' height to 32 pixels. Horizontal scale adapts
+  to one, two or three characters without entering the street-name column;
+  `km/h` remains below. Only the digit rectangle is refreshed as speed changes.
+- PlatformIO build, ClockTimers/SpeedState host tests and `git diff --check`
+  passed. Firmware 1.3.21 was uploaded to the ESP32-S3 on `/dev/ttyACM0`
+  (MAC `14:c1:9f:27:03:44`); all image hashes verified. The user visually
+  confirmed that `GPS` is gone and the larger speed/`--` fits clearly in the
+  right-hand TFT column. No app code or APK changed in this step.
+
+## Street/speed columns — 2026-10-06
+
+- Firmware 1.3.20 assigns a 92-pixel left column to two-line, 2× street
+  names and a separate 29-pixel right column to GPS speed. Street wrapping
+  uses at most seven characters per line; long names continue paging.
+  The clock and direction arrow regions are unchanged. A compile-time check
+  guards the horizontal split so road text cannot overwrite the speed column.
+- PlatformIO build, ClockTimers/SpeedState host tests and `git diff --check`
+  passed. The image was uploaded to ESP32-S3 MAC `14:c1:9f:27:03:44` on
+  `/dev/ttyACM0`; esptool verified all flashed image hashes and reset the
+  board. Physical readability with a live/sample road name remains to be
+  visually confirmed. App code and APK were not changed in this step.
+- While parked, the installed app sent a `Right · Nguyen Hue · 250 m`
+  navigation sample and displayed the firmware ACK. ESP32 serial logged that
+  sample, then OsmAnd's still-active route immediately updated the display
+  back to `To Ngoc Van` (214 m, then 206/185/155 m). The running GPS-speed
+  service reported 0 km/h and `ESP32 receiving` in the app. The OsmAnd route
+  was not stopped for this layout test.
+
+## TFT navigation layout — 2026-10-06
+
+- Firmware 1.3.19 reserves the top 32/160 pixels for date, connection status
+  and HH:MM. Navigation and road text remain below it; current GPS speed is
+  drawn in a separate lower-right rectangle, while Stopwatch/Timer badges
+  occupy the lower left. The old `LIMIT --` display is removed from TFT and
+  the corresponding app label is removed. The arrow blink rectangle no
+  longer intersects the two-line street-name rectangle.
+- PlatformIO build and host ClockTimers/SpeedState tests passed. Firmware was
+  uploaded to the identified ESP32-S3 at `/dev/ttyACM0` (MAC
+  `14:c1:9f:27:03:44`); esptool verified each image hash and reset the board.
+  `flutter analyze --no-pub`, all 45 Flutter tests and the release APK build
+  passed. The APK was installed in place on the USB-connected Android phone;
+  package ID and versionCode remain unchanged, and the app was reopened.
+- Visual confirmation of the new layout on the physical TFT is pending user
+  inspection. No sample speed/navigation packet was sent in this layout test.
+
+## GPS speed and OsmAnd limit check — 2026-10-05/06
+
+- Added opt-in Android location foreground service. The app converts a fresh
+  `Location.getSpeed()` reading to km/h and sends it over the existing BLE
+  connection while OsmAnd is foreground. No coordinates are stored. Invalid,
+  inaccurate or older-than-five-second readings become `--` on the TFT.
+- Firmware draws a large speed number in the former large-clock area, with
+  compact time/date above and navigation below. Only the speed rectangle is
+  refreshed. The user visually confirmed that speed, clock and navigation are
+  clear and do not overlap on the physical 128×160 TFT.
+- Firmware 1.3.18 on physical ESP32-S3 identified by USB MAC
+  `14:c1:9f:27:03:44`; PlatformIO
+  upload verified image hashes and reset the board. NavRide release APK
+  installed in place for Android user 0; package ID unchanged.
+- With the Android app open, native logs reported the GPS service starting
+  and ESP32 acknowledging speed packets. Firmware serial observed values
+  `3`, `1`, `0` and `-1` (unavailable). A separate parked display sample
+  produced `DISPLAY: GPS speed 42 km/h` while a right-turn sample was active.
+  Android's service dump confirmed the location foreground service remained
+  active with OsmAnd in the foreground. These are stationary checks, not
+  moving vehicle speed calibration.
+- Checks passed: Flutter analyze, 45 Flutter tests, 30 Android JVM tests,
+  PlatformIO firmware build, host Clock/SpeedState tests, Flutter release APK,
+  Web build, OsmAnd cross-app Parcelable rule, and `git diff --check`.
+- Stock OsmAnd 5.4.6 was installed. OsmAnd's `MaxSpeedWidget` computes a
+  road-dependent limit inside OsmAnd, but the published AIDL AppInfo and
+  direction callback used by NavRide expose no speed-limit field. NavRide
+  shows `LIMIT --`; it does not infer a limit from GPS speed or road class.
+  The bound AIDL service was observed on the phone. With a stationary
+  simulated route active on 2026-10-06, the actual `turnInfo` keys included
+  `next_turn_type`, `next_turn_distance`, `next_turn_name`,
+  `next_turn_angle` and analogous following-turn keys, but no current speed
+  or speed-limit key. Serial showed roundabout exit 4 and the next road
+  updating from 1.63 km to 1.15 km; stopping the route produced
+  `DISPLAY: navigation cleared`. OsmAnd displayed a simulated speed of
+  48 km/h, while NavRide requested real phone GPS and showed `--` without a
+  reliable GPS fix. Thus route simulation must not be mistaken for a measured
+  vehicle speed. After the trial, OsmAnd's simulation switch was verified off,
+  the route was stopped and the GPS foreground service was stopped.
+- This was a local phone install and ESP32 flash. No update backend was
+  published and no app release version was incremented. The GPS/background
+  and display checks were stationary; accuracy at riding speed still needs a
+  separate ride test.
+
 ## App reliability fixes — 2026-10-04 (local, not deployed)
 
 - Fixed the six issues from the app audit: BLE write rejection/exception or
@@ -70,8 +383,7 @@
 
 - Added `Menu → QR → Bank / Profile` using the two user-supplied images.
   Decoded each original QR and re-encoded its exact payload without logos.
-  The Bank payload identifies TPBank account 70333655343; Profile preserves
-  the original `https://q.me-qr.com/2rw76u3u` URL.
+  Personal QR payloads are intentionally omitted from public validation notes.
 - Host generation uses QR error correction M, integer module scaling and
   a four-module white quiet zone. Bank is 45 modules at 2 px/module (106 px
   including the quiet zone); Profile is 29 modules at 3 px/module (111 px).
@@ -293,7 +605,7 @@ This section supersedes the morning handoff below.
   mapping had renamed the cross-app Bundle Parcelable `ALatLon` to `v2.a`.
   A narrow keep rule now preserves its wire name and CREATOR while retaining
   optimization elsewhere. Rebuilt/installed release immediately delivered
-  `DT.43 Tinh lo 43 92 m`. `bash App/tool/check_osmand_release.sh` verifies
+  `[road name omitted] 92 m`. `bash App/tool/check_osmand_release.sh` verifies
   the release mapping; ordinary debug JUnit tests cannot cover this R8 issue.
 - Verified again: Flutter analyzer clean, **36 Flutter tests**, **16 Kotlin
   tests**, release APK build and web build successful. Firmware compiled and
@@ -310,7 +622,7 @@ This section supersedes the morning handoff below.
 - All four manual sample draw paths were observed in serial. The user directly
   confirmed that the `Nguyen Hue · 250 m` sample was clear and correct on TFT.
 - With renewed stationary approval, simulated the phone's latest saved route.
-  Final-release evidence at 20:55:44: `left DT.43 Tinh lo 43 32 m`; at 20:55:50:
+  Final-release evidence at 20:55:44: `left [road name omitted] 32 m`; at 20:55:50:
   `left DT.743C Duong tinh 743C 3.02 km arrow=straight blink=no`. The next
   street changes together with the next maneuver/distance, without retaining
   the old road. Native matching ACKs continued while OsmAnd was foreground.
@@ -371,7 +683,7 @@ This section supersedes the morning handoff below.
 - Chromium: Navigation/Content/Settings at 375, 768, 1024 and 1440 px; screenshots
   in `App/build/ux/`. Created and sent a notification from the actual web UI.
 - Flashed the attached ESP32-S3 (MAC 14:C1:9F:27:03:44). Health reports firmware
-  1.3.1, SuBo Wi-Fi, IP 192.168.1.55 and UTC+7 local time.
+  1.3.1, saved Wi-Fi, IP 192.168.1.55 and UTC+7 local time.
 - Hardware smoke test: HTTP accepted valid commands and rejected invalid ones;
   BLE returned matching ACK IDs for ping, notification, task, all navigation
   maneuvers, clear and mode switch. Invalid API version was rejected.
@@ -392,7 +704,7 @@ This section supersedes the morning handoff below.
 - The existing OsmAnd route notification contained a 60 m right turn, road
   `ĐT.43 Tỉnh lộ 43`, a 1.6 km following leg and a 6.6 km total. After the fix,
   the firmware logged:
-  `DISPLAY: navigation right DT.43 Tinh lo 43 60 m arrow=right blink=yes`.
+  `DISPLAY: navigation right [road name omitted] 60 m arrow=right blink=yes`.
   NavRide showed `ESP32 confirmed the latest directions from OsmAnd.`
 - Final APK background replay: OsmAnd was the focused activity while NavRide
   received `Navigation acknowledged: requestId=3` at 09:15:59 local time.
@@ -428,3 +740,42 @@ This section supersedes the morning handoff below.
 
 Reusable checks: `App/tool/web_smoke.cjs` (Playwright) and
 `Firmware/tools/smoke_test.py` (bleak + pyserial; changes device mode/test content).
+
+
+## Privacy and simpler content controls — 2026-10-08–09
+
+- Flutter analysis: no issues; full Flutter suite: **57 passed**. New checks
+  cover local/public URL handling, redirect refusal, PIN masking/background
+  hiding, deletion/cancel/failure recovery, removal of legacy/recovery data,
+  and preserving item identity/completion/due dates when editing. A new save
+  after deletion cannot restore the previous profile name.
+- Android: **36 app JVM tests passed**; release lint completed with **0 errors,
+  14 warnings** (SDK/version/style advisories). Regression checks include the
+  exact OsmAnd package allowlist and dropping BLE payload/street caches even
+  after Bluetooth permission revocation. Release APK build and the OsmAnd
+  Parcelable/R8 compatibility check passed. The compiled APK manifest confirms
+  backup is off and both backup/transfer rule resources are present.
+- Chromium smoke: **375 / 768 / 1024 / 1440 px** passed. The 375 px flow creates
+  and edits a notification, cancels deletion without losing it, deletes saved
+  data and confirms it stays deleted after reload. Screenshots are generated
+  locally in `App/build/ux/`; widget checks also cover enlarged text.
+- Backend test passed. Four host C++ checks (clock timers, speed, street
+  wrapping, hardware pins) passed. PlatformIO builds passed both with local
+  private assets and with empty credentials/no private QR header. Thus public
+  source remains buildable without publishing the private QR data.
+- `python3 App/tool/check_privacy.py` and `git diff --check` passed. Gitleaks
+  8.30.1 found no token/key findings in the public text snapshot or the two
+  existing commits. A separate known-value scan, including existing APK files,
+  confirmed that the payment number, profile redirect, private QR header and
+  configured Wi-Fi values are absent from the current publication files.
+  Gitleaks does not detect personal bank/QR payloads; the historical exposure
+  below was found by direct source and QR inspection.
+- Commit `bbb3851` still contains personal data in four paths:
+  `Firmware/README.md`, `Firmware/include/qr_assets.h`, `Firmware/src/main.cpp`,
+  and this validation file. A sanitized history preview passed, but publishing
+  rewritten history needs explicit approval. See `PRIVACY_REVIEW.md`.
+- No APK was published, no version was incremented, and no phone install or
+  firmware flash was performed in this review. Hardware operation, actual
+  permission revocation/backup transfer on a phone and physical TFT appearance
+  were not tested: no Android device was connected. Existing published APKs
+  are unchanged. `Firmware/Diagnostic/` remains separate local work.

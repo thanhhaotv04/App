@@ -7,7 +7,7 @@ trên thiết bị chạy app.
 ## Chạy Web demo
 
 ```bash
-cd /home/thanhhao/thanhhao/Github/App/ESP32-NavRide/App
+cd App
 flutter pub get
 flutter run -d chrome
 ```
@@ -20,10 +20,23 @@ và quyền Bluetooth của trình duyệt. Địa chỉ ESP32 chấp nhận c�
 lẫn URL đầy đủ như `http://192.168.1.55`.
 
 Lưu nội dung hoặc đánh dấu hoàn thành chỉ cập nhật dữ liệu trên điện thoại.
-Để hiện lên ESP32, mở menu của nội dung và chọn `Send to display`. Có thể xóa
+Để hiện lên ESP32, bấm biểu tượng gửi trên thẻ nội dung, hoặc mở menu và chọn
+`Send to display`. Menu `Edit` sửa nội dung đã lưu, giữ nguyên trạng thái hoàn
+thành và hạn của việc cần làm. Có thể xóa
 và hoàn tác; việc bỏ lựa chọn màu không làm mất dữ liệu hoặc cấu hình đã lưu.
-Trang Navigation ưu tiên bước cần làm tiếp theo; kiểm tra mũi tên, cập nhật app
-và cấu hình mạng Wi-Fi được thu gọn, mở khi cần.
+Trang Navigation ưu tiên bước cần làm tiếp theo; kiểm tra mũi tên và cập nhật
+app được thu gọn. Trong `Settings → Connect ESP32`, nút `Change Wi-Fi` mở biểu
+mẫu nhập mạng mới ngay dưới trạng thái kết nối. Cần kết nối ESP32 qua BLE hoặc
+Wi-Fi trước khi gửi; app chỉ báo đã lưu, chưa xác nhận ESP32 kết nối thành công
+với mạng mới. Xem IP mới tại `Button 3 → ESP32 Info` rồi nhập vào app.
+
+Trong `Settings → Privacy and data`, bạn có thể xem app dùng quyền nào, mở
+cài đặt quyền Android và xóa dữ liệu app sau khi xác nhận. Việc xóa dừng GPS và
+cầu nối OsmAnd, xóa nội dung, PIN, cấu hình, dữ liệu phiên bản cũ, bản phục hồi
+và APK cập nhật đã tải. Dữ liệu trên ESP32, quyền Android và ghép đôi Bluetooth
+được quản lý riêng. PIN/mật khẩu được che; Android backup và chuyển máy không
+bao gồm dữ liệu app. HTTP chỉ dành cho mạng nội bộ tin cậy vì chưa mã hóa;
+địa chỉ công khai cần HTTPS. Chi tiết: [kiểm tra quyền riêng tư](../PRIVACY_REVIEW.md).
 
 Ứng dụng tập trung vào bốn chức năng chính: chọn Wi-Fi/Bluetooth, gửi thông
 báo cá nhân, quản lý việc cần làm và chuyển chỉ dẫn OsmAnd qua BLE. Android
@@ -61,12 +74,44 @@ thuộc 14 mã `TurnType` chính và API hiện tại không chuyển hình làn
 quyền truy cập thông báo khi app yêu cầu. Nếu quyền đã được cấp từ trước, app
 tự chuyển kết nối BLE sang cầu nối OsmAnd ngay sau khi chọn ESP32, không cần
 bấm `Enable navigation` thêm lần nữa.
+Nếu thay bo ESP32 nhưng vẫn dùng điện thoại cũ, hãy quên mục Bluetooth từng
+ghép với chính bo mới dưới tên firmware cũ (ví dụ `esp32-gps-map`) trong cài
+đặt Android, rồi bấm Button 2, `Find devices`, chọn `ESP32-NavRide` và nhập
+PIN mới trong `Button 3 → ESP32 Info`. Không cần xóa dữ liệu app hay quên các
+thiết bị Bluetooth khác.
 Kiểm tra trạng thái `ESP32 display`, `OsmAnd` rồi mở `Test display` để gửi một
 mũi tên mẫu. App chỉ báo nhận mẫu thành công sau khi firmware xác nhận
-đúng mã lệnh. Trong OsmAnd mở `Menu → Plugins`, bật `ESP32-NavRide`
+đúng mã lệnh. Mẫu chỉ đường tự xóa sau 15 giây; nếu OsmAnd gửi chỉ dẫn thật
+trong lúc đó, app giữ chỉ dẫn thật. Góc rẽ của các mẫu vòng xuyến chỉ để thử
+màn hình; tuyến thật lấy góc rẽ từ OsmAnd. Nếu OsmAnd chưa cung cấp góc, TFT
+chỉ hiện vòng và số lối ra, không đoán nhánh thoát. Trong OsmAnd mở `Menu → Plugins`, bật `ESP32-NavRide`
 (ứng dụng bên thứ ba), quay lại NavRide một lần rồi bắt đầu dẫn đường.
 Khi cầu nối được bật, thông báo và việc cần làm dùng cùng kết nối BLE Android,
 không tranh kết nối với luồng OsmAnd.
+Nếu mất Bluetooth, app tự thử nối lại trong tối đa 20 giây, tương ứng thời gian
+ESP32 còn quảng bá. Sau đó app dừng thử nền để tiết kiệm pin: bấm Button 2 trên
+ESP32 cho `BLT` nhấp nháy, rồi bấm `Reconnect ESP32` trong app.
+Để chủ động ngắt kết nối, vào `Settings → Disconnect` ngay dưới trạng thái
+ESP32. App dừng kết nối BLE, cầu nối OsmAnd và GPS speed, nhưng vẫn nhớ thiết
+bị đã chọn; nó không tự kết nối lại sau khi mở app. Muốn dùng lại, bấm Button 2
+trên ESP32 rồi chọn `Connect saved ESP32` trong Settings.
+
+### Tốc độ GPS
+
+Khi ESP32 đã kết nối qua Bluetooth, mở `Navigation → GPS speed → Start GPS
+speed`, bật Location và cho phép vị trí chính xác khi app yêu cầu. Android
+hiện thông báo GPS speed; dịch vụ tiếp tục gửi khi OsmAnd đang ở phía trước.
+Bấm `Stop GPS speed` trong app hoặc `Stop` trong thông báo để dừng.
+Không cần Wi-Fi. `-- km/h` nghĩa là chưa có bản đo GPS tin cậy hoặc bản đo
+đã quá 5 giây; không nên hiểu là xe đang chạy 0 km/h. Tốc độ GPS thật có
+thể chênh với tốc độ xe, nhất là khi đứng yên hoặc mất tín hiệu trong nhà.
+`Test display → Speed · 42 km/h (test)` chỉ thử màn hình khi xe đang đỗ;
+mẫu tự hết sau 5 giây và không phải tốc độ thực.
+
+OsmAnd chuẩn không gửi giá trị của `MaxSpeedWidget` qua API dẫn đường cho
+NavRide. Màn hình hiện tốc độ hiện tại ở góc dưới phải và không hiện giới hạn;
+app không phát cảnh báo quá tốc độ. Khi OsmAnd đang mô phỏng một tuyến, tốc độ trên OsmAnd
+là tốc độ giả lập, còn tốc độ NavRide vẫn lấy từ GPS thật của điện thoại.
 
 Khi dừng tuyến trong OsmAnd, app kiểm tra lại trạng thái tuyến rồi xóa chỉ dẫn
 trên TFT; việc cập nhật thông báo giữa tuyến không xóa nhầm mũi tên. Nếu điện
@@ -139,8 +184,11 @@ phiên bản mới hơn, cùng chữ ký với app đang cài và không phải 
 
 Backend cập nhật đã có sẵn trong `backend/` và không cần cài dependency. Bản
 đã phát hành vẫn giữ tên APK và metadata cũ để không làm hỏng liên kết hoặc
-SHA-256. Khi phát hành bản mới, dùng `versionCode` lớn hơn bản đang phát hành
-và cùng khóa ký; không phát hành lại cùng số phiên bản. Ví dụ quy trình (thay
+SHA-256. Sau khi đổi Android application ID thành `com.thanhhao.esp32_navride`,
+backend cố ý từ chối bản `latest.json` cũ cho đến khi phát hành APK mới đúng
+package ID. Không sửa mỗi trường `applicationId` trong manifest cũ: APK cũ
+vẫn là app khác. Khi phát hành bản mới, dùng `versionCode` lớn hơn bản đang
+phát hành; không phát hành lại cùng số phiên bản. Ví dụ quy trình (thay
 `<ten-phien-ban-moi>` và `<version-code-moi>` bằng giá trị đã chọn):
 
 ```bash
@@ -152,18 +200,21 @@ node backend/server.js
 
 Điện thoại cùng Wi-Fi nhập `http://192.168.1.149:3000`. Nếu IP máy tính thay
 đổi, xem IP mới bằng `ip -4 -brief address` rồi sửa URL trong app. Các bản sau
-phải dùng `versionCode` lớn hơn và cùng khóa ký Android với bản đang cài.
-Android application ID `com.thanhhao.esp32_monitor` được giữ nguyên để cập
-nhật đè app cũ và giữ dữ liệu. Chỉ tên hiển thị, namespace mã nguồn và tên
-APK mới đổi thành ESP32-NavRide. Sau khi cài bản đổi tên, Android có thể yêu
-cầu bật lại quyền truy cập thông báo do tên component listener đã thay đổi.
+phải dùng `versionCode` lớn hơn và cùng khóa ký Android với bản ESP32-NavRide
+mới. Android coi ID mới là app riêng: **không tự kế thừa dữ liệu, quyền hoặc
+cặp BLE đã lưu của app cũ**. Cài/kiểm thử bản mới không tự gỡ app cũ; chỉ gỡ
+thủ công sau khi đã kiểm tra dữ liệu cần giữ. Cần cấp lại quyền thông báo và
+ghép lại ESP32 nếu app mới yêu cầu.
 
 ## Giao tiếp thật
 
 Lần đầu nối điện thoại/máy tính vào AP `ESP32-NavRide-Setup` (mật khẩu
 `monitor1234`, IP `192.168.4.1`), sau đó nhập SSID/mật khẩu Wi‑Fi trong màn
-`Settings`. Hoặc chọn thiết bị BLE `ESP32-NavRide`. Khi firmware đã chuyển sang
-một phương thức, phương thức còn lại sẽ được tắt.
+`Settings`. Nhập PIN 6 số đang hiện trên màn setup hoặc trong `Menu → ESP32
+Info`; PIN này cần cho mọi lệnh HTTP, và khi ghép đôi BLE Android có thể hỏi
+cùng mã. Hoặc chọn thiết bị BLE `ESP32-NavRide`. Khi firmware đã chuyển sang
+một phương thức, phương thức còn lại sẽ được tắt. Cần cập nhật cả app lẫn
+firmware để dùng cơ chế PIN mới.
 
 ## Kiểm tra
 
@@ -187,10 +238,14 @@ Không dùng hình ảnh, font hoặc tài nguyên độc quyền của Apple.
 Lệnh BLE có `requestId`, chỉ coi là thành công khi nhận ACK đúng ID. Firmware
 1.3.1 bổ sung ACK cho thông báo, công việc, Wi-Fi, chuyển chế độ và `ping`;
 firmware 1.3.3 cải thiện icon vòng xuyến/quay đầu. Cầu nối Android tự thử nối
-lại BLE theo backoff và phát lại chỉ dẫn hiện hành sau khi kết nối trở lại.
+lại BLE trong tối đa 20 giây và phát lại chỉ dẫn hiện hành sau khi kết nối
+trở lại. Hết thời gian này cần kết nối lại thủ công.
 Cần dùng firmware mới với app này. Gói BLE được kiểm tra sau khi mã hóa JSON;
 chỉ phần chữ hiển thị được rút ngắn để vừa màn hình/gói tin, không cắt mật khẩu.
-HTTP phải trả JSON `ok: true`, không chỉ mã HTTP 200.
+HTTP phải trả JSON `ok: true`, không chỉ mã HTTP 200. Khi OsmAnd AIDL có góc
+rẽ vòng xuyến, app chuyển nguyên góc cùng số lối ra để TFT vẽ hướng tương
+ứng. Nguồn notification chỉ có số lối ra thì TFT không đoán hướng; mã chỉ
+vòng trung tính và số. Vì vậy để giống OsmAnd nhất, cần bật cầu nối AIDL.
 
 Kiểm thử trình duyệt (cần Playwright, server web ở cổng 8080):
 

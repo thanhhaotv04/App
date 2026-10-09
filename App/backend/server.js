@@ -37,7 +37,7 @@ async function publishedRelease(releasesDir) {
   }
 
   if (
-    manifest.applicationId !== 'com.thanhhao.esp32_monitor' ||
+    manifest.applicationId !== 'com.thanhhao.esp32_navride' ||
     typeof manifest.apkFile !== 'string' ||
     !/^[A-Za-z0-9._-]+\.apk$/.test(manifest.apkFile) ||
     path.basename(manifest.apkFile) !== manifest.apkFile ||

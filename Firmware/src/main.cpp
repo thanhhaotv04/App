@@ -12,42 +12,63 @@
 #include <sys/time.h>
 #include <time.h>
 #include <esp_timer.h>
+#include <esp_system.h>
 
 #include "secrets.h"
 #include "qr_assets.h"
 #include "clock_timers.h"
+#include "speed_state.h"
+#include "street_layout.h"
+#include "hardware_pins.h"
 
-// GOOUUU ESP32-S3 + 1.8-inch ST7735 128x160 wiring.
-constexpr uint8_t TFT_SCLK = 21;
-constexpr uint8_t TFT_MOSI = 47;
-constexpr uint8_t TFT_CS = 41;
-constexpr uint8_t TFT_DC = 40;
-constexpr uint8_t TFT_RST = 45;
-constexpr int8_t TFT_MISO = -1;
-constexpr uint8_t BUTTON_WIFI = 38;
-constexpr uint8_t BUTTON_BLUETOOTH = 39;
-constexpr uint8_t BUTTON_MENU = 0;  // BOOT strap: release before reset/upload.
+SpeedState speedState;
+String lastRenderedSpeed;
 
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.17";
+constexpr char FIRMWARE_VERSION[] = "1.3.29";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr char SETUP_PASSWORD[] = "monitor1234";
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
 constexpr uint32_t DRAW_INTERVAL_MS = 1000;
 constexpr uint32_t POPUP_DURATION_MS = 8000;
 constexpr uint32_t DETAILS_DURATION_MS = 10000;
-constexpr uint32_t MENU_TIMEOUT_MS = 15000;
+constexpr uint32_t MENU_TIMEOUT_MS = 30000;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 60;
+constexpr uint32_t MENU_HOLD_MS = 2000;
+constexpr uint32_t CONNECTION_SEARCH_MS = 20000;
+constexpr uint32_t AUTH_LOCK_MS = 60000;
 constexpr uint32_t STATUS_BLINK_MS = 500;
 constexpr uint32_t NAVIGATION_BLINK_MS = 500;
 constexpr uint32_t NAVIGATION_LINK_LOST_MS = 15000;
 constexpr uint32_t ROAD_PAGE_INTERVAL_MS = 3500;
-constexpr int16_t CLOCK_HEIGHT = 40;
+constexpr int16_t CLOCK_HEIGHT = 32;
+constexpr int16_t STREET_WIDTH = 81;
+constexpr int16_t SPEED_X = 87;
+constexpr int16_t SPEED_WIDTH = 39;
+constexpr bool elapsedAtLeast(uint32_t now, uint32_t started, uint32_t duration) {
+  return static_cast<uint32_t>(now - started) >= duration;
+}
+static_assert(!elapsedAtLeast(1999, 0, MENU_HOLD_MS) &&
+                  elapsedAtLeast(2000, 0, MENU_HOLD_MS) &&
+                  !elapsedAtLeast(19999, 0, CONNECTION_SEARCH_MS) &&
+                  elapsedAtLeast(20000, 0, CONNECTION_SEARCH_MS) &&
+                  elapsedAtLeast(15, UINT32_MAX - 19999, CONNECTION_SEARCH_MS),
+              "Button hold and radio timeout must use wrap-safe boundaries");
+static_assert(10 * 6 + 2 <= 64 && 5 * 6 <= 33 && 4 * 6 <= 28,
+              "Date, timer badge and connection label must fit the top row");
+static_assert(5 * 6 * 4 <= 128 && 10 * 6 * 2 <= 128,
+              "Offline time and full date must fit the 128-pixel display");
+static_assert(6 * 12 <= STREET_WIDTH && 13 * 6 <= STREET_WIDTH &&
+                  2 + STREET_WIDTH < SPEED_X && SPEED_X + SPEED_WIDTH <= 126,
+              "Street and speed columns must not overlap");
+static_assert(2 * 6 * 3 <= SPEED_WIDTH && 3 * 6 * 2 <= SPEED_WIDTH &&
+                  101 + 8 * 5 < 145,
+              "Enlarged speed digits must fit above the unit");
 constexpr uint32_t MODE_SWITCH_DELAY_MS = 250;
 constexpr int TURN_ARROW_SHOW_METERS = 2000;
-constexpr int TURN_ARROW_BLINK_METERS = 1000;
+constexpr int TURN_ARROW_BLINK_METERS = 200;
 constexpr int METERS_PER_KM = 1000;
 constexpr bool distanceUsesMeters(int distanceMeters) {
   return distanceMeters < METERS_PER_KM;
@@ -61,11 +82,14 @@ constexpr bool blinkTurnAt(int distanceMeters) {
   return distanceMeters < TURN_ARROW_BLINK_METERS;
 }
 static_assert(!showTurnAt(2000) && showTurnAt(1999) &&
-                  !blinkTurnAt(1000) && blinkTurnAt(999),
-              "Navigation thresholds must be strict at 2 km and 1 km");
+                  !blinkTurnAt(200) && blinkTurnAt(199),
+              "Navigation thresholds must be strict at 2 km and 200 m");
 constexpr int roundaboutVisibleDegrees(int magnitude, int exitNumber) {
-  return magnitude < 55 ? (exitNumber >= 3 ? 305 : 55)
-         : magnitude > 305 ? (exitNumber <= 1 ? 55 : 305)
+  // OsmAnd's small-icon minimum arc is about 49 degrees for an 8px entry.
+  // Its zero-rotation case represents a full lap for exit 2+, not a first exit.
+  return magnitude == 0 ? (exitNumber < 2 ? 49 : 311)
+         : magnitude < 49 ? (exitNumber >= 3 ? 311 : 49)
+         : magnitude > 311 ? (exitNumber <= 1 ? 49 : 311)
                            : magnitude;
 }
 constexpr int roundaboutSweepDegrees(int angle, int exitNumber,
@@ -76,7 +100,11 @@ constexpr int roundaboutSweepDegrees(int angle, int exitNumber,
 }
 static_assert(roundaboutSweepDegrees(110, 1, false) == -70 &&
                   roundaboutSweepDegrees(0, 2, false) == -180 &&
-                  roundaboutSweepDegrees(-110, 3, false) == -290,
+                  roundaboutSweepDegrees(-110, 3, false) == -290 &&
+                  roundaboutSweepDegrees(90, 3, false) == -90 &&
+                  roundaboutSweepDegrees(-90, 3, false) == -270 &&
+                  roundaboutSweepDegrees(180, 1, false) == -49 &&
+                  roundaboutSweepDegrees(180, 2, false) == -311,
               "Right-hand roundabout exits must progress counterclockwise");
 constexpr size_t MAX_COMMAND_BYTES = 512;
 constexpr long GMT_OFFSET_SECONDS = 7 * 60 * 60;
@@ -109,9 +137,24 @@ volatile bool bleConnected = false;
 bool observedBleConnected = false;
 uint32_t bleDisconnectedAt = 0;
 bool wifiConnected = false;
+uint32_t wifiDisconnectedAt = 0;
+bool wifiSearching = false;
+bool bleSearching = false;
+bool setupSearching = false;
+bool setupApActive = false;
+uint32_t wifiSearchStartedAt = 0;
+uint32_t bleSearchStartedAt = 0;
+uint32_t setupSearchStartedAt = 0;
+bool clockOnlyMode = false;
+bool offlineFrameDrawn = false;
+String lastOfflineTime;
+String lastOfflineDate;
 String activeMode = "setup";
 String wifiSsid;
 String wifiPassword;
+uint32_t pairingPin = 0;
+uint8_t authFailures = 0;
+uint32_t authLockedUntil = 0;
 String popupTitle;
 String popupBody;
 String popupKind;
@@ -137,6 +180,8 @@ uint8_t menuSelection = 0;
 uint32_t menuLastInput = 0;
 bool lightTheme = false;
 uint32_t popupUntil = 0;
+uint32_t navigationBannerUntil = 0;
+bool deferredPopup = false;
 uint32_t detailsUntil = 0;
 uint32_t lastDraw = 0;
 uint32_t wifiAttemptStarted = 0;
@@ -145,6 +190,7 @@ String pendingMode;
 bool pendingDefaultWifi = false;
 bool clockFrameDrawn = false;
 bool setupFrameDrawn = false;
+String lastSetupStatus;
 String lastRenderedTime;
 String lastRenderedDate;
 String lastRenderedStatus;
@@ -172,13 +218,17 @@ struct ButtonState {
 ButtonState wifiButton{BUTTON_WIFI, false, false, 0};
 ButtonState bluetoothButton{BUTTON_BLUETOOTH, false, false, 0};
 ButtonState menuButton{BUTTON_MENU, false, false, 0};
+uint32_t menuPressedAt = 0;
+bool menuLongHandled = false;
 
 void showPopup(const String &kind, const String &title, const String &body);
+void drawNavigationBanner();
 void drawNavigation(const String &maneuver, int distanceMeters,
                     const String &street, int exitNumber = 0,
                     int turnAngle = 999);
 void switchToBluetooth();
 void switchToWifi(bool useDefaultCredentials = false);
+void toggleClockOnlyMode();
 
 void applyTheme(bool light) {
   lightTheme = light;
@@ -203,9 +253,30 @@ void applyVietnamTimezone() {
 
 void sendJson(const String &body, int code = 200) {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type,X-NavRide-Pin");
   server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   server.send(code, "application/json", body);
+}
+
+bool authorizeHttp() {
+  const uint32_t now = millis();
+  if (authLockedUntil != 0 && static_cast<int32_t>(now - authLockedUntil) < 0) {
+    sendJson("{\"error\":\"too_many_attempts\"}", 429);
+    return false;
+  }
+  authLockedUntil = 0;
+  char expected[7];
+  snprintf(expected, sizeof(expected), "%06u", static_cast<unsigned>(pairingPin));
+  if (server.header("X-NavRide-Pin") != expected) {
+    if (++authFailures >= 5) {
+      authFailures = 0;
+      authLockedUntil = now + AUTH_LOCK_MS;
+    }
+    sendJson("{\"error\":\"pairing_required\"}", 401);
+    return false;
+  }
+  authFailures = 0;
+  return true;
 }
 
 char transliterateCodepoint(uint32_t codepoint) {
@@ -367,24 +438,27 @@ void drawCentered(const String &value, int16_t y, uint8_t size,
 }
 
 void drawClockBadge(bool force = false) {
-  if (menuView != MenuView::Closed || detailsUntil != 0 || popupUntil != 0 ||
+  if (clockOnlyMode || menuView != MenuView::Closed ||
+      detailsUntil != 0 || popupUntil != 0 ||
       clockTimers.ringing) return;
   const uint64_t now = monotonicMs();
   const uint64_t elapsed = clockTimers.elapsed(now);
   const String sw = clockTimers.stopwatchRunning || elapsed > 0
-      ? "SW " + String(static_cast<unsigned long>(elapsed / 60000)) + "m" +
-            (clockTimers.stopwatchRunning ? "" : " P") : "";
+      ? String(clockTimers.stopwatchRunning ? "SW" : "PA") +
+            String(static_cast<unsigned long>(elapsed / 60000)) + "m" : "";
   const String timer = clockTimers.timerRunning
-      ? "T " + String(static_cast<unsigned long>(ClockTimers::remainingMinutes(
+      ? "TM" + String(static_cast<unsigned long>(ClockTimers::remainingMinutes(
             clockTimers.remaining(now)))) + "m" : "";
-  const String key = sw + ":" + timer;
-  if (!force && key == lastBadgeKey) return;
-  lastBadgeKey = key;
-  const uint16_t bg = navigationOnScreen ? COLOR_PANEL : COLOR_BACKGROUND;
-  tft.fillRect(40, 142, 86, 18, bg);
-  if (!sw.isEmpty()) drawText(sw, 126 - sw.length() * 6,
-                              timer.isEmpty() ? 151 : 142, 1, COLOR_ACCENT, bg);
-  if (!timer.isEmpty()) drawText(timer, 126 - timer.length() * 6, 151, 1, COLOR_WAIT, bg);
+  const bool showStopwatch = !sw.isEmpty() &&
+      (timer.isEmpty() || (millis() / 3000) % 2 == 0);
+  String badge = showStopwatch ? sw : timer;
+  if (badge.length() > 5 && badge.endsWith("m")) badge.remove(badge.length() - 1);
+  if (badge.length() > 5) badge = badge.substring(0, 4) + "~";
+  if (!force && badge == lastBadgeKey) return;
+  lastBadgeKey = badge;
+  tft.fillRect(66, 0, 33, 14, COLOR_BACKGROUND);
+  drawText(badge, 66 + (33 - badge.length() * 6) / 2, 3, 1,
+           showStopwatch && !clockTimers.stopwatchRunning ? COLOR_WAIT : COLOR_ACCENT);
 }
 
 void drawWrapped(const String &value, int16_t y, uint16_t color = COLOR_TEXT,
@@ -405,17 +479,19 @@ void drawWrapped(const String &value, int16_t y, uint16_t color = COLOR_TEXT,
 String clockStatusKey() {
   if (activeMode == "wifi") {
     if (WiFi.status() == WL_CONNECTED) return "WiFi";
+    if (!wifiSearching) return "OFF";
     return (millis() / STATUS_BLINK_MS) % 2 == 0 ? "WifiWait" : "";
   }
   if (activeMode == "bluetooth") {
     if (bleConnected) return "BLT";
+    if (!bleSearching) return "OFF";
     return (millis() / STATUS_BLINK_MS) % 2 == 0 ? "BLTWait" : "";
   }
   return "SET";
 }
 
 void drawClockStaticLayout() {
-  // Exactly the top quarter is reserved for date, connection and HH:MM.
+  // The clock occupies exactly one fifth of the 160-pixel display.
   tft.drawFastHLine(4, CLOCK_HEIGHT - 1, 120, COLOR_PANEL);
 }
 
@@ -423,10 +499,39 @@ void resetClockRenderCache() {
   lastRenderedTime = "";
   lastRenderedDate = "";
   lastRenderedStatus = "";
+  lastRenderedSpeed = "";
+}
+
+void drawSpeed(bool force = false) {
+  if (clockOnlyMode || menuView != MenuView::Closed ||
+      detailsUntil != 0 || popupUntil != 0 ||
+      clockTimers.ringing || activeMode == "setup") return;
+  const bool connected = activeMode == "bluetooth" ? bleConnected
+                       : activeMode == "wifi" && WiFi.status() == WL_CONNECTED;
+  const int speed = speedState.visible(millis(), connected);
+  const String label = speed < 0 ? "--" : String(speed);
+  const String key = label + (navigationOnScreen ? ":nav" : ":clock");
+  if (!force && key == lastRenderedSpeed) return;
+  lastRenderedSpeed = key;
+  const uint16_t bg = navigationOnScreen ? COLOR_PANEL : COLOR_BACKGROUND;
+  if (force) {
+    tft.fillRect(SPEED_X, 100, SPEED_WIDTH, 60, bg);
+    if (navigationOnScreen)
+      tft.drawFastVLine(85, 100, 59, COLOR_BACKGROUND);
+    drawText("km/h", SPEED_X + (SPEED_WIDTH - 24) / 2, 146, 1, COLOR_ACCENT, bg);
+  } else {
+    tft.fillRect(SPEED_X, 100, SPEED_WIDTH, 42, bg);
+  }
+  const uint8_t scaleX = label.length() == 1 ? 5 : label.length() == 2 ? 3 : 2;
+  const int16_t x = SPEED_X + (SPEED_WIDTH - label.length() * 6 * scaleX) / 2;
+  tft.setTextSize(scaleX, 5);
+  tft.setTextColor(speed < 0 ? COLOR_WAIT : COLOR_TEXT, bg);
+  tft.setCursor(x, 101);
+  tft.print(label);
 }
 
 void drawClockStatus(const String &status) {
-  tft.fillRect(90, 0, 38, 14, COLOR_BACKGROUND);
+  tft.fillRect(100, 0, 28, 14, COLOR_BACKGROUND);
   if (status == "WiFi") {
     drawText("WiFi", 100, 3, 1, COLOR_OK);
   } else if (status == "WifiWait") {
@@ -437,18 +542,22 @@ void drawClockStatus(const String &status) {
     drawText("BLT", 106, 3, 1, COLOR_WAIT);
   } else if (status == "SET") {
     drawText("SET", 106, 3, 1, COLOR_WAIT);
+  } else if (status == "OFF") {
+    drawText("OFF", 106, 3, 1, COLOR_WAIT);
   }
   lastRenderedStatus = status;
 }
 
 void refreshConnectionIndicator() {
-  if (!clockFrameDrawn || detailsUntil != 0 ||
+  if (clockOnlyMode || !clockFrameDrawn || detailsUntil != 0 ||
       menuView != MenuView::Closed || activeMode == "setup") return;
   const String status = clockStatusKey();
   if (status != lastRenderedStatus) drawClockStatus(status);
+  if (!clockTimers.ringing) drawSpeed();
 }
 
 void renderClock(bool restorePopupRegion = false) {
+  if (clockOnlyMode) return;
   if (clockTimers.ringing) return;
   const bool frameChanged = !clockFrameDrawn || restorePopupRegion;
   // The full frame is drawn only when entering the clock. Normal ticks and
@@ -460,7 +569,7 @@ void renderClock(bool restorePopupRegion = false) {
     resetClockRenderCache();
   } else if (restorePopupRegion) {
     // Notifications live below the clock, so restoring one never touches the
-    // date, connection indicator or clock in the top quarter.
+    // date, connection indicator or clock in the top fifth.
     tft.fillRect(0, CLOCK_HEIGHT, 128, 160 - CLOCK_HEIGHT, COLOR_BACKGROUND);
   }
 
@@ -479,39 +588,100 @@ void renderClock(bool restorePopupRegion = false) {
     dateText = dateBuffer;
   }
 
-  if (timeText != lastRenderedTime) {
-    tft.fillRect(4, 14, 120, 24, COLOR_BACKGROUND);
-    drawCentered(timeText, 14, 3, valid ? COLOR_TEXT : COLOR_WAIT);
-    lastRenderedTime = timeText;
-  }
   if (dateText != lastRenderedDate) {
-    tft.fillRect(0, 0, 86, 14, COLOR_BACKGROUND);
-    drawText(dateText, 4, 3, 1, valid ? COLOR_TEXT : COLOR_WAIT);
+    tft.fillRect(0, 0, 64, 14, COLOR_BACKGROUND);
+    drawText(dateText, 2, 3, 1,
+             valid ? COLOR_TEXT : COLOR_WAIT);
     lastRenderedDate = dateText;
   }
+  if (timeText != lastRenderedTime) {
+    tft.fillRect(0, 14, 128, 17, COLOR_BACKGROUND);
+    drawCentered(timeText, 15, 2, valid ? COLOR_TEXT : COLOR_WAIT);
+    lastRenderedTime = timeText;
+  }
+  drawSpeed(frameChanged);
 
   const String status = clockStatusKey();
   if (status != lastRenderedStatus) drawClockStatus(status);
   drawClockBadge(frameChanged);
 }
 
+void renderOfflineClock() {
+  if (!clockOnlyMode || clockTimers.ringing || menuView != MenuView::Closed) return;
+  if (!offlineFrameDrawn) {
+    tft.fillScreen(COLOR_BACKGROUND);
+    offlineFrameDrawn = true;
+    lastOfflineTime = "";
+    lastOfflineDate = "";
+  }
+  String timeText = "--:--";
+  String dateText = "--/--/----";
+  const bool valid = clockValid();
+  if (valid) {
+    tm localTime{};
+    const time_t current = time(nullptr);
+    localtime_r(&current, &localTime);
+    char timeBuffer[8];
+    char dateBuffer[16];
+    strftime(timeBuffer, sizeof(timeBuffer), "%H:%M", &localTime);
+    strftime(dateBuffer, sizeof(dateBuffer), "%d/%m/%Y", &localTime);
+    timeText = timeBuffer;
+    dateText = dateBuffer;
+  }
+  if (timeText != lastOfflineTime) {
+    tft.fillRect(0, 0, 128, 40, COLOR_BACKGROUND);
+    drawCentered(timeText, 2, 4, valid ? COLOR_TEXT : COLOR_WAIT);
+    lastOfflineTime = timeText;
+  }
+  if (dateText != lastOfflineDate) {
+    tft.fillRect(0, 53, 128, 20, COLOR_BACKGROUND);
+    drawCentered(dateText, 55, 2, valid ? COLOR_ACCENT : COLOR_WAIT);
+    lastOfflineDate = dateText;
+  }
+}
+
+void drawSetupStatus() {
+  const char *label = bleConnected ? "BLE CONNECTED"
+      : setupApActive && WiFi.softAPgetStationNum() > 0 ? "AP CONNECTED"
+      : setupSearching && (millis() / STATUS_BLINK_MS) % 2 == 0
+          ? "WiFi BLT" : "";
+  if (lastSetupStatus == label) return;
+  lastSetupStatus = label;
+  tft.fillRect(0, 124, 128, 11, COLOR_BACKGROUND);
+  if (label[0] != '\0')
+    drawCentered(label, 126, 1,
+                 setupSearching && !bleConnected ? COLOR_WAIT : COLOR_OK);
+}
+
 void drawSetupScreen(bool force = false) {
   if (clockTimers.ringing) return;
   if (setupFrameDrawn && !force) return;
   tft.fillScreen(COLOR_BACKGROUND);
+  if (!setupSearching && !setupApActive && !bleConnected) {
+    drawCentered("SEARCH OFF", 13, 2, COLOR_WAIT);
+    drawCentered("No active link", 50, 1);
+    drawCentered("2: Retry Bluetooth", 75, 1, COLOR_ACCENT);
+    drawCentered("Hold 3: Clock", 91, 1, COLOR_ACCENT);
+    drawCentered("Restart for setup AP", 118, 1, COLOR_WAIT);
+    setupFrameDrawn = true;
+    clockFrameDrawn = false;
+    return;
+  }
   drawCentered("SETUP", 8, 2, COLOR_ACCENT);
-  drawText("IP: 192.168.4.1", 5, 34, 1);
-  drawText("WIFI AP:", 5, 46, 1);
-  drawText(SETUP_SSID, 5, 58, 1);
-  drawText("Pass: monitor1234", 5, 70, 1);
+  drawText(setupApActive ? "IP: 192.168.4.1" : "WIFI AP: OFF", 5, 34, 1);
+  if (setupApActive) {
+    drawText("WIFI AP:", 5, 46, 1);
+    drawText(SETUP_SSID, 5, 58, 1);
+    drawText("Pass: monitor1234", 5, 70, 1);
+  }
   drawText("BLE: " + String(BLE_NAME), 5, 85, 1, COLOR_ACCENT);
-  drawText("Open app to send", 5, 102, 1, COLOR_WAIT);
+  drawText("PIN: " + String(pairingPin), 5, 102, 1, COLOR_ACCENT);
   drawText("Use WiFi or BLE", 5, 114, 1, COLOR_WAIT);
   tft.drawFastHLine(4, 135, 120, COLOR_PANEL);
-  drawCentered("AP + BLE", 126, 1, COLOR_OK);
+  lastSetupStatus = "#";
+  drawSetupStatus();
   setupFrameDrawn = true;
   clockFrameDrawn = false;
-  drawClockBadge(true);
 }
 
 String clippedText(const String &value, size_t maxLength) {
@@ -527,7 +697,10 @@ void restoreMainScreen() {
   popupUntil = 0;
   clockFrameDrawn = false;
   setupFrameDrawn = false;
-  if (activeMode == "setup") {
+  if (clockOnlyMode) {
+    offlineFrameDrawn = false;
+    renderOfflineClock();
+  } else if (activeMode == "setup") {
     drawSetupScreen(true);
   } else {
     renderClock();
@@ -555,16 +728,21 @@ void drawConnectionDetails() {
   String ip = WiFi.softAPIP().toString();
   String rssi = "--";
 
-  if (activeMode == "wifi") {
+  if (clockOnlyMode) {
+    method = "CLOCK";
+    state = "LINKS OFF";
+    ssid = "--";
+    ip = "--";
+  } else if (activeMode == "wifi") {
     const bool connected = WiFi.status() == WL_CONNECTED;
     method = "WIFI";
-    state = connected ? "CONNECTED" : "DISCONNECTED";
+    state = connected ? "CONNECTED" : wifiSearching ? "SEARCHING" : "OFF";
     ssid = wifiSsid.isEmpty() ? WiFi.SSID() : wifiSsid;
     ip = connected ? WiFi.localIP().toString() : "--";
     rssi = connected ? String(WiFi.RSSI()) + " dBm" : "--";
   } else if (activeMode == "bluetooth") {
     method = "BLT";
-    state = bleConnected ? "CONNECTED" : "WAITING";
+    state = bleConnected ? "CONNECTED" : bleSearching ? "SEARCHING" : "OFF";
     ssid = "--";
     ip = "--";
   }
@@ -572,20 +750,20 @@ void drawConnectionDetails() {
   tft.fillScreen(COLOR_BACKGROUND);
   drawCentered("ESP32 INFO", 5, 2, COLOR_ACCENT);
   tft.drawFastHLine(4, 25, 120, COLOR_PANEL);
-  drawText("DEV: " + String(BLE_NAME), 4, 33, 1);
-  drawText("METHOD: " + method, 4, 49, 1,
+  drawText("DEV: " + String(BLE_NAME), 4, 31, 1);
+  drawText("METHOD: " + method, 4, 45, 1,
            method == "WIFI" ? COLOR_OK : COLOR_ACCENT);
-  drawText("STATE: " + state, 4, 65, 1,
+  drawText("STATE: " + state, 4, 59, 1,
            state == "CONNECTED" ? COLOR_OK : COLOR_WAIT);
-  drawText("SSID: " + clippedText(toDisplayAscii(ssid), 14), 4, 81, 1);
-  drawText("IP: " + ip, 4, 97, 1, COLOR_WAIT);
-  drawText("RSSI: " + rssi, 4, 113, 1);
+  drawText("SSID: " + clippedText(toDisplayAscii(ssid), 14), 4, 73, 1);
+  drawText("IP: " + ip, 4, 87, 1, COLOR_WAIT);
+  drawText("RSSI: " + rssi, 4, 101, 1);
+  drawText("PIN: " + String(pairingPin), 4, 115, 1, COLOR_ACCENT);
   drawText("FW: " + String(FIRMWARE_VERSION), 4, 129, 1);
   tft.drawFastHLine(4, 143, 120, COLOR_PANEL);
   drawText("B3: MENU", 4, 149, 1, COLOR_ACCENT);
 
-  Serial.printf("MENU: details mode=%s ssid=%s ip=%s rssi=%s\n",
-                 method.c_str(), ssid.c_str(), ip.c_str(), rssi.c_str());
+  Serial.println("MENU: connection details displayed");
 }
 
 String durationText(uint64_t seconds) {
@@ -671,6 +849,8 @@ bool updateClockTools() {
   if (clockTimers.update(monotonicMs())) {
     menuView = MenuView::Alarm;
     popupUntil = 0;
+    deferredPopup = false;
+    navigationBannerUntil = 0;
     detailsUntil = 0;
     navigationOnScreen = false;
     clockFrameDrawn = false;
@@ -713,6 +893,13 @@ uint8_t menuItemCount() {
 void drawQrCode() {
   const bool bank = menuSelection == 0;
   const uint8_t size = bank ? BANK_QR_SIZE : PROFILE_QR_SIZE;
+  if (size == 0) {
+    tft.fillScreen(ST77XX_WHITE);
+    drawCentered(bank ? "BANK" : "PROFILE", 8, 1, ST77XX_BLACK, ST77XX_WHITE);
+    drawCentered("QR not set", 70, 1, ST77XX_BLACK, ST77XX_WHITE);
+    drawCentered("Button 3: Back", 146, 1, ST77XX_BLACK, ST77XX_WHITE);
+    return;
+  }
   const uint8_t *bits = bank ? BANK_QR_BITS : PROFILE_QR_BITS;
   const uint8_t scale = 128 / (size + 8);
   const int16_t side = (size + 8) * scale;
@@ -721,7 +908,7 @@ void drawQrCode() {
   // Preserve a four-module white quiet zone at integer scale in both themes.
   // No timed redraw while scanning; navigation keeps updating behind the menu.
   tft.fillScreen(ST77XX_WHITE);
-  drawCentered(bank ? "BANK - TPBank" : "PROFILE", 3, 1,
+  drawCentered(bank ? "BANK" : "PROFILE", 3, 1,
                ST77XX_BLACK, ST77XX_WHITE);
   const uint8_t rowBytes = (size + 7) / 8;
   tft.startWrite();
@@ -733,16 +920,16 @@ void drawQrCode() {
     }
   }
   tft.endWrite();
-  if (bank) drawCentered("70333655343", 137, 1, ST77XX_BLACK, ST77XX_WHITE);
+  if (bank) drawCentered(BANK_QR_CAPTION, 137, 1, ST77XX_BLACK, ST77XX_WHITE);
   drawCentered("1 NEXT 3 BACK", 149, 1, ST77XX_BLACK, ST77XX_WHITE);
   Serial.printf("MENU: QR %s modules=%u scale=%u\n",
                 bank ? "Bank" : "Profile", size, scale);
 }
 
-static_assert((BANK_QR_SIZE + 8) * (128 / (BANK_QR_SIZE + 8)) <= 124 &&
-                  128 / (BANK_QR_SIZE + 8) >= 2 &&
-                  (PROFILE_QR_SIZE + 8) * (128 / (PROFILE_QR_SIZE + 8)) <= 124 &&
-                  128 / (PROFILE_QR_SIZE + 8) >= 2,
+static_assert((BANK_QR_SIZE == 0 || ((BANK_QR_SIZE + 8) * (128 / (BANK_QR_SIZE + 8)) <= 124 &&
+                  128 / (BANK_QR_SIZE + 8) >= 2)) &&
+                  (PROFILE_QR_SIZE == 0 || ((PROFILE_QR_SIZE + 8) * (128 / (PROFILE_QR_SIZE + 8)) <= 124 &&
+                  128 / (PROFILE_QR_SIZE + 8) >= 2)),
               "QR codes must fit with quiet zones and at least 2px modules");
 
 void drawMenuRow(uint8_t index) {
@@ -760,10 +947,13 @@ void drawMenuRow(uint8_t index) {
                        : index == 2 ? (lightTheme ? "Theme: Light" : "Theme: Dark")
                        : index == 3 ? "ESP32 Info" : index == 4 ? "QR" : "Clock";
   drawText(label, 9, y + 5, 1, foreground, background);
-  if (menuView == MenuView::List &&
+  if (menuView == MenuView::List && !clockOnlyMode &&
       ((index == 0 && activeMode == "wifi") ||
        (index == 1 && activeMode == "bluetooth"))) {
-    drawText("ON", 105, y + 5, 1, selected ? foreground : COLOR_OK,
+    const bool connected = index == 0 ? WiFi.status() == WL_CONNECTED : bleConnected;
+    const bool searching = index == 0 ? wifiSearching : bleSearching;
+    drawText(connected ? "ON" : searching ? "..." : "OFF", 104, y + 5, 1,
+             selected ? foreground : connected ? COLOR_OK : COLOR_WAIT,
              background);
   }
 }
@@ -790,6 +980,7 @@ void openMenu() {
   menuLastInput = millis();
   detailsUntil = 0;
   popupUntil = 0;
+  navigationBannerUntil = 0;
   navigationOnScreen = false;
   drawMenu();
   Serial.println("MENU: opened");
@@ -799,6 +990,13 @@ void closeMenu() {
   if (menuView == MenuView::Closed) return;
   Serial.println("MENU: closed");
   restoreMainScreen();
+  if (deferredPopup) {
+    deferredPopup = false;
+    const String kind = popupKind;
+    const String title = popupTitle;
+    const String body = popupBody;
+    showPopup(kind, title, body);
+  }
 }
 
 void selectMenuItem() {
@@ -836,13 +1034,15 @@ void selectMenuItem() {
   if (menuView != MenuView::List) return;
   menuLastInput = millis();
   if (menuSelection == 0) {
-    if (activeMode == "wifi") {
+    if (activeMode == "wifi" && !clockOnlyMode &&
+        (wifiSearching || WiFi.status() == WL_CONNECTED)) {
       closeMenu();
     } else {
       switchToWifi();
     }
   } else if (menuSelection == 1) {
-    if (activeMode == "bluetooth") {
+    if (activeMode == "bluetooth" && !clockOnlyMode &&
+        (bleSearching || bleConnected)) {
       closeMenu();
     } else {
       switchToBluetooth();
@@ -889,6 +1089,10 @@ void handleButtons() {
   const bool wifiChanged = updateButton(wifiButton);
   const bool bluetoothChanged = updateButton(bluetoothButton);
   const bool menuChanged = updateButton(menuButton);
+  if (menuChanged && menuButton.stablePressed) {
+    menuPressedAt = menuButton.changedAt;
+    menuLongHandled = false;
+  }
 
   if (clockTimers.ringing) {
     if ((wifiChanged && !wifiButton.stablePressed) ||
@@ -902,7 +1106,16 @@ void handleButtons() {
     return;
   }
 
-  if (menuChanged && !menuButton.stablePressed) {
+  if (menuButton.stablePressed && !menuLongHandled &&
+      elapsedAtLeast(millis(), menuPressedAt, MENU_HOLD_MS)) {
+    menuLongHandled = true;
+    toggleClockOnlyMode();
+    return;
+  }
+  const bool shortMenuPress = menuChanged && !menuButton.stablePressed &&
+                              !menuLongHandled;
+  if (menuChanged && !menuButton.stablePressed) menuLongHandled = false;
+  if (shortMenuPress) {
     menuLastInput = millis();
     if (menuView == MenuView::Closed) {
       openMenu();
@@ -965,9 +1178,9 @@ void handleButtons() {
     } else if (menuView == MenuView::Closed) {
       if (activeMode == "wifi" && wifiSsid == DEFAULT_WIFI_SSID &&
           WiFi.status() == WL_CONNECTED) {
-        Serial.println("BUTTON G38: WiFi SuBo already connected");
+        Serial.println("BUTTON G38: saved WiFi already connected");
       } else {
-        Serial.println("BUTTON G38: quick WiFi SuBo");
+        Serial.println("BUTTON G38: quick saved WiFi");
         switchToWifi(true);
       }
     }
@@ -1018,38 +1231,6 @@ void drawDisplayBootScreen() {
   Serial.println("DISPLAY: initialized ST7735 128x160");
 }
 
-void showColorTestPage(uint16_t background, uint16_t foreground,
-                       const String &name, uint8_t page) {
-  tft.fillScreen(background);
-  tft.setTextSize(1);
-  tft.setTextColor(foreground, background);
-  tft.setCursor(30, 20);
-  tft.print("DISPLAY TEST");
-  tft.setTextSize(3);
-  tft.setCursor(34, 58);
-  tft.print(name);
-  tft.setTextSize(1);
-  tft.setCursor(55, 112);
-  tft.printf("%u/6", static_cast<unsigned>(page));
-}
-
-void runColorTest() {
-  Serial.println("DISPLAY TEST: RED GREEN BLUE WHITE BLACK YELLOW");
-  showColorTestPage(ST77XX_RED, ST77XX_WHITE, "RED", 1);
-  delay(700);
-  showColorTestPage(ST77XX_GREEN, ST77XX_BLACK, "GREEN", 2);
-  delay(700);
-  showColorTestPage(ST77XX_BLUE, ST77XX_WHITE, "BLUE", 3);
-  delay(700);
-  showColorTestPage(ST77XX_WHITE, ST77XX_BLACK, "WHITE", 4);
-  delay(700);
-  showColorTestPage(ST77XX_BLACK, ST77XX_WHITE, "BLACK", 5);
-  delay(700);
-  showColorTestPage(ST77XX_YELLOW, ST77XX_BLACK, "YELLOW", 6);
-  delay(700);
-  Serial.println("DISPLAY TEST: finished");
-}
-
 void drawPopup() {
   // Keep the compact clock visible above all notification content.
   tft.fillRect(2, CLOCK_HEIGHT + 2, 124, 158 - CLOCK_HEIGHT, COLOR_PANEL);
@@ -1061,6 +1242,12 @@ void drawPopup() {
   drawText(header, 7, 47, 1, COLOR_ACCENT, COLOR_PANEL);
   drawWrapped(popupTitle, 63, COLOR_TEXT, COLOR_PANEL, 2);
   drawWrapped(popupBody, 95, COLOR_WAIT, COLOR_PANEL, 5);
+}
+
+void drawNavigationBanner() {
+  tft.fillRect(2, 136, STREET_WIDTH, 22, COLOR_PANEL);
+  drawText("NOTICE", 4, 137, 1, COLOR_WAIT, COLOR_PANEL);
+  drawText(clippedText(popupTitle, 13), 4, 148, 1, COLOR_TEXT, COLOR_PANEL);
 }
 
 String formatNavigationDistance(int distanceMeters) {
@@ -1078,15 +1265,15 @@ String formatNavigationDistance(int distanceMeters) {
 }
 
 void drawNavigationDistance(int distanceMeters) {
-  tft.fillRect(62, 42, 64, 35, COLOR_PANEL);
+  tft.fillRect(62, 34, 64, 35, COLOR_PANEL);
   const String distance = formatNavigationDistance(distanceMeters);
   const int split = distance.indexOf(' ');
   const String number = distance.substring(0, split);
   // Five digits fit this half-width region; very long distances stay legible.
   const uint8_t size = number.length() <= 5 ? 2 : 1;
-  drawText(number, 62 + (64 - number.length() * 6 * size) / 2, 47, size,
+  drawText(number, 62 + (64 - number.length() * 6 * size) / 2, 39, size,
            COLOR_WAIT, COLOR_PANEL);
-  drawText(distance.substring(split + 1), 88, 67, 1, COLOR_WAIT, COLOR_PANEL);
+  drawText(distance.substring(split + 1), 88, 59, 1, COLOR_WAIT, COLOR_PANEL);
 }
 
 bool isTurnManeuver(const String &maneuver) {
@@ -1126,11 +1313,11 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
                          bool visible, int exitNumber = 0,
                          int turnAngle = 999) {
   // The arrow is the only region touched by the 500 ms blink.
-  tft.fillRect(2, 42, 58, 66, COLOR_PANEL);
+  tft.fillRect(2, 34, 58, 66, COLOR_PANEL);
   if (!visible) return;
   if (maneuver == "off_route") {
     // OsmAnd OFFR: an interrupted forward arrow, never a turn.
-    tft.fillRect(26, 88, 8, 15, COLOR_TEXT);
+    tft.fillRect(26, 88, 8, 11, COLOR_TEXT);
     tft.fillRect(26, 69, 8, 12, COLOR_TEXT);
     tft.fillTriangle(30, 46, 16, 70, 44, 70, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
@@ -1142,7 +1329,7 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     const bool sharp = maneuver.startsWith("sharp");
     const int16_t startX = right ? 22 : 38;
     const int16_t bendX = right ? 42 : 18;
-    drawThickLine(startX, 101, startX, 78, 8, COLOR_TEXT);
+    drawThickLine(startX, 95, startX, 78, 8, COLOR_TEXT);
     drawThickLine(startX, 78, bendX, 62, 8, COLOR_TEXT);
     if (keep) {
       drawThickLine(bendX, 62, bendX, 55, 8, COLOR_TEXT);
@@ -1168,13 +1355,13 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     if (right) {
       tft.fillRect(22, 58, 13, 25, COLOR_PANEL);
       tft.fillRect(10, 70, 25, 13, COLOR_PANEL);
-      tft.fillRect(10, 69, 9, 35, COLOR_TEXT);
+      tft.fillRect(10, 69, 9, 30, COLOR_TEXT);
       tft.fillRect(22, 58, 20, 9, COLOR_TEXT);
       tft.fillTriangle(56, 62, 39, 50, 39, 74, COLOR_TEXT);
     } else {
       tft.fillRect(26, 58, 12, 25, COLOR_PANEL);
       tft.fillRect(26, 70, 25, 13, COLOR_PANEL);
-      tft.fillRect(41, 69, 9, 35, COLOR_TEXT);
+      tft.fillRect(41, 69, 9, 30, COLOR_TEXT);
       tft.fillRect(18, 58, 20, 9, COLOR_TEXT);
       tft.fillTriangle(4, 62, 21, 50, 21, 74, COLOR_TEXT);
     }
@@ -1186,23 +1373,25 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     tft.fillCircle(29, 71, 11, COLOR_PANEL);
     tft.fillRect(9, 71, 41, 24, COLOR_PANEL);
     tft.fillRoundRect(right ? 41 : 9, 66, 8, 27, 4, COLOR_TEXT);
-    tft.fillRoundRect(right ? 9 : 41, 66, 8, 38, 4, COLOR_TEXT);
-    if (right) tft.fillTriangle(45, 106, 33, 91, 54, 91, COLOR_TEXT);
-    else tft.fillTriangle(13, 106, 4, 91, 25, 91, COLOR_TEXT);
+    tft.fillRoundRect(right ? 9 : 41, 66, 8, 32, 4, COLOR_TEXT);
+    if (right) tft.fillTriangle(45, 99, 33, 88, 54, 88, COLOR_TEXT);
+    else tft.fillTriangle(13, 99, 4, 88, 25, 88, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "roundabout" || maneuver == "roundabout_left")) {
-    // OsmAnd's turn path: enter from below, travel around the ring, then exit
-    // radially at the route angle. Its TurnType defaults to angle 0 when the
-    // snapshot has no angle; keep the same path style for both input sources.
+    // Exit ordinal alone does not determine direction. Only a real OsmAnd
+    // turn angle may place the exit arrow; notifications have no such angle.
     constexpr int16_t centerX = 30;
     constexpr int16_t centerY = 71;
     constexpr int16_t outerRadius = 19;
     constexpr int16_t innerRadius = 12;
     const bool clockwise = maneuver == "roundabout_left";
-    tft.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 18, 3,
+    tft.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 10, 3,
                       COLOR_TEXT);
-    {
-      const int angle = turnAngle >= -180 && turnAngle <= 180 ? turnAngle : 0;
+    if (turnAngle < -180 || turnAngle > 180) {
+      tft.drawCircle(centerX, centerY, outerRadius, COLOR_TEXT);
+      tft.drawCircle(centerX, centerY, innerRadius, COLOR_TEXT);
+    } else {
+      const int angle = turnAngle;
       const uint16_t ringOutline = lightTheme ? 0xAD55 : 0x630C;
       tft.drawCircle(centerX, centerY, outerRadius, ringOutline);
       tft.drawCircle(centerX, centerY, innerRadius, ringOutline);
@@ -1278,38 +1467,40 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     tft.fillCircle(29, 73, 12, COLOR_PANEL);
     tft.fillCircle(29, 73, 5, COLOR_OK);
   } else {
-    tft.fillRect(25, 62, 9, 40, COLOR_TEXT);
+    tft.fillRect(25, 62, 9, 37, COLOR_TEXT);
     tft.fillTriangle(29, 44, 12, 66, 46, 66, COLOR_TEXT);
   }
 }
 
 void drawNavigationStreet(const String &street, bool resetPage) {
-  String remaining = toDisplayAscii(street);
-  remaining.trim();
-  if (remaining.isEmpty()) remaining = "--";
-  String lines[8];
-  uint8_t count = 0;
-  while (!remaining.isEmpty() && count < 8) {
-    int split = remaining.length() <= 10 ? remaining.length()
-                                         : remaining.lastIndexOf(' ', 10);
-    if (split <= 0) split = min<int>(10, remaining.length());
-    lines[count++] = remaining.substring(0, split);
-    remaining = remaining.substring(split);
-    remaining.trim();
-  }
+  String name = toDisplayAscii(street);
+  name.trim();
+  if (name.isEmpty()) name = "--";
+  StreetLine lines[8]{};
+  uint8_t count = wrapStreet(name.c_str(), 6, lines, 8);
+  const bool compact = count > 2;
+  if (compact) count = wrapStreet(name.c_str(), 13, lines, 8);
   roadPageCount = (count + 1) / 2;
   if (resetPage || roadPage >= roadPageCount) roadPage = 0;
   lastRoadPageAt = millis();
-  tft.fillRect(2, 108, 124, 34, COLOR_PANEL);
+  tft.fillRect(2, 100, STREET_WIDTH, 34, COLOR_PANEL);
   for (uint8_t row = 0; row < 2; ++row) {
     const uint8_t index = roadPage * 2 + row;
-    if (index < count)
-      drawCentered(lines[index], 109 + row * 16, 2, COLOR_TEXT, COLOR_PANEL);
+    if (index < count) {
+      const uint8_t scaleX = compact ? 1 : 2;
+      const String line = name.substring(lines[index].start,
+                                         lines[index].start + lines[index].length);
+      tft.setTextSize(scaleX, 2);
+      tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+      tft.setCursor(2 + (STREET_WIDTH - line.length() * 6 * scaleX) / 2,
+                    101 + row * 16);
+      tft.print(line);
+    }
   }
-  tft.fillRect(2, 151, 25, 7, COLOR_PANEL);
+  tft.fillRect(98, 92, 28, 8, COLOR_PANEL);
   if (roadPageCount > 1) {
     for (uint8_t page = 0; page < roadPageCount; ++page)
-      tft.drawFastHLine(4 + page * 5, 155, 3,
+      tft.drawFastHLine(100 + page * 5, 96, 3,
                        page == roadPage ? COLOR_TEXT : COLOR_WAIT);
   }
 }
@@ -1335,25 +1526,38 @@ void drawNavigation(const String &maneuver, int distanceMeters,
                                       : maneuver == "u_turn_right" ? "U-TURN R"
                                       : maneuver == "off_route" ? "OFF ROUTE"
                                       : maneuver == "arrive" ? "ARRIVE" : "AHEAD",
-           65, 84, 1, COLOR_TEXT, COLOR_PANEL);
-  drawText("ONTO", 65, 98, 1, COLOR_WAIT, COLOR_PANEL);
+           65, 75, 1, COLOR_TEXT, COLOR_PANEL);
+  drawText("ONTO", 65, 89, 1, COLOR_WAIT, COLOR_PANEL);
   drawNavigationStreet(street, true);
   drawNavigationDistance(distanceMeters);
   navigationOnScreen = true;
   drawClockBadge(true);
+  drawSpeed(true);
+  if (navigationBannerUntil != 0) drawNavigationBanner();
 }
 
 void showPopup(const String &kind, const String &title, const String &body) {
   if (clockTimers.ringing) return;
-  if (detailsUntil != 0 || menuView != MenuView::Closed) restoreMainScreen();
-  navigationOnScreen = false;
   popupKind = kind;
   popupTitle = toDisplayAscii(title);
   popupBody = toDisplayAscii(body);
+  if (detailsUntil != 0 || menuView != MenuView::Closed) {
+    deferredPopup = true;
+    return;
+  }
+  if (navigationVisible) {
+    if (!navigationOnScreen) {
+      drawNavigation(navigationManeuver, navigationDistanceMeters,
+                     navigationStreet, navigationExitNumber, navigationTurnAngle);
+    }
+    navigationBannerUntil = millis() + 3000;
+    drawNavigationBanner();
+    return;
+  }
+  navigationOnScreen = false;
   popupUntil = millis() + POPUP_DURATION_MS;
   drawPopup();
-  Serial.printf("DISPLAY: popup title=%s body=%s\n", popupTitle.c_str(),
-                popupBody.c_str());
+  Serial.println("DISPLAY: popup displayed");
 }
 
 void showNavigation(const String &maneuver, int distanceMeters,
@@ -1397,13 +1601,7 @@ void showNavigation(const String &maneuver, int distanceMeters,
     }
     navigationOnScreen = true;
   }
-  const String distanceText = formatNavigationDistance(distanceMeters);
-  Serial.printf("DISPLAY: navigation %s %s %s exit=%d angle=%d arrow=%s blink=%s\n",
-                maneuver.c_str(), navigationStreet.c_str(),
-                distanceText.c_str(), exitNumber, turnAngle,
-                showTurnArrow(maneuver, distanceMeters) ? maneuver.c_str()
-                                                        : "straight",
-                blinkTurnArrow(maneuver, distanceMeters) ? "yes" : "no");
+  Serial.println("DISPLAY: navigation updated");
 }
 
 void sendBleStatus(const String &message) {
@@ -1419,6 +1617,7 @@ void scheduleModeSwitch(const String &mode, bool useDefaultWifi = false) {
 }
 
 bool processCommand(const String &payload) {
+  if (clockOnlyMode) return false;
   JsonDocument document;
   if (payload.length() > MAX_COMMAND_BYTES ||
       deserializeJson(document, payload)) {
@@ -1428,7 +1627,15 @@ bool processCommand(const String &payload) {
 
   const char *command = document["command"] | "";
   const int requestId = document["requestId"] | 0;
-  const auto acknowledge = [requestId](const String &status) {
+  const auto acknowledge = [requestId, &document](const String &status) {
+    // Invalid commands must not change the local clock.
+    if (document["timestamp"].is<long>()) {
+      const time_t incoming = document["timestamp"].as<time_t>();
+      if (incoming > 1700000000) {
+        timeval now{incoming, 0};
+        settimeofday(&now, nullptr);
+      }
+    }
     sendBleStatus(requestId > 0 ? status + ":" + String(requestId) : status);
   };
   if (!document["apiVersion"].is<int>() ||
@@ -1436,16 +1643,26 @@ bool processCommand(const String &payload) {
     sendBleStatus("error:api_version");
     return false;
   }
-  if (document["timestamp"].is<long>()) {
-    const time_t incoming = document["timestamp"].as<time_t>();
-    if (incoming > 1700000000) {
-      timeval now{incoming, 0};
-      settimeofday(&now, nullptr);
-    }
-  }
-
   if (strcmp(command, "ping") == 0) {
     acknowledge("ok:ping");
+    return true;
+  }
+
+  if (strcmp(command, "speed") == 0) {
+    if (document["kmh"].isUnbound() ||
+        (!document["kmh"].isNull() && (!document["kmh"].is<int>() ||
+          document["kmh"].as<int>() < 0 || document["kmh"].as<int>() > 300))) {
+      sendBleStatus("error:speed");
+      return false;
+    }
+    const int value = document["kmh"].isNull() ? -1 : document["kmh"].as<int>();
+    const bool changed = value != speedState.kmh;
+    speedState.update(value, millis());
+    if (changed) Serial.println("DISPLAY: speed updated");
+    if (clockFrameDrawn && menuView == MenuView::Closed && detailsUntil == 0 &&
+        popupUntil == 0 &&
+        !clockTimers.ringing && activeMode != "setup") drawSpeed();
+    acknowledge("ok:speed");
     return true;
   }
 
@@ -1455,7 +1672,7 @@ bool processCommand(const String &payload) {
     const String body = document["body"] | (strcmp(command, "push_task") == 0
                                                 ? "You have a new task"
                                                 : "New notification");
-    Serial.printf("COMMAND: %s title=%s\n", command, title.c_str());
+    Serial.printf("COMMAND: %s\n", command);
     showPopup(strcmp(command, "push_task") == 0 ? "task" : "notice", title,
               body);
     acknowledge("ok:popup");
@@ -1492,20 +1709,29 @@ bool processCommand(const String &payload) {
   if (strcmp(command, "clear_popup") == 0 ||
       strcmp(command, "clear_navigation") == 0) {
     const bool clearPopup = strcmp(command, "clear_popup") == 0;
-    if (clearPopup) popupUntil = 0;
-    navigationVisible = false;
-    navigationOnScreen = false;
-    lastNavigationKey = "";
+    if (clearPopup) {
+      popupUntil = 0;
+      navigationBannerUntil = 0;
+      deferredPopup = false;
+    } else {
+      navigationVisible = false;
+      navigationOnScreen = false;
+      navigationBannerUntil = 0;
+      lastNavigationKey = "";
+    }
     if (menuView == MenuView::Closed && popupUntil == 0) {
       if (detailsUntil != 0) {
         if (clearPopup) restoreMainScreen();
+      } else if (navigationVisible) {
+        drawNavigation(navigationManeuver, navigationDistanceMeters,
+                       navigationStreet, navigationExitNumber, navigationTurnAngle);
       } else if (activeMode == "setup") {
         drawSetupScreen(true);
       } else {
         renderClock(true);
       }
     }
-    Serial.println(clearPopup ? "DISPLAY: popup and navigation cleared"
+    Serial.println(clearPopup ? "DISPLAY: popup cleared"
                               : "DISPLAY: navigation cleared");
     acknowledge("ok:clear");
     return true;
@@ -1547,7 +1773,11 @@ bool processCommand(const String &payload) {
 
 class CommandCallbacks final : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic,
-               NimBLEConnInfo & /*connectionInfo*/) override {
+               NimBLEConnInfo &connectionInfo) override {
+    if (!connectionInfo.isAuthenticated()) {
+      sendBleStatus("error:pairing_required");
+      return;
+    }
     const std::string value = characteristic->getValue();
     if (value.size() > MAX_COMMAND_BYTES || commandQueue == nullptr) {
       sendBleStatus("error:too_large");
@@ -1577,6 +1807,8 @@ class NavRideServerCallbacks final : public NimBLEServerCallbacks {
 };
 
 void startBle() {
+  bleSearching = true;
+  bleSearchStartedAt = millis();
   if (bleStarted) {
     bleServer->advertiseOnDisconnect(true);
     NimBLEDevice::getAdvertising()->start();
@@ -1588,13 +1820,16 @@ void startBle() {
   NimBLEDevice::init(BLE_NAME);
   NimBLEDevice::setMTU(185);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  NimBLEDevice::setSecurityAuth(true, true, false);
+  NimBLEDevice::setSecurityPasskey(pairingPin);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
   bleServer = NimBLEDevice::createServer();
   static NavRideServerCallbacks serverCallbacks;
   bleServer->setCallbacks(&serverCallbacks);
   bleServer->advertiseOnDisconnect(true);
   NimBLEService *service = bleServer->createService(SERVICE_UUID);
   NimBLECharacteristic *command = service->createCharacteristic(
-      COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+      COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN);
   static CommandCallbacks commandCallbacks;
   command->setCallbacks(&commandCallbacks);
   bleStatus = service->createCharacteristic(
@@ -1611,6 +1846,7 @@ void startBle() {
 }
 
 void stopBle() {
+  bleSearching = false;
   if (!bleStarted) return;
   NimBLEDevice::getAdvertising()->stop();
   if (bleServer != nullptr) {
@@ -1627,7 +1863,10 @@ void stopBle() {
 void startHttp() {
   if (httpStarted) return;
   if (!httpConfigured) {
+    static const char *requestHeaders[] = {"X-NavRide-Pin"};
+    server.collectHeaders(requestHeaders, 1);
     server.on("/api/health", HTTP_GET, []() {
+    if (!authorizeHttp()) return;
     JsonDocument document;
     document["connected"] = true;
     document["mode"] = activeMode;
@@ -1649,6 +1888,7 @@ void startHttp() {
     sendJson(body);
   });
   server.on("/api/setup", HTTP_POST, []() {
+    if (!authorizeHttp()) return;
     JsonDocument document;
     if (deserializeJson(document, server.arg("plain"))) {
       sendJson("{\"error\":\"invalid_json\"}", 400);
@@ -1669,17 +1909,12 @@ void startHttp() {
     scheduleModeSwitch("wifi");
   });
   server.on("/api/command", HTTP_POST, []() {
+    if (!authorizeHttp()) return;
     if (processCommand(server.arg("plain"))) {
       sendJson("{\"ok\":true}");
     } else {
       sendJson("{\"error\":\"invalid_command\"}", 400);
     }
-  });
-  server.on("/api/display-test", HTTP_POST, []() {
-    runColorTest();
-    clockFrameDrawn = false;
-    renderClock();
-    sendJson("{\"ok\":true,\"displayTest\":\"finished\"}");
   });
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
@@ -1705,13 +1940,17 @@ void stopHttp() {
 void startSetupMode() {
   menuView = MenuView::Closed;
   activeMode = "setup";
+  clockOnlyMode = false;
+  offlineFrameDrawn = false;
   wifiConnected = false;
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(SETUP_SSID, SETUP_PASSWORD);
-  startHttp();
+  wifiSearching = false;
+  WiFi.mode(WIFI_AP);
+  setupApActive = WiFi.softAP(SETUP_SSID, SETUP_PASSWORD);
+  setupSearching = true;
+  setupSearchStartedAt = millis();
+  if (setupApActive) startHttp();
   startBle();
-  Serial.printf("SETUP: AP IP=%s SSID=%s\n", WiFi.softAPIP().toString().c_str(),
-                 SETUP_SSID);
+  Serial.println("SETUP: access point ready");
   drawSetupScreen(true);
 }
 
@@ -1719,6 +1958,8 @@ void prepareConnectionScreen(const String &title, const String &message) {
   menuView = MenuView::Closed;
   detailsUntil = 0;
   popupUntil = 0;
+  deferredPopup = false;
+  navigationBannerUntil = 0;
   navigationVisible = false;
   navigationOnScreen = false;
   clockFrameDrawn = false;
@@ -1743,22 +1984,37 @@ void switchToWifi(bool useDefaultCredentials) {
 
   preferences.putString("mode", "wifi");
   activeMode = "wifi";
+  clockOnlyMode = false;
+  offlineFrameDrawn = false;
+  setupSearching = false;
+  setupApActive = false;
+  speedState.update(-1, millis());
   stopHttp();
   stopBle();
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(false);
   WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   wifiConnected = false;
+  wifiDisconnectedAt = 0;
+  wifiSearching = true;
+  wifiSearchStartedAt = millis();
   wifiAttemptStarted = millis();
   prepareConnectionScreen("WIFI", "CONNECTING " + wifiSsid);
-  Serial.printf("MODE: WiFi only; connecting SSID=%s\n", wifiSsid.c_str());
+  Serial.println("MODE: WiFi only; connecting to saved network");
 }
 
 void switchToBluetooth() {
   preferences.putString("mode", "bluetooth");
   activeMode = "bluetooth";
+  clockOnlyMode = false;
+  offlineFrameDrawn = false;
+  setupSearching = false;
+  setupApActive = false;
+  wifiSearching = false;
+  wifiDisconnectedAt = 0;
+  speedState.update(-1, millis());
   stopHttp();
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_OFF);
@@ -1770,34 +2026,98 @@ void switchToBluetooth() {
   Serial.println("MODE: Bluetooth LE only; fresh advertising started");
 }
 
+void toggleClockOnlyMode() {
+  if (clockOnlyMode) {
+    clockOnlyMode = false;
+    offlineFrameDrawn = false;
+    if (activeMode == "wifi") switchToWifi();
+    else if (activeMode == "bluetooth") switchToBluetooth();
+    else startSetupMode();
+    Serial.println("CLOCK: leaving offline-only display");
+    return;
+  }
+  clockOnlyMode = true;
+  menuView = MenuView::Closed;
+  detailsUntil = 0;
+  popupUntil = 0;
+  deferredPopup = false;
+  navigationBannerUntil = 0;
+  pendingModeAt = 0;
+  pendingMode = "";
+  navigationVisible = false;
+  navigationOnScreen = false;
+  lastNavigationKey = "";
+  speedState.update(-1, millis());
+  stopHttp();
+  stopBle();
+  WiFi.disconnect(true, false);
+  if (setupApActive) WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiConnected = false;
+  wifiSearching = false;
+  setupSearching = false;
+  setupApActive = false;
+  clockFrameDrawn = false;
+  setupFrameDrawn = false;
+  offlineFrameDrawn = false;
+  renderOfflineClock();
+  Serial.println("CLOCK: offline-only display; WiFi off, BLE advertising off");
+}
+
 void handleConnectionState() {
+  if (clockOnlyMode) return;
   if (activeMode == "wifi") {
     const bool connected = WiFi.status() == WL_CONNECTED;
-    if (connected && !wifiConnected) {
-      wifiConnected = true;
-      configTime(GMT_OFFSET_SECONDS, DAYLIGHT_OFFSET_SECONDS, "pool.ntp.org",
-                 "time.nist.gov", "time.google.com");
-      startHttp();
-      if (menuView == MenuView::Info) {
-        drawConnectionDetails();
-      } else if (menuView == MenuView::Closed) {
-        showPopup("connection", "WIFI", "CONNECTED TO " + wifiSsid);
-        popupUntil = millis() + 2500;
+    if (connected) {
+      wifiSearching = false;
+      wifiDisconnectedAt = 0;
+      if (!wifiConnected) {
+        wifiConnected = true;
+        configTime(GMT_OFFSET_SECONDS, DAYLIGHT_OFFSET_SECONDS, "pool.ntp.org",
+                   "time.nist.gov", "time.google.com");
+        startHttp();
+        if (menuView == MenuView::Info) {
+          drawConnectionDetails();
+        } else if (menuView == MenuView::Closed) {
+          showPopup("connection", "WIFI", "CONNECTED TO " + wifiSsid);
+          if (!navigationVisible && !deferredPopup) popupUntil = millis() + 2500;
+        }
+        Serial.println("WIFI: connected");
       }
-      Serial.printf("WIFI: connected SSID=%s IP=%s\n", wifiSsid.c_str(),
-                    WiFi.localIP().toString().c_str());
-    } else if (!connected) {
+    } else {
       if (wifiConnected) {
         wifiConnected = false;
+        wifiDisconnectedAt = millis();
+        stopHttp();
+        wifiSearching = true;
+        wifiSearchStartedAt = millis();
         wifiAttemptStarted = millis();
+        WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
         if (menuView == MenuView::Info) drawConnectionDetails();
         Serial.println("WIFI: connection lost; reconnecting");
       }
-      if (millis() - wifiAttemptStarted >= WIFI_TIMEOUT_MS) {
+      if (wifiSearching && elapsedAtLeast(millis(), wifiSearchStartedAt,
+                                          CONNECTION_SEARCH_MS)) {
+        wifiSearching = false;
+        WiFi.disconnect(true, false);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("WIFI: 20s search expired; radio off");
+      } else if (wifiSearching &&
+                 elapsedAtLeast(millis(), wifiAttemptStarted, WIFI_TIMEOUT_MS)) {
         wifiAttemptStarted = millis();
         WiFi.disconnect(false, false);
         WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
-        Serial.printf("WIFI: retrying SSID=%s\n", wifiSsid.c_str());
+        Serial.println("WIFI: retrying saved network");
+      }
+      if (wifiDisconnectedAt != 0 && navigationVisible &&
+          elapsedAtLeast(millis(), wifiDisconnectedAt, NAVIGATION_LINK_LOST_MS)) {
+        navigationVisible = false;
+        navigationOnScreen = false;
+        navigationBannerUntil = 0;
+        lastNavigationKey = "";
+        if (menuView == MenuView::Closed && detailsUntil == 0 && popupUntil == 0)
+          renderClock(true);
+        Serial.println("DISPLAY: navigation cleared after WiFi link loss");
       }
     }
   } else if (activeMode == "bluetooth") {
@@ -1805,13 +2125,23 @@ void handleConnectionState() {
     if (connected != observedBleConnected) {
       observedBleConnected = connected;
       bleDisconnectedAt = connected ? 0 : millis();
+      bleSearching = !connected;
+      if (!connected) bleSearchStartedAt = millis();
       if (menuView == MenuView::Info) {
         drawConnectionDetails();
       } else if (!navigationVisible && menuView == MenuView::Closed) {
         showPopup("connection", "BLUETOOTH",
                   connected ? "CONNECTED" : "READY TO CONNECT");
-        popupUntil = millis() + (connected ? 2500 : POPUP_DURATION_MS);
+        if (!navigationVisible && !deferredPopup)
+          popupUntil = millis() + (connected ? 2500 : POPUP_DURATION_MS);
       }
+    }
+    if (!connected && bleSearching &&
+        elapsedAtLeast(millis(), bleSearchStartedAt, CONNECTION_SEARCH_MS)) {
+      bleSearching = false;
+      bleServer->advertiseOnDisconnect(false);
+      NimBLEDevice::getAdvertising()->stop();
+      Serial.println("BLE: 20s advertising expired; press Button 2 to retry");
     }
     // An interrupted phone link must not leave an obsolete turn on a bike.
     // Short BLE hiccups get a grace period for automatic reconnection.
@@ -1823,6 +2153,47 @@ void handleConnectionState() {
       if (menuView == MenuView::Closed && detailsUntil == 0 && popupUntil == 0)
         renderClock(true);
       Serial.println("DISPLAY: navigation cleared after BLE link loss");
+    }
+  } else if (activeMode == "setup") {
+    bool changed = false;
+    if (bleConnected != observedBleConnected) {
+      observedBleConnected = bleConnected;
+      changed = true;
+    }
+    if (bleConnected && setupApActive) {
+      stopHttp();
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_OFF);
+      setupApActive = false;
+      changed = true;
+      Serial.println("SETUP: BLE connected; WiFi AP stopped");
+    } else if (setupApActive && WiFi.softAPgetStationNum() > 0 && bleSearching) {
+      stopBle();
+      changed = true;
+      Serial.println("SETUP: WiFi client connected; BLE advertising stopped");
+    }
+    if (setupSearching && elapsedAtLeast(millis(), setupSearchStartedAt,
+                                         CONNECTION_SEARCH_MS)) {
+      setupSearching = false;
+      if (bleStarted) {
+        bleServer->advertiseOnDisconnect(false);
+        if (!bleConnected) NimBLEDevice::getAdvertising()->stop();
+      }
+      bleSearching = false;
+      changed = true;
+      Serial.println("SETUP: 20s discovery expired; idle radios stopped");
+    }
+    if (!setupSearching && setupApActive && WiFi.softAPgetStationNum() == 0) {
+      stopHttp();
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_OFF);
+      setupApActive = false;
+      changed = true;
+      Serial.println("SETUP: unused WiFi AP stopped");
+    }
+    if (menuView == MenuView::Closed) {
+      if (changed) drawSetupScreen(true);
+      else if (setupFrameDrawn && setupSearching) drawSetupStatus();
     }
   }
   refreshConnectionIndicator();
@@ -1851,9 +2222,9 @@ void setup() {
   setCpuFrequencyMhz(80);
   Serial.printf("\n%s firmware %s\n", BLE_NAME, FIRMWARE_VERSION);
   Serial.println("Display: ST7735 128x160");
-  Serial.println("Button 1: tap GPIO38 for WiFi SuBo; menu next");
+  Serial.println("Button 1: tap GPIO38 for saved WiFi; menu next");
   Serial.println("Button 2: tap GPIO39 for fresh Bluetooth; menu select");
-  Serial.println("Button 3: tap GPIO0 for menu; do not hold during reset");
+  Serial.println("Button 3: tap GPIO0 for menu, hold 2s for offline clock; release before reset");
   applyVietnamTimezone();
   Serial.println("TIME: timezone UTC+7 configured");
 
@@ -1870,14 +2241,22 @@ void setup() {
   menuButton.lastRawPressed = digitalRead(menuButton.pin) == LOW;
   menuButton.stablePressed = menuButton.lastRawPressed;
   menuButton.changedAt = millis();
+  menuPressedAt = millis();
 
   tftSPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
   tft.initR(INITR_BLACKTAB);
+  // Reduce runtime SPI ringing with the display's jumper wiring.
+  tft.setSPISpeed(TFT_SPI_HZ);
   tft.setRotation(0);
   tft.invertDisplay(false);
   drawDisplayBootScreen();
 
   preferences.begin("monitor", false);
+  pairingPin = preferences.getUInt("pin", 0);
+  if (pairingPin < 100000 || pairingPin > 999999) {
+    pairingPin = 100000 + esp_random() % 900000;
+    preferences.putUInt("pin", pairingPin);
+  }
   applyTheme(preferences.getBool("lightTheme", false));
   commandQueue = xQueueCreate(4, sizeof(QueuedCommand));
   activeMode = preferences.isKey("mode") ? preferences.getString("mode", "") : "";
@@ -1892,7 +2271,7 @@ void setup() {
     preferences.putString("password", wifiPassword);
     preferences.putString("mode", "wifi");
     activeMode = "wifi";
-    Serial.printf("WIFI: using configured SSID=%s\n", wifiSsid.c_str());
+    Serial.println("WIFI: using configured network");
   }
 
   if (activeMode == "wifi" && !wifiSsid.isEmpty()) {
@@ -1941,7 +2320,10 @@ void loop() {
   if (detailsUntil == 0 && popupUntil != 0 &&
       static_cast<int32_t>(millis() - popupUntil) >= 0) {
     popupUntil = 0;
-    if (navigationVisible) {
+    if (clockOnlyMode) {
+      offlineFrameDrawn = false;
+      renderOfflineClock();
+    } else if (navigationVisible) {
       drawNavigation(navigationManeuver, navigationDistanceMeters,
                      navigationStreet, navigationExitNumber, navigationTurnAngle);
       navigationOnScreen = true;
@@ -1952,10 +2334,19 @@ void loop() {
     }
   }
 
+  if (navigationBannerUntil != 0 &&
+      static_cast<int32_t>(millis() - navigationBannerUntil) >= 0) {
+    navigationBannerUntil = 0;
+    if (navigationOnScreen && menuView == MenuView::Closed)
+      tft.fillRect(2, 136, STREET_WIDTH, 22, COLOR_PANEL);
+  }
+
   if (menuView == MenuView::Closed && detailsUntil == 0 && popupUntil == 0 &&
       millis() - lastDraw >= DRAW_INTERVAL_MS) {
     lastDraw = millis();
-    if (activeMode == "setup") {
+    if (clockOnlyMode) {
+      renderOfflineClock();
+    } else if (activeMode == "setup") {
       drawSetupScreen();
     } else {
       renderClock();

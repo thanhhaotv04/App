@@ -80,7 +80,11 @@ void main() {
           'notices': [
             {'id': 'wifi', 'title': 'Test', 'body': 'Message'},
           ],
-          'config': {'mode': 'network', 'baseUrl': 'http://192.0.2.1'},
+          'config': {
+            'mode': 'network',
+            'baseUrl': 'http://192.168.1.55',
+            'pairingPin': '123456',
+          },
         }),
       });
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -300,7 +304,7 @@ void main() {
           });
       final bytes = [0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4];
       final service = AppUpdateService(
-        baseUrl: 'http://192.0.2.1:3000',
+        baseUrl: 'http://192.168.1.55:3000',
         client: MockClient((_) async {
           downloads++;
           return http.Response.bytes(bytes, 200);
@@ -310,7 +314,7 @@ void main() {
         available: true,
         versionName: 'test',
         versionCode: 2,
-        apkUrl: 'http://192.0.2.1:3000/releases/app.apk',
+        apkUrl: 'http://192.168.1.55:3000/releases/app.apk',
         notes: '',
         sha256Digest: sha256.convert(bytes).toString(),
         sizeBytes: bytes.length,

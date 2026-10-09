@@ -62,7 +62,7 @@ class OsmAndNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (!sbn.packageName.startsWith("net.osmand")) return
+        if (!OsmAndPackages.isAllowed(sbn.packageName)) return
         if (NavigationBridgeStore.deviceId(this).isNullOrBlank()) return
 
         val raw = notificationText(sbn)
@@ -109,7 +109,7 @@ class OsmAndNotificationListener : NotificationListenerService() {
             if (activeListener !== this || routeNotificationKey != null ||
                 NavigationBridgeStore.deviceId(this).isNullOrBlank()) return@Runnable
             val hasRouteNotification = runCatching { activeNotifications }.getOrNull()
-                ?.any { it.packageName.startsWith("net.osmand") &&
+                ?.any { OsmAndPackages.isAllowed(it.packageName) &&
                     (it.notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 &&
                     OsmAndNotificationParser.parse(notificationText(it)) != null } == true
             if (!hasRouteNotification && aidlBridge?.hasActiveTurn() != true) {
@@ -206,7 +206,7 @@ class OsmAndNotificationListener : NotificationListenerService() {
                 listener.lastPayload = ""
                 if (listener.aidlBridge?.refreshNavigation() == true) return@post
                 val routeNotifications = runCatching { listener.activeNotifications }.getOrNull()
-                    ?.filter { it.packageName.startsWith("net.osmand") &&
+                    ?.filter { OsmAndPackages.isAllowed(it.packageName) &&
                         (it.notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 }
                     .orEmpty()
                 routeNotifications.forEach(listener::onNotificationPosted)
@@ -233,12 +233,20 @@ class OsmAndNotificationListener : NotificationListenerService() {
         fun stopBridge() {
             activeListener?.aidlBridge?.stop()
             activeListener?.aidlBridge = null
+            activeListener?.apply {
+                pendingClear?.let(handler::removeCallbacks)
+                pendingClear = null
+                routeNotificationKey = null
+                lastPayload = ""
+                lastSentAt = 0L
+            }
         }
     }
 
     private fun restartAidlBridge() {
         // Connect before starting a route, so the app can offer Open OsmAnd and
         // test samples without waiting for the first navigation notification.
+        NavigationBleSender.retryConnection()
         NavigationBleSender.send(applicationContext,
             "{\"apiVersion\":1,\"command\":\"ping\",\"timestamp\":${System.currentTimeMillis() / 1000}}")
         if (aidlBridge == null || !OsmAndAidlState.subscribed) {

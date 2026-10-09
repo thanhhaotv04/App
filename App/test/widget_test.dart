@@ -83,6 +83,34 @@ void main() {
     expect(find.byKey(const ValueKey('update-server-url')), findsNothing);
   });
 
+  testApp('Change Wi-Fi opens one form and requires a connection to save', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').last);
+    await tester.pumpAndSettle();
+    final changeWifi = find.byKey(const ValueKey('change-wifi'));
+    expect(changeWifi, findsOneWidget);
+    expect(find.text('Wi-Fi name'), findsNothing);
+    await tester.ensureVisible(changeWifi);
+    await tester.tap(changeWifi);
+    await tester.pumpAndSettle();
+    expect(find.text('Wi-Fi name'), findsOneWidget);
+    expect(find.text('Wi-Fi password'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Save Wi-Fi network'),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(changeWifi);
+    await tester.pumpAndSettle();
+    expect(find.text('Wi-Fi name'), findsNothing);
+  });
+
   testApp('opens optional update settings and saves a normalized URL', (
     tester,
   ) async {
@@ -183,109 +211,118 @@ void main() {
     expect(find.text('Đừng quên áo mưa'), findsOneWidget);
   });
 
-  testApp(
-    'native status, open OsmAnd and confirmed sample use the same bridge',
-    (tester) async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      SharedPreferences.setMockInitialValues({
-        'esp32-navride.snapshot.v1': jsonEncode({
-          'profileName': 'Hào',
-          'notices': [],
-          'tasks': [],
-          'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
-        }),
-      });
-      var connected = true;
-      var confirmed = false;
-      final calls = <MethodCall>[];
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+  testApp('native status, open OsmAnd and confirmed sample use the same bridge', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    SharedPreferences.setMockInitialValues({
+      'esp32-navride.snapshot.v1': jsonEncode({
+        'profileName': 'Hào',
+        'notices': [],
+        'tasks': [],
+        'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
+      }),
+    });
+    var connected = true;
+    var confirmed = false;
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      navigationChannel,
+      (call) async {
+        calls.add(call);
+        if (call.method == 'getOsmAndBridgeStatus') {
+          return {
+            'configured': true,
+            'notificationAccess': true,
+            'osmandInstalled': true,
+            'ready': true,
+            'aidlSubscribed': true,
+            'bleConnected': connected,
+            'osmandDataRecent': false,
+            'lastNavigationConfirmed': confirmed,
+          };
+        }
+        if (call.method == 'sendOsmAndSample') {
+          confirmed = true;
+          return true;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         navigationChannel,
-        (call) async {
-          calls.add(call);
-          if (call.method == 'getOsmAndBridgeStatus') {
-            return {
-              'configured': true,
-              'notificationAccess': true,
-              'osmandInstalled': true,
-              'ready': true,
-              'aidlSubscribed': true,
-              'bleConnected': connected,
-              'osmandDataRecent': false,
-              'lastNavigationConfirmed': confirmed,
-            };
-          }
-          if (call.method == 'sendOsmAndSample') {
-            confirmed = true;
-            return true;
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          navigationChannel,
-          null,
-        ),
-      );
-      await tester.pumpWidget(const NavRideApp());
+        null,
+      ),
+    );
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    expect(find.text('Ready for directions'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('navigation-primary')));
+    await tester.pumpAndSettle();
+    expect(calls.where((call) => call.method == 'openOsmAnd'), hasLength(1));
+    await tester.scrollUntilVisible(find.text('Test display'), 250);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test display'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('navigation-sample-left')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('navigation-sample-left')));
+    await tester.pumpAndSettle();
+    final sample = calls.singleWhere(
+      (call) => call.method == 'sendOsmAndSample',
+    );
+    expect(sample.arguments, {
+      'maneuver': 'left',
+      'distanceMeters': 250,
+      'streetName': 'Nguyen Hue',
+    });
+    expect(
+      find.text('ESP32 received the 250 m navigation sample.'),
+      findsOneWidget,
+    );
+    for (final exit in [4, 5, 6]) {
+      final button = find.byKey(ValueKey('navigation-sample-roundabout_$exit'));
+      await tester.ensureVisible(button);
       await tester.pumpAndSettle();
-      expect(find.text('Ready for directions'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('navigation-primary')));
+      await tester.tap(button);
       await tester.pumpAndSettle();
-      expect(calls.where((call) => call.method == 'openOsmAnd'), hasLength(1));
-      await tester.scrollUntilVisible(find.text('Test display'), 250);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Test display'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('navigation-sample-left')),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('navigation-sample-left')));
-      await tester.pumpAndSettle();
-      final sample = calls.singleWhere(
-        (call) => call.method == 'sendOsmAndSample',
-      );
-      expect(sample.arguments, {
-        'maneuver': 'left',
-        'distanceMeters': 250,
-        'streetName': 'Nguyen Hue',
-      });
       expect(
-        find.text('ESP32 received the 250 m navigation sample.'),
-        findsOneWidget,
+        calls
+            .lastWhere((call) => call.method == 'sendOsmAndSample')
+            .arguments['maneuver'],
+        'roundabout_$exit',
       );
-      for (final exit in [4, 5, 6]) {
-        final button = find.byKey(
-          ValueKey('navigation-sample-roundabout_$exit'),
-        );
-        await tester.ensureVisible(button);
-        await tester.pumpAndSettle();
-        await tester.tap(button);
-        await tester.pumpAndSettle();
-        expect(
-          calls
-              .lastWhere((call) => call.method == 'sendOsmAndSample')
-              .arguments['maneuver'],
-          'roundabout_$exit',
-        );
-      }
-      connected = false;
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pumpAndSettle();
-      expect(find.text('Ready for directions'), findsNothing);
-      expect(
-        tester
-            .widget<OutlinedButton>(
-              find.byKey(const ValueKey('navigation-sample-left')),
-            )
-            .onPressed,
-        isNull,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-    },
-  );
+    }
+    connected = false;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.text('Ready for directions'), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const ValueKey('navigation-sample-left')),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('navigation-primary')),
+      -250,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Reconnect ESP32'), findsOneWidget);
+    expect(
+      find.text(
+        'Wait for automatic reconnection. If BLT stops flashing, press Button 2 on ESP32, then tap Reconnect ESP32.',
+      ),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 
   testApp(
     'stopped listener offers access repair instead of claiming readiness',
@@ -370,7 +407,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').last);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Reconnect'));
+    await Scrollable.ensureVisible(
+      tester.element(find.text('Reconnect')),
+      alignment: 0.3,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reconnect'));
     await tester.pumpAndSettle();
     final reconnects = calls.where(
@@ -378,6 +419,97 @@ void main() {
     );
     expect(reconnects, hasLength(1));
     expect((reconnects.single.arguments as Map)['deviceId'], 'saved-board');
+  });
+
+  testApp('Disconnect stops the native bridge until saved ESP32 is selected', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    SharedPreferences.setMockInitialValues({
+      'esp32-navride.snapshot.v1': jsonEncode({
+        'notices': [],
+        'tasks': [],
+        'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
+      }),
+    });
+    var configured = true;
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      navigationChannel,
+      (call) async {
+        calls.add(call);
+        if (call.method == 'disableOsmAndBridge') configured = false;
+        if (call.method == 'configureOsmAndBridge') configured = true;
+        if (call.method == 'getOsmAndBridgeStatus') {
+          return {
+            'configured': configured,
+            'notificationAccess': true,
+            'listenerConnected': configured,
+            'bleConnected': configured,
+          };
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        navigationChannel,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('disconnect-device')));
+    await tester.pumpAndSettle();
+    expect(
+      calls.where((call) => call.method == 'disableOsmAndBridge'),
+      hasLength(1),
+    );
+    expect(configured, isFalse);
+    expect(find.byKey(const ValueKey('disconnect-device')), findsNothing);
+    expect(find.text('Connect saved ESP32'), findsOneWidget);
+    final saved = await SharedPreferences.getInstance();
+    expect(
+      saved.getString('esp32-navride.snapshot.v1'),
+      contains('"mode":"demo"'),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').last);
+    await tester.pumpAndSettle();
+    expect(configured, isFalse);
+    expect(find.text('Connect saved ESP32'), findsOneWidget);
+    expect(
+      calls.where((call) => call.method == 'configureOsmAndBridge'),
+      isEmpty,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('reconnect-saved-ble')));
+    await tester.pumpAndSettle();
+    final reconnects = calls.where(
+      (call) => call.method == 'configureOsmAndBridge',
+    );
+    expect(reconnects, hasLength(1));
+    expect((reconnects.single.arguments as Map)['deviceId'], 'saved-board');
+    expect(find.byKey(const ValueKey('disconnect-device')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    expect(configured, isTrue);
+    expect(
+      calls.where((call) => call.method == 'disableOsmAndBridge'),
+      hasLength(1),
+    );
+    expect(
+      saved.getString('esp32-navride.snapshot.v1'),
+      contains('"mode":"bluetooth"'),
+    );
   });
 
   for (final acknowledged in [true, false]) {
