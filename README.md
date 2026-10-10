@@ -79,8 +79,11 @@ Bộ ứng dụng Android và firmware dành cho màn hình phụ trên xe máy.
 gửi chỉ dẫn từ **OsmAnd** qua Bluetooth LE đến **ESP32-S3 N16R8**, hiển thị trên
 màn hình **TFT ST7735 1.8 inch (128 × 160)**.
 
-<p align="center"><img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/docs/images/01-navigation.jpg" width="260" alt="Giao diện ESP32-NavRide với nút mở OsmAnd và trạng thái kết nối Bluetooth đến màn hình ESP32"></p>
-<p align="center"><sub>Kiểm tra kết nối OsmAnd và ESP32 trước khi bắt đầu dẫn đường</sub></p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/docs/images/04-osmand-cropped.jpg" width="260" height="549" alt="OsmAnd trên điện thoại hiển thị bản đồ, hướng đi tiếp trên đường Đỗ Mười và khoảng cách 3,6 km">
+  <img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/docs/images/05-esp32-navigation-cropped.jpg" width="260" height="549" alt="Màn hình ESP32 hiển thị mũi tên đi thẳng, tên đường QL.1 Đỗ Mười và khoảng cách 3,60 km">
+</p>
+<p align="center"><sub>OsmAnd trên điện thoại · Chỉ dẫn trên màn hình ESP32</sub></p>
 
 - Hiển thị mũi tên, tên đường sắp rẽ và khoảng cách.
 - Nhận tốc độ GPS từ điện thoại, thông báo cá nhân và việc cần làm.
