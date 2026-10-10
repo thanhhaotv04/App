@@ -9,17 +9,20 @@ nguồn, cách cài đặt và hướng dẫn chạy dự án.
 
 ## Danh sách ứng dụng
 
-| Ứng dụng | Giới thiệu | Branch |
-| --- | --- | --- |
-| [VietNam Map Checkin](#vietnam-map-checkin) | Lưu địa điểm đã đến, ảnh và hành trình khám phá Việt Nam. | [`VietNam-Checking-Map`](https://github.com/thanhhaotv04/App/tree/VietNam-Checking-Map) |
-| [Money Manager](#money-manager) | Theo dõi thu nhập, chi tiêu và các khoản chi định kỳ. | [`Money-Manager`](https://github.com/thanhhaotv04/App/tree/Money-Manager) |
-| [Task Reminder](#task-reminder) | Quản lý công việc, lịch nhắc và tiến độ hằng ngày. | [`Task-Reminder`](https://github.com/thanhhaotv04/App/tree/Task-Reminder) |
-| [ESP32-NavRide](#esp32-navride) | Hiển thị chỉ dẫn đường từ điện thoại lên màn hình ESP32 cho xe máy. | [`ESP32-NavRide`](https://github.com/thanhhaotv04/App/tree/ESP32-NavRide) |
+| Biểu tượng | Ứng dụng | Giới thiệu | Branch |
+| :---: | --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/VietNam-Checking-Map/assets/App_VietNamMap_Logo_no_background.png" width="48" alt="Biểu tượng VietNam Map Checkin"> | [VietNam Map Checkin](#vietnam-map-checkin) | Lưu địa điểm đã đến, ảnh và hành trình khám phá Việt Nam. | [`VietNam-Checking-Map`](https://github.com/thanhhaotv04/App/tree/VietNam-Checking-Map) |
+| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/Money-Manager/docs/images/app-icon.svg" width="48" alt="Biểu tượng Money Manager"> | [Money Manager](#money-manager) | Theo dõi thu nhập, chi tiêu và các khoản chi định kỳ. | [`Money-Manager`](https://github.com/thanhhaotv04/App/tree/Money-Manager) |
+| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/Task-Reminder/assets/branding/app_icon.png" width="48" alt="Biểu tượng Task Reminder"> | [Task Reminder](#task-reminder) | Quản lý công việc, lịch nhắc và tiến độ hằng ngày. | [`Task-Reminder`](https://github.com/thanhhaotv04/App/tree/Task-Reminder) |
+| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/App/web/icons/Icon-512.png" width="48" alt="Biểu tượng ESP32-NavRide"> | [ESP32-NavRide](#esp32-navride) | Hiển thị chỉ dẫn đường từ điện thoại lên màn hình ESP32 cho xe máy. | [`ESP32-NavRide`](https://github.com/thanhhaotv04/App/tree/ESP32-NavRide) |
 
 ## VietNam Map Checkin
 
 Nhật ký du lịch giúp lưu lại những nơi đã ghé thăm và theo dõi hành trình khám
 phá các tỉnh, thành Việt Nam.
+
+<p align="center"><img src="https://raw.githubusercontent.com/thanhhaotv04/App/VietNam-Checking-Map/docs/images/03-map.png" width="260" alt="Giao diện VietNam Map Checkin với bản đồ Việt Nam, ô tìm tỉnh thành và màu thể hiện số lần check-in"></p>
+<p align="center"><sub>Khám phá Việt Nam qua bản đồ những nơi đã ghé thăm</sub></p>
 
 - Lưu check-in với địa điểm, ngày giờ, ghi chú và nhiều ảnh; hỗ trợ lấy vị trí GPS.
 - Quản lý album, chọn ảnh bìa, sắp xếp ảnh và chia sẻ album dưới dạng ZIP.
@@ -37,6 +40,9 @@ phá các tỉnh, thành Việt Nam.
 Ứng dụng quản lý thu chi cá nhân, có thể dùng tài khoản local trên thiết bị hoặc
 chọn tài khoản đồng bộ khi cần sử dụng backend.
 
+<p align="center"><img src="https://raw.githubusercontent.com/thanhhaotv04/App/Money-Manager/docs/images/01-overview.png" width="260" alt="Giao diện Money Manager hiển thị tổng tiền, số tiền hôm nay, tháng này và thống kê từng tháng"></p>
+<p align="center"><sub>Xem tổng quan các khoản đã ghi theo ngày và tháng</sub></p>
+
 - Theo dõi thu nhập, chi tiêu và các khoản chi định kỳ.
 - Dùng tài khoản local mà không cần backend hoặc kết nối Wi-Fi.
 - Đồng bộ dữ liệu theo tài khoản khi chọn sử dụng máy chủ.
@@ -52,6 +58,9 @@ chọn tài khoản đồng bộ khi cần sử dụng backend.
 
 Ứng dụng sắp xếp công việc và lịch nhắc, giúp theo dõi việc cần làm trong ngày
 cũng như tiến độ theo tháng. Có thể sử dụng offline và chủ động đồng bộ khi cần.
+
+<p align="center"><img src="https://raw.githubusercontent.com/thanhhaotv04/App/Task-Reminder/docs/images/03-work-list.png" width="260" alt="Giao diện Task Reminder ở chế độ tối với việc hôm nay, danh sách công việc và nút thêm hoặc lên lịch"></p>
+<p align="center"><sub>Quản lý danh sách công việc và đưa từng việc vào lịch</sub></p>
 
 - Tạo công việc với ghi chú, biểu tượng, mức ưu tiên và thời gian tập trung dự kiến.
 - Thêm nhanh bằng câu nhập như `Nộp báo cáo mai 9:30 !cao ~45p #laptop`.
@@ -69,6 +78,9 @@ cũng như tiến độ theo tháng. Có thể sử dụng offline và chủ đ�
 Bộ ứng dụng Android và firmware dành cho màn hình phụ trên xe máy. Điện thoại
 gửi chỉ dẫn từ **OsmAnd** qua Bluetooth LE đến **ESP32-S3 N16R8**, hiển thị trên
 màn hình **TFT ST7735 1.8 inch (128 × 160)**.
+
+<p align="center"><img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/docs/images/01-navigation.jpg" width="260" alt="Giao diện ESP32-NavRide với nút mở OsmAnd và trạng thái kết nối Bluetooth đến màn hình ESP32"></p>
+<p align="center"><sub>Kiểm tra kết nối OsmAnd và ESP32 trước khi bắt đầu dẫn đường</sub></p>
 
 - Hiển thị mũi tên, tên đường sắp rẽ và khoảng cách.
 - Nhận tốc độ GPS từ điện thoại, thông báo cá nhân và việc cần làm.
