@@ -28,6 +28,128 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  testApp(
+    'BLE reconnect works without opening OsmAnd notification permission',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      SharedPreferences.setMockInitialValues({
+        'esp32-navride.snapshot.v1': jsonEncode({
+          'notices': [],
+          'tasks': [],
+          'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
+        }),
+      });
+      var connected = false;
+      var pairing = true;
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        navigationChannel,
+        (call) async {
+          calls.add(call);
+          if (call.method == 'getOsmAndBridgeStatus') {
+            return {
+              'configured': true,
+              'notificationAccess': false,
+              'bleConnected': connected,
+              'bleConnecting': !connected,
+              'blePairing': pairing,
+            };
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          navigationChannel,
+          null,
+        ),
+      );
+      await tester.pumpWidget(const NavRideApp());
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Pairing… Check the Android PIN prompt.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Settings').last);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Pairing… Check the Android PIN prompt.'),
+        findsOneWidget,
+      );
+      pairing = false;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('Connecting…'), findsOneWidget);
+      await tester.ensureVisible(find.text('Reconnect'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Reconnect'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((c) => c.method == 'configureOsmAndBridge'),
+        hasLength(1),
+      );
+      expect(
+        calls.where((c) => c.method == 'openNotificationAccessSettings'),
+        isEmpty,
+      );
+      expect(calls.where((c) => c.method == 'disableOsmAndBridge'), isEmpty);
+      connected = true;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('Connected · Bluetooth'), findsOneWidget);
+    },
+  );
+
+  testApp('saved Android ESP32 uses native BLE without notification access', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    SharedPreferences.setMockInitialValues({
+      'esp32-navride.snapshot.v1': jsonEncode({
+        'notices': [],
+        'tasks': [],
+        'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
+      }),
+    });
+    var configured = false;
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      navigationChannel,
+      (call) async {
+        calls.add(call);
+        if (call.method == 'configureOsmAndBridge') configured = true;
+        if (call.method == 'getOsmAndBridgeStatus') {
+          return {
+            'configured': configured,
+            'notificationAccess': false,
+            'bleConnected': false,
+            'bleConnecting': configured,
+          };
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        navigationChannel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(const NavRideApp());
+    await tester.pumpAndSettle();
+    expect(
+      calls.where((c) => c.method == 'configureOsmAndBridge'),
+      hasLength(1),
+    );
+    expect(
+      calls.where((c) => c.method == 'openNotificationAccessSettings'),
+      isEmpty,
+    );
+    await tester.tap(find.text('Settings').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Connecting…'), findsOneWidget);
+  });
+
   test(
     'preserves the previous snapshot key and starts new installs empty',
     () async {

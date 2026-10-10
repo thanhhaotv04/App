@@ -22,17 +22,14 @@ class FleetLocationPolicyTest {
         assertTrue(FleetLocationPolicy.shouldUpload(31_000, 1_000, false))
     }
 
-    @Test fun recordsOnlyAfterFiveMinutesAndMeaningfulMovement() {
+    @Test fun recordsOnlyAfterOneMinuteAndMeaningfulMovementRegardlessOfNetwork() {
         val origin = 1_000L
-        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin, 0, 0.0, true))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 299_999, origin, 250.0, true))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 300_000, origin, 99.9, true))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 300_000, origin, 100.0, true))
-        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin + 300_000, origin, 100.1, true))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 599_999, origin, 200.0, false))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 600_000, origin, 99.9, false))
-        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 600_000, origin, 100.0, false))
-        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin + 600_000, origin, 100.1, false))
+        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin, 0, 0.0))
+        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 59_999, origin, 250.0))
+        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 60_000, origin, 99.9))
+        assertFalse(FleetLocationPolicy.shouldRecordTrack(origin + 60_000, origin, 100.0))
+        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin + 60_000, origin, 100.1))
+        assertTrue(FleetLocationPolicy.shouldRecordTrack(origin + 600_000, origin, 200.0))
         assertEquals(0.0, FleetLocationPolicy.distanceMeters(10.77, 106.70, 10.77, 106.70), 0.01)
         assertTrue(FleetLocationPolicy.distanceMeters(10.77, 106.70, 10.771, 106.70) > 100.0)
     }

@@ -7,8 +7,7 @@ import kotlin.math.sqrt
 
 internal object FleetLocationPolicy {
     const val UPLOAD_INTERVAL_MS = 30_000L
-    const val TRACK_INTERVAL_MS = 5 * 60_000L
-    const val OFFLINE_TRACK_INTERVAL_MS = 10 * 60_000L
+    const val TRACK_INTERVAL_MS = 60_000L
     const val TRACK_MIN_MOVE_METERS = 100.0
 
     fun accepts(
@@ -25,10 +24,9 @@ internal object FleetLocationPolicy {
     fun shouldUpload(now: Long, previousAttempt: Long, pending: Boolean): Boolean =
         !pending && (previousAttempt == 0L || now - previousAttempt >= UPLOAD_INTERVAL_MS)
 
-    fun shouldRecordTrack(now: Long, previousPointAt: Long, distanceMeters: Double,
-                          online: Boolean): Boolean =
+    fun shouldRecordTrack(now: Long, previousPointAt: Long, distanceMeters: Double): Boolean =
         previousPointAt == 0L ||
-            (now - previousPointAt >= (if (online) TRACK_INTERVAL_MS else OFFLINE_TRACK_INTERVAL_MS)
+            (now - previousPointAt >= TRACK_INTERVAL_MS
                 && distanceMeters > TRACK_MIN_MOVE_METERS)
 
     fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

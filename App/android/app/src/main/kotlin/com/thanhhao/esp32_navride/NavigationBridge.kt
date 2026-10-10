@@ -89,7 +89,30 @@ internal object NavigationBleSender {
         .trim()
         .take(32)
 
+    @Synchronized
     fun isConnected(): Boolean = connected && channelReady
+
+    @Synchronized
+    fun isConnecting(): Boolean = !isConnected() && (gatt != null || reconnectScheduled)
+
+    @Synchronized
+    fun isPairing(): Boolean = bondWaitStartedAt != 0L
+
+    // Một chủ sở hữu BLE trên Android; quyền OsmAnd không quyết định kết nối ESP32.
+    @Synchronized
+    fun connectSaved(context: Context, deviceId: String, restartPending: Boolean = false): Boolean {
+        val changedDevice = NavigationBridgeStore.deviceId(context) != deviceId
+        if (changedDevice || (restartPending && !isConnected() && !isPairing())) {
+            close()
+        }
+        if (changedDevice) {
+            NavigationBridgeStore.setDeviceId(context, deviceId)
+        }
+        retryConnection()
+        // Reconnect không được phá kênh tốt hoặc ngắt hộp thoại nhập PIN đang mở.
+        if (isConnected() || gatt != null) return true
+        return send(context, "{\"apiVersion\":1,\"command\":\"ping\",\"timestamp\":${System.currentTimeMillis() / 1000}}")
+    }
     fun modeCommandConfirmed(): Boolean = modeConfirmed
     fun wifiCommandConfirmed(): Boolean = wifiSavedConfirmed
     fun popupCommandConfirmed(): Boolean = popupConfirmed

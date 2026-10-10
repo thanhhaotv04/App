@@ -37,7 +37,7 @@ Dùng ba nút trên bo để mở menu, đổi kết nối, xem QR hoặc dùng 
 
 ## Fleet management (đang phát triển)
 
-Khi bạn chủ động bắt đầu chuyến đi, app lưu các điểm GPS và đồng bộ với Firebase khi có mạng. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
+Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu tiên, sau đó tối thiểu **1 phút/lần nếu di chuyển hơn 100 m**. Điểm được lưu trên điện thoại trước, đồng bộ khi có mạng và chỉ xóa khỏi hàng đợi sau khi Firebase xác nhận. Lịch sử trên server được giữ lại. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
 
 <p align="center"><img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản"></p>
 

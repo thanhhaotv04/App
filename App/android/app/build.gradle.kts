@@ -26,6 +26,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     dependencies {
@@ -36,6 +37,9 @@ android {
         testImplementation("junit:junit:4.13.2")
         testImplementation("org.json:json:20240303")
         testImplementation("org.mockito:mockito-inline:5.2.0")
+        testImplementation("org.robolectric:robolectric:4.16")
+        androidTestImplementation("androidx.test:runner:1.7.0")
+        androidTestImplementation("androidx.test.ext:junit:1.3.0")
         // Mockito's older defaults cannot instrument the JDK 25 used locally.
         testImplementation("net.bytebuddy:byte-buddy:1.18.2")
         testImplementation("net.bytebuddy:byte-buddy-agent:1.18.2")

@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -17,7 +18,7 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
+import org.json.JSONObject
 import java.util.Date
 import java.util.UUID
 
@@ -38,7 +39,6 @@ class SpeedService : Service(), LocationListener {
         @Volatile private var fleetMessage = "Trip is off"
         @Volatile private var trackError: String? = null
         @Volatile private var tripError: String? = null
-        @Volatile private var queuedPoints = 0
         @Volatile private var fleetOnline = false
         @Volatile private var fleetWriteVersion = 0
         @Volatile private var lastFleetSyncAt = 0L
@@ -61,17 +61,21 @@ class SpeedService : Service(), LocationListener {
             )
         }
 
-        fun fleetStatus(): Map<String, Any?> = mapOf(
-            "active" to fleetActive,
-            "pending" to fleetPending,
-            "message" to fleetMessage,
-            "trackError" to trackError,
-            "tripError" to tripError,
-            "queuedPoints" to queuedPoints,
-            "online" to fleetOnline,
-            "syncedSecondsAgo" to lastFleetSyncAt.takeIf { it > 0L }
-                ?.let { (SystemClock.elapsedRealtime() - it) / 1_000L },
-        )
+        fun fleetStatus(context: Context): Map<String, Any?> {
+            val history = FleetHistorySync.get(context).status()
+            return mapOf(
+                "active" to fleetActive,
+                "pending" to (fleetPending || history["historyPending"] == true),
+                "message" to fleetMessage,
+                "trackError" to (trackError ?: history["trackError"]),
+                "tripError" to tripError,
+                "syncedSecondsAgo" to lastFleetSyncAt.takeIf { it > 0L }
+                    ?.let { (SystemClock.elapsedRealtime() - it) / 1_000L },
+                "queuedPoints" to history["queuedPoints"],
+                "historyPending" to history["historyPending"],
+                "online" to history["online"],
+            )
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -139,6 +143,7 @@ class SpeedService : Service(), LocationListener {
     override fun onCreate() {
         super.onCreate()
         locations = getSystemService(LocationManager::class.java)
+        FleetHistorySync.get(this).requestSync()
         runCatching {
             getSystemService(ConnectivityManager::class.java)
                 .registerDefaultNetworkCallback(networkListener)
@@ -255,6 +260,10 @@ class SpeedService : Service(), LocationListener {
                 lastAcceptedAt = 0L
                 lastAcceptedLocation = null
                 publishTripStart()
+                if (!fleetActive) {
+                    if (!running) stopSelf()
+                    return START_NOT_STICKY
+                }
             }
             else -> {
                 if (!running && !fleetActive) stopSelf()
@@ -319,11 +328,14 @@ class SpeedService : Service(), LocationListener {
         lastAcceptedLocation = Location(location)
         val movedMeters = if (lastTrackAt == 0L) 0.0 else FleetLocationPolicy.distanceMeters(
             lastTrackLat, lastTrackLon, location.latitude, location.longitude)
-        if (FleetLocationPolicy.shouldRecordTrack(now, lastTrackAt, movedMeters, fleetOnline)) {
-            lastTrackAt = now
-            lastTrackLat = location.latitude
-            lastTrackLon = location.longitude
-            publishTrack(location)
+        if (FleetLocationPolicy.shouldRecordTrack(now, lastTrackAt, movedMeters)) {
+            publishTrack(location) { saved ->
+                if (saved) {
+                    lastTrackAt = now
+                    lastTrackLat = location.latitude
+                    lastTrackLon = location.longitude
+                }
+            }
         }
         if (fleetOnline && FleetLocationPolicy.shouldUpload(now, lastFleetAttempt, fleetPending)) {
             lastFleetAttempt = now
@@ -333,69 +345,43 @@ class SpeedService : Service(), LocationListener {
         }
     }
 
-    private fun publishTrack(location: Location) {
-        val pointTripId = tripId
-        queuedPoints++
-        val data = hashMapOf<String, Any?>(
-            "latitude" to location.latitude,
-            "longitude" to location.longitude,
-            "accuracyMeters" to location.accuracy.toDouble(),
-            "speedKmh" to latestKmh?.takeIf { it in 0..250 },
-            "tripId" to pointTripId,
-            "capturedAt" to captureTime(location),
-            "uploadedAt" to FieldValue.serverTimestamp(),
-        )
-        FirebaseFirestore.getInstance()
-            .document("fleets/$fleetId/vehicles/$vehicleId/track_points/${UUID.randomUUID()}")
-            .set(data)
-            .addOnSuccessListener {
-                queuedPoints = (queuedPoints - 1).coerceAtLeast(0)
-                if (pointTripId == tripId) trackError = null
-            }
-            .addOnFailureListener {
-                queuedPoints = (queuedPoints - 1).coerceAtLeast(0)
-                if (pointTripId == tripId) trackError = "Route history could not sync"
-                Log.w("NavRide", "Route point write failed (no location logged)")
-            }
+    private fun publishTrack(location: Location, stored: (Boolean) -> Unit) {
+        val data = JSONObject()
+            .put("latitude", FleetHistoryUpload.number(location.latitude))
+            .put("longitude", FleetHistoryUpload.number(location.longitude))
+            .put("accuracyMeters", FleetHistoryUpload.number(location.accuracy.toDouble()))
+            .put("speedKmh", FleetHistoryUpload.nullableSpeed(latestKmh?.takeIf { it in 0..250 }))
+            .put("tripId", FleetHistoryUpload.string(tripId))
+            .put("capturedAt", FleetHistoryUpload.timestamp(captureTime(location)))
+        FleetHistorySync.get(this).enqueue(fleetUid, "point",
+            "fleets/$fleetId/vehicles/$vehicleId/track_points/${UUID.randomUUID()}", data) { saved ->
+            trackError = if (saved) null else "Could not save route point. Check phone storage."
+            stored(saved)
+        }
     }
 
     private fun publishTripStart() {
-        val pointTripId = tripId
-        val data = hashMapOf<String, Any?>(
-            "driverUid" to fleetUid,
-            "startedAt" to tripStartedAt,
-            "endedAt" to null,
-            "updatedAt" to FieldValue.serverTimestamp(),
-        )
-        FirebaseFirestore.getInstance()
-            .document("fleets/$fleetId/vehicles/$vehicleId/trips/$pointTripId")
-            .set(data)
-            .addOnSuccessListener {
-                if (pointTripId == tripId) tripError = null
+        val data = JSONObject().put("driverUid", FleetHistoryUpload.string(fleetUid))
+            .put("startedAt", FleetHistoryUpload.timestamp(tripStartedAt))
+            .put("endedAt", FleetHistoryUpload.nullValue())
+        FleetHistorySync.get(this).enqueue(fleetUid, "start",
+            "fleets/$fleetId/vehicles/$vehicleId/trips/$tripId", data) { saved ->
+            tripError = if (saved) null else "Could not save trip. Check phone storage."
+            if (!saved) {
+                fleetActive = false
+                fleetMessage = "Trip not started; could not save on this phone"
             }
-            .addOnFailureListener {
-                if (pointTripId == tripId) tripError = "Trip history could not sync"
-                Log.w("NavRide", "Trip start write failed (no location logged)")
-            }
+        }
     }
 
     private fun publishTripEnd() {
         if (tripId.isEmpty()) return
-        val pointTripId = tripId
-        val data = mapOf(
-            "endedAt" to Date(System.currentTimeMillis()),
-            "updatedAt" to FieldValue.serverTimestamp(),
-        )
-        FirebaseFirestore.getInstance()
-            .document("fleets/$fleetId/vehicles/$vehicleId/trips/$pointTripId")
-            .set(data, SetOptions.merge())
-            .addOnSuccessListener {
-                if (pointTripId == tripId) tripError = null
-            }
-            .addOnFailureListener {
-                if (pointTripId == tripId) tripError = "Trip history could not sync"
-                Log.w("NavRide", "Trip end write failed (no location logged)")
-            }
+        val data = JSONObject().put("endedAt", FleetHistoryUpload.timestamp(
+            Date(System.currentTimeMillis().coerceAtLeast(tripStartedAt.time))))
+        FleetHistorySync.get(this).enqueue(fleetUid, "end",
+            "fleets/$fleetId/vehicles/$vehicleId/trips/$tripId", data) { saved ->
+            tripError = if (saved) null else "Could not save trip end. Check phone storage."
+        }
     }
 
     private fun publishFleet(active: Boolean, location: Location? = null) {

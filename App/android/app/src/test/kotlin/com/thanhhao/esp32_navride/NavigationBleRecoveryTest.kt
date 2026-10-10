@@ -63,6 +63,73 @@ class NavigationBleRecoveryTest {
         return method.invoke(NavigationBleSender, gatt, characteristic) as Boolean
     }
 
+    private fun savedContext(): android.content.Context {
+        val context = mock(android.content.Context::class.java)
+        val prefs = mock(android.content.SharedPreferences::class.java)
+        `when`(context.getSharedPreferences("navigation_bridge", android.content.Context.MODE_PRIVATE))
+            .thenReturn(prefs)
+        `when`(prefs.getString("device_id", null)).thenReturn("saved-board")
+        `when`(context.applicationContext).thenReturn(context)
+        return context
+    }
+
+    @Test
+    fun reconnectReusesReadyConnectionWithoutDisconnectingOrReplacingCommand() = withSender { gatt, _, _ ->
+        val payload = get("pendingPayload")
+        assertTrue(NavigationBleSender.connectSaved(savedContext(), "saved-board", restartPending = true))
+        assertSame(gatt, get("gatt"))
+        assertSame(payload, get("pendingPayload"))
+        assertTrue(NavigationBleSender.isConnected())
+        assertFalse(NavigationBleSender.isConnecting())
+        verify(gatt, never()).disconnect()
+        verify(gatt, never()).close()
+    }
+
+    @Test
+    fun reconnectDoesNotInterruptPendingPinOrServiceDiscovery() = withSender { gatt, _, _ ->
+        set("connected", false)
+        set("bondWaitStartedAt", nowMs)
+        assertTrue(NavigationBleSender.connectSaved(savedContext(), "saved-board", restartPending = true))
+        assertFalse(NavigationBleSender.isConnected())
+        assertTrue(NavigationBleSender.isConnecting())
+        assertTrue(NavigationBleSender.isPairing())
+        verify(gatt, never()).disconnect()
+        verify(gatt, never()).close()
+    }
+
+    @Test
+    fun explicitRetryRearmsExpiredWindowWithoutDependingOnNotificationListener() = withSender { _, _, handler ->
+        set("gatt", null)
+        set("channelReady", false)
+        set("connected", false)
+        set("pendingPayload", null)
+        set("reconnectEnabled", false)
+        set("reconnectStartedAt", 1_000L)
+        val context = savedContext()
+        set("reconnectContext", context)
+        // No Bluetooth adapter in this unit test: retain ping and schedule retry.
+        assertFalse(NavigationBleSender.connectSaved(context, "saved-board"))
+        assertEquals(true, get("reconnectEnabled"))
+        assertTrue(NavigationBleSender.isConnecting())
+        assertTrue(String(get("pendingPayload") as ByteArray).contains("ping"))
+        verify(context).getSystemService(android.bluetooth.BluetoothManager::class.java)
+        verify(handler).postDelayed(any(Runnable::class.java), eq(1_000L))
+    }
+
+    @Test
+    fun manualReconnectReleasesHungAttemptImmediatelyButNeverReplaysStalePayload() = withSender { gatt, _, _ ->
+        set("connected", false)
+        set("channelReady", false)
+        val context = savedContext()
+        NavigationBleSender.connectSaved(context, "saved-board", restartPending = true)
+        verify(gatt).disconnect()
+        verify(gatt).close()
+        assertNull(get("gatt"))
+        val payload = String(get("pendingPayload") as ByteArray)
+        assertTrue(payload.contains("ping"))
+        assertFalse(payload.contains("popup"))
+    }
+
     @Test
     fun closingAfterPermissionRevocationStillReleasesTheLink() = withSender { gatt, _, _ ->
         doThrow(SecurityException("Bluetooth permission revoked")).`when`(gatt).disconnect()

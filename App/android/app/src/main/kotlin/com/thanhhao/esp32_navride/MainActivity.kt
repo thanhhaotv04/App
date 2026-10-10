@@ -101,6 +101,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        NavigationBridgeStore.deviceId(this)?.takeIf { it.isNotBlank() }?.let {
+            NavigationBleSender.connectSaved(this, it)
+        }
         // Retry after the user enables this app in OsmAnd's Plugins screen,
         // or after Android restarts the activity. Keep an active bridge intact.
         if (notificationAccessGranted() &&
@@ -114,11 +117,16 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        FleetHistorySync.get(this).requestSync()
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, navigationChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getSpeedStatus" -> result.success(SpeedService.status())
-                    "getFleetStatus" -> result.success(SpeedService.fleetStatus())
+                    "getFleetStatus" -> result.success(SpeedService.fleetStatus(this))
+                    "retryFleetSync" -> {
+                        FleetHistorySync.get(this).requestSync(force = true)
+                        result.success(true)
+                    }
                     "startSpeed" -> startSpeed(result)
                     "stopSpeed" -> {
                         startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_SPEED))
@@ -151,8 +159,7 @@ class MainActivity : FlutterActivity() {
                         if (deviceId.isEmpty()) {
                             result.error("invalid_device", "No Bluetooth device selected.", null)
                         } else {
-                            NavigationBleSender.close()
-                            NavigationBridgeStore.setDeviceId(this, deviceId)
+                            NavigationBleSender.connectSaved(this, deviceId, restartPending = true)
                             if (notificationAccessGranted()) {
                                 OsmAndNotificationListener.ensureBridge(this)
                             }
@@ -207,7 +214,8 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "clearLocalData" -> {
-                        if (SpeedService.fleetActive || SpeedService.fleetStatus()["pending"] == true) {
+                        if (SpeedService.fleetActive || SpeedService.fleetStatus(this)["pending"] == true ||
+                            FleetHistorySync.get(this).hasPending()) {
                             result.error("trip_active", "End the fleet trip and wait for cloud sync before deleting data.", null)
                             return@setMethodCallHandler
                         }
@@ -272,6 +280,8 @@ class MainActivity : FlutterActivity() {
             "aidlSubscribed" to OsmAndAidlState.subscribed,
             "osmandDataRecent" to OsmAndAidlState.directionReceivedRecently(),
             "bleConnected" to NavigationBleSender.isConnected(),
+            "bleConnecting" to NavigationBleSender.isConnecting(),
+            "blePairing" to NavigationBleSender.isPairing(),
             "lastNavigationConfirmed" to NavigationBleSender.lastNavigationConfirmed(),
             "modeCommandConfirmed" to NavigationBleSender.modeCommandConfirmed(),
             "wifiCommandConfirmed" to NavigationBleSender.wifiCommandConfirmed(),

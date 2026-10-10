@@ -222,6 +222,9 @@ class OsmAndNotificationListener : NotificationListenerService() {
         }
 
         fun ensureBridge(context: Context) {
+            NavigationBridgeStore.deviceId(context)?.takeIf { it.isNotBlank() }?.let {
+                NavigationBleSender.connectSaved(context, it)
+            }
             val listener = activeListener
             if (listener != null) {
                 listener.restartAidlBridge()
@@ -246,9 +249,9 @@ class OsmAndNotificationListener : NotificationListenerService() {
     private fun restartAidlBridge() {
         // Connect before starting a route, so the app can offer Open OsmAnd and
         // test samples without waiting for the first navigation notification.
-        NavigationBleSender.retryConnection()
-        NavigationBleSender.send(applicationContext,
-            "{\"apiVersion\":1,\"command\":\"ping\",\"timestamp\":${System.currentTimeMillis() / 1000}}")
+        NavigationBridgeStore.deviceId(this)?.let {
+            NavigationBleSender.connectSaved(applicationContext, it)
+        }
         if (aidlBridge == null || !OsmAndAidlState.subscribed) {
             aidlBridge?.stop()
             aidlBridge = OsmAndAidlBridge(applicationContext).also { it.start() }

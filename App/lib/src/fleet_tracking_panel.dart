@@ -38,6 +38,7 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
     _user = FirebaseAuth.instance.currentUser;
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (mounted) setState(() => _user = user);
+      unawaited(_refreshStatus());
     });
     unawaited(_refreshStatus());
     _startStatusTimer();
@@ -192,6 +193,10 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
       _error = null;
     });
     try {
+      await _refreshStatus();
+      if (_status['pending'] == true) {
+        throw TimeoutException('Trip data is still waiting to sync.');
+      }
       await FirebaseFirestore.instance.waitForPendingWrites().timeout(
         const Duration(seconds: 10),
       );
@@ -235,9 +240,10 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
             const SizedBox(height: 8),
             const Text(
               'Optional. While a trip is active, share phone GPS and speed with your fleet. '
-              'The first GPS fix is saved, then a new point after 5 minutes online or 10 minutes offline, '
-              'only if you moved more than 100 m. Offline points stay on this phone until they sync; '
-              'trip history remains after End trip. '
+              'The first GPS fix is saved, then new points at least 1 minute apart, '
+              'only if you moved more than 100 m. Points are saved on this phone first, '
+              'then removed from the upload queue only after the server confirms receipt. '
+              'Trip history stays in the cloud after End trip. '
               'OsmAnd directions and personal content stay on this device.',
             ),
             const SizedBox(height: 16),
@@ -334,6 +340,26 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
               ],
               if (pending && _status['online'] != false)
                 const Text('Waiting for cloud sync'),
+              if (_status['historyPending'] == true)
+                TextButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          try {
+                            await _channel.invokeMethod<bool>('retryFleetSync');
+                            await _refreshStatus();
+                          } on PlatformException {
+                            if (mounted) {
+                              setState(
+                                () => _error =
+                                    'Could not retry sync. Reopen NavRide and try again.',
+                              );
+                            }
+                          }
+                        },
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Retry sync'),
+                ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 key: const ValueKey('fleet-trip-toggle'),

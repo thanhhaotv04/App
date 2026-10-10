@@ -217,6 +217,15 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       !_deviceBusy;
   bool get _navigationReady =>
       _usingNativeBle && _bridge['ready'] == true && _connected;
+  String? get _connectionProgress =>
+      _usingNativeBle && _bridge['blePairing'] == true
+      ? 'Pairing… Check the Android PIN prompt.'
+      : _connectionBusy || (_usingNativeBle && _bridge['bleConnecting'] == true)
+      ? 'Connecting…'
+      : null;
+  String get _connectionLabel => _connected
+      ? 'Connected · ${_config.mode.label}'
+      : _connectionProgress ?? 'ESP32 not connected';
 
   @override
   void initState() {
@@ -350,7 +359,13 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         'getOsmAndBridgeStatus',
       );
       if (mounted && status != null && !mapEquals(status, _bridge)) {
-        setState(() => _bridge = status);
+        setState(() {
+          _bridge = status;
+          if (_config.mode == ConnectionMode.bluetooth &&
+              status['bleConnected'] == true) {
+            _deviceError = null;
+          }
+        });
       }
     } catch (_) {
       if (mounted && _bridge.isNotEmpty) setState(() => _bridge = const {});
@@ -422,7 +437,17 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   Future<void> _readDevice() async {
     await _refreshBridge();
-    if (!mounted || _config.mode == ConnectionMode.demo || _usingNativeBle) {
+    if (!mounted || _config.mode == ConnectionMode.demo) {
+      return;
+    }
+    if (_android && _config.mode == ConnectionMode.bluetooth) {
+      if (!_usingNativeBle && _config.bluetoothId.isNotEmpty) {
+        await _ble.disconnect();
+        await _navigationChannel.invokeMethod<void>('configureOsmAndBridge', {
+          'deviceId': _config.bluetoothId,
+        });
+        await _refreshBridge();
+      }
       return;
     }
     if (_config.mode == ConnectionMode.bluetooth && !_ble.isConnected) {
@@ -487,7 +512,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       });
       await _save();
       if (mode == ConnectionMode.bluetooth && _config.bluetoothId.isNotEmpty) {
-        if (_android && _bridge['notificationAccess'] == true) {
+        if (_android) {
           await _navigationChannel.invokeMethod<void>('configureOsmAndBridge', {
             'deviceId': _config.bluetoothId,
           });
@@ -532,9 +557,14 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
   });
 
   Future<void> _connectBle(BleCandidate candidate) => _runConnection(() async {
-    await _stopBridge();
-    await _ble.connect(candidate.device);
-    final status = await _ble.health();
+    DeviceStatus? status;
+    if (_android) {
+      await _ble.disconnect();
+    } else {
+      await _stopBridge();
+      await _ble.connect(candidate.device);
+      status = await _ble.health();
+    }
     if (!mounted) return;
     setState(() {
       _config = _config.copyWith(
@@ -547,11 +577,8 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     });
     await _save();
     await _refreshBridge();
-    // If notification access is already granted, hand the BLE link directly
-    // to the background navigation bridge; no second setup tap is needed.
-    if (_android && _bridge['notificationAccess'] == true) {
-      await _ble.disconnect();
-      if (mounted) setState(() => _status = null);
+    // Android dùng chung kênh nền, không nối/ngắt qua plugin trước khi chuyển giao.
+    if (_android) {
       await _navigationChannel.invokeMethod<void>('configureOsmAndBridge', {
         'deviceId': candidate.id,
       });
@@ -692,6 +719,20 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
       if (mounted) setState(() => _navigationBusy = false);
     }
   }
+
+  Future<void> _reconnectDevice() => _runConnection(() async {
+    if (_android &&
+        _config.mode == ConnectionMode.bluetooth &&
+        _config.bluetoothId.isNotEmpty) {
+      await _ble.disconnect();
+      await _navigationChannel.invokeMethod<void>('configureOsmAndBridge', {
+        'deviceId': _config.bluetoothId,
+      });
+      await _refreshBridge();
+    } else {
+      await _readDevice();
+    }
+  });
 
   Future<void> _openOsmAnd() async {
     try {
@@ -1365,7 +1406,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
               title: 'ESP32 display',
               detail: _connected
                   ? 'Connected · ${_config.mode.label}'
-                  : 'Not connected',
+                  : _connectionProgress ?? 'Not connected',
               ready: _connected,
             ),
             const Divider(height: 1, indent: 56, endIndent: 20),
@@ -1811,9 +1852,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
             ),
           const SizedBox(height: 16),
           Text(
-            _connected
-                ? 'Connected · ${_config.mode.label}'
-                : 'ESP32 not connected',
+            _connectionLabel,
             style: TextStyle(
               color: _connected ? NavRideColors.green : NavRideColors.muted,
             ),
@@ -1929,11 +1968,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
                 ),
                 if (_config.bluetoothId.isNotEmpty)
                   TextButton(
-                    onPressed: _deviceBusy
-                        ? null
-                        : _usingNativeBle
-                        ? _configureBridge
-                        : _refreshDevice,
+                    onPressed: _deviceBusy ? null : _reconnectDevice,
                     child: const Text('Reconnect'),
                   ),
               ],
@@ -2098,7 +2133,9 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
           'Navigation sharing processes only OsmAnd notifications and directions. '
           'GPS speed is optional and sent to ESP32. Fleet tracking is separate and opt-in: '
           'during an active trip, phone GPS coordinates and speed are uploaded to Firebase. '
-          'Route points are saved after 5 minutes and 100 m of movement and remain after a trip ends. '
+          'After the first GPS fix, route points are saved at least 1 minute apart '
+          'when you move more than 100 m. Pending points are removed from this phone '
+          'only after the server confirms receipt; cloud history remains after a trip ends. '
           'Personal content, QR images and OsmAnd directions are never uploaded.\n\n'
           'Wi-Fi uses local HTTP, which is not encrypted. Use a trusted network or paired Bluetooth for private content. '
           'Updates contact only the server you choose. OsmAnd has its own privacy settings.',
