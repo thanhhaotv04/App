@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/app-icon.svg" width="112" alt="Biểu tượng ví màu xanh của Money Manager"></p>
+
 # Money Manager
 
 **Ghi lại thu chi, nhìn rõ dòng tiền mỗi ngày.** Nhập số tiền, chọn danh mục và thêm ghi chú; xem tổng quan, tìm lại giao dịch và theo dõi các khoản chi định kỳ.

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title">
+  <title id="title">Money Manager</title>
+  <metadata>Google Material Icons: account_balance_wallet_outlined, CC BY 4.0. Source: https://github.com/google/material-design-icons. Adapted with Money Manager colors and a rounded background. License: MaterialIcons_LICENSE.txt.</metadata>
+  <rect width="512" height="512" rx="112" fill="#F3FFF2"/>
+  <path fill="#2E7D32" transform="translate(0 512) scale(1 -1)" d="M448 357V405C448 429 429 448 405 448H107C83 448 64 429 64 405V107C64 83 83 64 107 64H405C429 64 448 83 448 107V155C461 163 469 176 469 192V320C469 336 461 349 448 357ZM427 320V192H277V320H427ZM107 107V405H405V363H277C254 363 235 343 235 320V192C235 169 254 149 277 149H405V107H107ZM309 256C309 274 324 288 341 288C359 288 373 274 373 256C373 238 359 224 341 224C324 224 309 238 309 256Z"/>
+</svg>
