@@ -6,25 +6,39 @@
 
 Điện thoại kết nối ESP32 bằng **Bluetooth** (dẫn đường không cần Wi-Fi) hoặc **Wi-Fi**. App còn gửi thông báo, việc cần làm; màn hình có đồng hồ, bấm giờ và hẹn giờ.
 
-## Hình ảnh
+## Kết nối
 
-| 1. OsmAnd và ESP32 đã kết nối | 2. Chọn Bluetooth hoặc Wi-Fi |
-| --- | --- |
-| <img src="docs/images/01-navigation.jpg" width="260" alt="App báo OsmAnd và màn hình ESP32 đã sẵn sàng"> | <img src="docs/images/02-connection.jpg" width="260" alt="Cài đặt kết nối Bluetooth và Wi-Fi"> |
+App cho biết khi OsmAnd và ESP32 đã sẵn sàng. Chọn Bluetooth để dẫn đường không cần Wi-Fi, hoặc Wi-Fi khi điện thoại và ESP32 cùng mạng.
 
-| 3. Tạo thông báo trong app | 4. OsmAnd dẫn đường |
-| --- | --- |
-| <img src="docs/images/03-content.jpg" width="260" alt="Màn hình thông báo và việc cần làm"> | <img src="docs/images/04-osmand.jpg" width="260" alt="Tuyến đường và hướng rẽ trong OsmAnd"> |
+<p align="center"><img src="docs/images/01-navigation.jpg" width="260" alt="Trạng thái OsmAnd và ESP32 trong app"> <img src="docs/images/02-connection.jpg" width="260" alt="Cài đặt kết nối Bluetooth hoặc Wi-Fi"></p>
+<p align="center"><sub>Trạng thái kết nối · Chọn Bluetooth hoặc Wi-Fi</sub></p>
 
-| 5. Hướng rẽ trên ESP32 | 6. Menu trên ESP32 |
-| --- | --- |
-| <img src="docs/images/05-display.jpg" width="260" alt="Màn hình ESP32 hiển thị hướng rẽ, tên đường và khoảng cách"> | <img src="docs/images/06-menu.jpg" width="260" alt="Menu Wi-Fi, Bluetooth, chủ đề, thông tin ESP32, QR và đồng hồ"> |
+## Dẫn đường
 
-**7. Fleet management — đang phát triển.** Khi bạn chủ động bắt đầu chuyến đi, app lưu các điểm GPS và đồng bộ với Firebase khi có mạng. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
+OsmAnd chỉ đường trên điện thoại; ESP32 hiện hướng rẽ, tên đường và khoảng cách trên màn hình nhỏ.
 
-<img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản">
+<p align="center"><img src="docs/images/04-osmand.jpg" width="260" alt="OsmAnd hiển thị hướng đi tiếp trên đường Đỗ Mười"> <img src="docs/images/05-display.jpg" width="260" alt="Màn hình ESP32 hiển thị mũi tên đi thẳng, đường Đỗ Mười và khoảng cách 3,60 km"></p>
+<p align="center"><sub>OsmAnd trên điện thoại · Hướng rẽ trên ESP32</sub></p>
 
-Firebase đã kết nối và đã thử đồng bộ điểm ghi khi mất mạng. [Xem lịch sử chuyến đi trên dashboard](https://navride-96851.web.app) (cần tài khoản được cấp quyền).
+## Thông báo và việc cần làm
+
+Lưu nội dung trên điện thoại và gửi lên màn hình ESP32 khi bạn chọn.
+
+<p align="center"><img src="docs/images/03-content.jpg" width="260" alt="Màn hình quản lý thông báo và việc cần làm trong app"></p>
+
+## Menu trên ESP32
+
+Dùng ba nút trên bo để mở menu, đổi kết nối, xem QR hoặc dùng đồng hồ.
+
+<p align="center"><img src="docs/images/06-menu.jpg" width="260" alt="Menu ESP32 gồm Wi-Fi, Bluetooth, giao diện, thông tin thiết bị, QR và đồng hồ"></p>
+
+## Fleet management (đang phát triển)
+
+Khi bạn chủ động bắt đầu chuyến đi, app lưu các điểm GPS và đồng bộ với Firebase khi có mạng. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
+
+<p align="center"><img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản"></p>
+
+[Xem lịch sử chuyến đi trên dashboard](https://navride-96851.web.app) (cần tài khoản được cấp quyền).
 
 ## Bắt đầu
 
