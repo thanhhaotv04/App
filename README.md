@@ -17,7 +17,10 @@ App cho biết khi OsmAnd và ESP32 đã sẵn sàng. Chọn Bluetooth để d�
 
 OsmAnd chỉ đường trên điện thoại; ESP32 hiện hướng rẽ, tên đường và khoảng cách trên màn hình nhỏ.
 
-<p align="center"><img src="docs/images/04-osmand.jpg" width="260" alt="OsmAnd hiển thị hướng đi tiếp trên đường Đỗ Mười"> <img src="docs/images/05-display.jpg" width="260" alt="Màn hình ESP32 hiển thị mũi tên đi thẳng, đường Đỗ Mười và khoảng cách 3,60 km"></p>
+<p align="center">
+  <img src="docs/images/04-osmand-cropped.jpg" width="260" height="549" alt="OsmAnd hiển thị hướng đi tiếp trên đường Đỗ Mười">
+  <img src="docs/images/05-esp32-navigation-cropped.jpg" width="260" height="549" alt="Ảnh cận cảnh thiết bị ESP32, hiển thị mũi tên, tên đường và khoảng cách 3,60 km">
+</p>
 <p align="center"><sub>OsmAnd trên điện thoại · Hướng rẽ trên ESP32</sub></p>
 
 ## Thông báo và việc cần làm
