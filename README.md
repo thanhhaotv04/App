@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/images/app-icon.svg" width="112" alt="Biểu tượng ví màu xanh của Money Manager"></p>
+<p align="center"><img src="docs/images/app-icon.png" width="112" alt="Biểu tượng chiếc lá màu xanh của Money Manager"></p>
 
 # Money Manager
 
@@ -8,7 +8,7 @@
 
 ## Tổng quan
 
-Trong **Overview**, xem số dư, thu/chi trong tháng, giao dịch gần đây và xu hướng chi tiêu. Lọc hoạt động theo **All, Expenses, Income** để xem phần cần quan tâm.
+Trong **Overview**, xem tổng chi trong năm, chi hôm nay, chi trong tháng, thống kê từng tháng, khoản chi tự động và giao dịch gần đây. Bộ lọc **All, Expenses, Income** giúp xem riêng từng loại giao dịch.
 
 <p align="center"><img src="docs/images/01-overview.png" width="260" alt="Ảnh màn hình Overview với bộ lọc All, tổng tiền VND, các ô Today, This month và thống kê By month"></p>
 <p align="center"><sub>Nhìn lại các khoản đã ghi trong màn hình tổng quan</sub></p>
@@ -22,7 +22,7 @@ Mở **Add**, nhập số tiền bằng bàn phím số lớn, chọn danh mục
 
 ## Lịch sử giao dịch
 
-**History** nhóm giao dịch theo ngày, cho phép tìm theo tên, danh mục hoặc ghi chú và lọc thu/chi. Xóa từng giao dịch có bước xác nhận và nút **Undo** ngay sau khi xóa.
+**History** liệt kê giao dịch và cho phép tìm theo tên, danh mục hoặc ghi chú; khi có khoản thu, có thể lọc thu/chi. Xóa từng giao dịch có bước xác nhận và nút **Undo** ngay sau khi xóa.
 
 ## Tài khoản và đồng bộ
 

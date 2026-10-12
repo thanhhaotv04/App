@@ -3,8 +3,8 @@
     "short_name": "Money",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#F7FAF3",
-    "theme_color": "#6A8F55",
+    "background_color": "#F5FAF1",
+    "theme_color": "#78D26C",
     "description": "Money Manager spending and sync preview.",
     "prefer_related_applications": false,
     "icons": [

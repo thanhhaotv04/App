@@ -22,14 +22,14 @@ String moneyText(num amount) =>
     MoneyManagerApp.hideAmounts.value ? '••••••' : moneyFormat.format(amount);
 
 abstract final class AppColors {
-  static const primary = Color(0xFF2E7D32);
+  static const primary = Color(0xFF78D26C);
   static const primarySoft = Color(0xFFDDF5D8);
   static const background = Color(0xFFF3FFF2);
   static const header = Color(0xFFEAF3E3);
   static const field = Color(0xFFEDF5E7);
   static const hero = Color(0xFFD5F3D1);
   static const heroBorder = Color(0xFFA1DE8C);
-  static const ink = Color(0xFF0B2A16);
+  static const ink = Color(0xFF203725);
   static const muted = Color(0xFF65796A);
   static const danger = Color(0xFFB3261E);
 }
@@ -43,6 +43,7 @@ class MoneyManagerApp extends StatefulWidget {
   });
 
   static final themeMode = ValueNotifier(ThemeMode.light);
+  static const themeModeKey = 'money-manager-dark-mode';
   static final hideAmounts = ValueNotifier(false);
   static const hideAmountsKey = 'money-manager-hide-amounts';
 
@@ -107,6 +108,10 @@ class _MoneyManagerAppState extends State<MoneyManagerApp>
   Future<void> _loadAuth() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      MoneyManagerApp.themeMode.value =
+          prefs.getBool(MoneyManagerApp.themeModeKey) == true
+          ? ThemeMode.dark
+          : ThemeMode.light;
       MoneyManagerApp.hideAmounts.value =
           prefs.getBool(MoneyManagerApp.hideAmountsKey) ?? false;
       final session = await AuthCache.load();
@@ -310,32 +315,39 @@ class _MoneyManagerAppState extends State<MoneyManagerApp>
 
   ThemeData _theme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
-    final scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.primary,
-      brightness: brightness,
-      surface: dark ? const Color(0xFF172019) : Colors.white,
-    );
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          brightness: brightness,
+          surface: dark ? const Color(0xFF1D211E) : Colors.white,
+        ).copyWith(
+          onSurface: dark ? const Color(0xFFD7DFD8) : AppColors.ink,
+          onSurfaceVariant: dark ? const Color(0xFFACB9AD) : AppColors.muted,
+          surfaceContainer: dark ? const Color(0xFF252A26) : null,
+          surfaceContainerHigh: dark ? const Color(0xFF2B302C) : null,
+          surfaceContainerHighest: dark ? const Color(0xFF323833) : null,
+        );
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: dark
-          ? const Color(0xFF0E1610)
+          ? const Color(0xFF121512)
           : AppColors.background,
       fontFamily: 'Roboto',
       textTheme: ThemeData(brightness: brightness).textTheme.apply(
-        bodyColor: dark ? Colors.white : AppColors.ink,
-        displayColor: dark ? Colors.white : AppColors.ink,
+        bodyColor: scheme.onSurface,
+        displayColor: scheme.onSurface,
       ),
       cardTheme: CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,
-        color: dark ? const Color(0xFF172019) : Colors.white,
+        color: scheme.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xFF253028) : AppColors.field,
+        fillColor: dark ? const Color(0xFF292F2A) : AppColors.field,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 20,
           vertical: 18,
@@ -356,11 +368,11 @@ class _MoneyManagerAppState extends State<MoneyManagerApp>
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: AppColors.ink,
           minimumSize: const Size.fromHeight(58),
           textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(20),
           ),
         ),
       ),
@@ -368,10 +380,7 @@ class _MoneyManagerAppState extends State<MoneyManagerApp>
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.primary,
           minimumSize: const Size.fromHeight(58),
-          side: BorderSide(
-            color: dark ? Colors.white54 : AppColors.muted,
-            width: 1.5,
-          ),
+          side: BorderSide(color: scheme.onSurfaceVariant, width: 1.5),
           textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -379,31 +388,20 @@ class _MoneyManagerAppState extends State<MoneyManagerApp>
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        height: 80,
+        height: 72,
         elevation: 0,
-        backgroundColor: dark ? const Color(0xFF172019) : Colors.white,
-        indicatorColor: dark ? const Color(0xFF29432D) : AppColors.primarySoft,
+        backgroundColor: scheme.surface,
+        indicatorColor: dark ? const Color(0xFF334738) : AppColors.primarySoft,
         indicatorShape: const StadiumBorder(),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
-            color: dark
-                ? Colors.white
-                : states.contains(WidgetState.selected)
-                ? AppColors.primary
-                : AppColors.muted,
+            color: scheme.onSurface,
             fontSize: 13,
             fontWeight: FontWeight.w800,
           ),
         ),
         iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            color: dark
-                ? Colors.white
-                : states.contains(WidgetState.selected)
-                ? AppColors.primary
-                : AppColors.muted,
-            size: 29,
-          ),
+          (states) => IconThemeData(color: scheme.onSurface, size: 29),
         ),
       ),
     );
@@ -611,7 +609,9 @@ class _AuthScreenState extends State<AuthScreen> {
                           : _registering
                           ? 'Create an account stored only on this device.'
                           : 'Sign in without a server or Wi-Fi connection.',
-                      style: const TextStyle(color: AppColors.muted),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 24),
                     if (widget.pendingLogouts > 0) ...[
@@ -810,32 +810,28 @@ class BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget>? actions;
 
   @override
-  Size get preferredSize => const Size.fromHeight(80);
+  Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return AppBar(
-      toolbarHeight: 80,
+      toolbarHeight: 56,
       actions: actions,
       elevation: 0,
       scrolledUnderElevation: 0,
-      backgroundColor: dark ? const Color(0xFF1A251C) : AppColors.header,
-      titleSpacing: 24,
+      backgroundColor: dark ? const Color(0xFF222723) : AppColors.header,
+      titleSpacing: 20,
       title: Row(
         children: [
-          const Icon(
-            Icons.account_balance_wallet_outlined,
-            color: AppColors.primary,
-            size: 34,
-          ),
+          const Icon(Icons.eco_outlined, color: AppColors.primary, size: 26),
           const SizedBox(width: 12),
           Flexible(
             child: Text(
               'money-manager',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: dark ? Colors.white : AppColors.ink,
+                color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 24,
                 fontWeight: FontWeight.w900,
                 letterSpacing: -.4,
@@ -1099,7 +1095,7 @@ class PageList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 32),
       children: children,
     );
   }
@@ -1115,7 +1111,7 @@ class SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: padding ?? const EdgeInsets.all(20),
+        padding: padding ?? const EdgeInsets.all(22),
         child: child,
       ),
     );
@@ -1131,9 +1127,10 @@ class PageTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: Theme.of(
-        context,
-      ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900),
+      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+        fontSize: 28,
+        fontWeight: FontWeight.w900,
+      ),
     );
   }
 }
@@ -1174,6 +1171,11 @@ class _OverviewPageState extends State<OverviewPage> {
   int _totalFor(Iterable<Tx> items, TxType type) => items
       .where((tx) => tx.type == type)
       .fold(0, (sum, tx) => sum + tx.amount);
+
+  int _total(Iterable<Tx> items) => _totalFor(
+    items,
+    _filter == OverviewFilter.income ? TxType.income : TxType.expense,
+  );
 
   Future<void> _adjustRecurring() async {
     await showDialog<void>(
@@ -1256,126 +1258,256 @@ class _OverviewPageState extends State<OverviewPage> {
   @override
   Widget build(BuildContext context) {
     final now = widget.now ?? DateTime.now();
-    final thisMonth = widget.transactions.where(
+    final filtered = _filtered;
+    final today = filtered.where(
+      (tx) =>
+          tx.date.year == now.year &&
+          tx.date.month == now.month &&
+          tx.date.day == now.day,
+    );
+    final thisMonth = filtered.where(
       (tx) => tx.date.year == now.year && tx.date.month == now.month,
     );
-    final monthIncome = _totalFor(thisMonth, TxType.income);
-    final monthExpenses = _totalFor(thisMonth, TxType.expense);
-    final balance =
-        _totalFor(widget.transactions, TxType.income) -
-        _totalFor(widget.transactions, TxType.expense);
-    final recent = _filtered.take(4).toList();
+    final thisYear = filtered.where((tx) => tx.date.year == now.year);
+    final daily = widget.recurring
+        .where((item) => item.frequency == RecurringFrequency.daily)
+        .fold(0, (sum, item) => sum + item.amount);
+    final monthly = widget.recurring
+        .where((item) => item.frequency == RecurringFrequency.monthly)
+        .fold(0, (sum, item) => sum + item.amount);
     final dark = Theme.of(context).brightness == Brightness.dark;
 
     return PageList(
       children: [
         Container(
-          padding: const EdgeInsets.all(22),
+          padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: dark ? const Color(0xFF203A25) : AppColors.hero,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.heroBorder, width: 1.5),
+            color: dark ? const Color(0xFF252D26) : AppColors.hero,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(
+              color: dark ? const Color(0xFF405744) : AppColors.heroBorder,
+              width: 1.5,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        PageTitle('Overview'),
-                        SizedBox(height: 4),
-                        Text(
-                          'All recorded transactions',
-                          style: TextStyle(
-                            color: AppColors.muted,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: PageTitle('Overview'),
                     ),
                   ),
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: dark ? const Color(0xFF315A34) : Colors.white70,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Icon(
-                      Icons.account_balance_wallet_outlined,
-                      color: AppColors.primary,
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 165,
+                    child: DropdownButtonFormField<OverviewFilter>(
+                      initialValue: _filter,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Filter',
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 16,
+                        ),
+                      ),
+                      items: OverviewFilter.values
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(
+                                switch (value) {
+                                  OverviewFilter.all => 'All',
+                                  OverviewFilter.expenses => 'Expenses',
+                                  OverviewFilter.income => 'Income',
+                                },
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) =>
+                          setState(() => _filter = value ?? _filter),
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 22),
               Text(
-                'Available balance',
-                style: const TextStyle(
-                  color: AppColors.muted,
-                  fontSize: 16,
+                fullDateFormat.format(now),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 17,
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 14),
               FittedBox(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  moneyText(balance),
-                  style: TextStyle(
-                    color: balance < 0
-                        ? Theme.of(context).colorScheme.error
-                        : Theme.of(context).colorScheme.onSurface,
-                    fontSize: 46,
+                  moneyText(_total(thisYear)),
+                  style: const TextStyle(
+                    fontSize: 48,
                     height: 1,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -1,
                   ),
                 ),
               ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 28),
+              Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      label: 'Today',
+                      value: moneyText(_total(today)),
+                      icon: Icons.today_outlined,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: StatCard(
+                      label: 'This month',
+                      value: moneyText(_total(thisMonth)),
+                      icon: Icons.calendar_month_outlined,
+                    ),
+                  ),
+                ],
+              ),
+              if (widget.transactions.isEmpty) ...[
+                const SizedBox(height: 20),
+                const Text('No transactions yet.'),
+                TextButton.icon(
+                  onPressed: widget.onAdd,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add a transaction'),
+                ),
+              ],
+              const SizedBox(height: 24),
+              Text(
+                'By month',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 14),
               LayoutBuilder(
-                builder: (context, constraints) {
-                  final metrics = [
-                    CashFlowMetric(
-                      label: 'Income this month',
-                      value: moneyText(monthIncome),
-                      icon: Icons.south_west_rounded,
-                      color: AppColors.primary,
-                    ),
-                    CashFlowMetric(
-                      label: 'Spent this month',
-                      value: moneyText(monthExpenses),
-                      icon: Icons.north_east_rounded,
-                      color: AppColors.danger,
-                    ),
-                  ];
-                  if (constraints.maxWidth < 260 ||
-                      MediaQuery.textScalerOf(context).scale(14) > 20) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        metrics.first,
-                        const SizedBox(height: 12),
-                        metrics.last,
-                      ],
+                builder: (context, constraints) => GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: 12,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 14,
+                    mainAxisExtent:
+                        MediaQuery.textScalerOf(context).scale(16) > 22
+                        ? 230
+                        : null,
+                    childAspectRatio: constraints.maxWidth < 330 ? 1.15 : 1.58,
+                  ),
+                  itemBuilder: (context, index) {
+                    final monthNumber = index + 1;
+                    final amount = _total(
+                      filtered.where(
+                        (tx) =>
+                            tx.date.year == now.year &&
+                            tx.date.month == monthNumber,
+                      ),
                     );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: metrics.first),
-                      const SizedBox(width: 12),
-                      Expanded(child: metrics.last),
-                    ],
-                  );
-                },
+                    final selected = monthNumber == now.month;
+                    return Container(
+                      padding: const EdgeInsets.all(17),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? (dark
+                                  ? const Color(0xFF354A38)
+                                  : const Color(0xFFC1EAAF))
+                            : Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(22),
+                        border: selected
+                            ? Border.all(color: AppColors.primary, width: 1.5)
+                            : null,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            DateFormat.MMMM(
+                              'en_US',
+                            ).format(DateTime(now.year, monthNumber)),
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          FittedBox(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              moneyText(amount),
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 22),
+        SectionCard(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Automatic expenses',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _adjustRecurring,
+                    icon: const Icon(Icons.tune),
+                    label: const Text('Adjust'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              AutomaticRow(
+                icon: Icons.calendar_month_outlined,
+                label: 'Monthly expense',
+                amount: monthly,
+              ),
+              const SizedBox(height: 12),
+              AutomaticRow(
+                icon: Icons.today_outlined,
+                label: 'Daily expense',
+                amount: daily,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 22),
         SectionCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1387,110 +1519,17 @@ class _OverviewPageState extends State<OverviewPage> {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 14),
-              if (recent.isEmpty)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _filter == OverviewFilter.all
-                          ? 'No transactions yet.'
-                          : 'No matching transactions yet.',
-                      style: const TextStyle(color: AppColors.muted),
-                    ),
-                    const SizedBox(height: 14),
-                    FilledButton.icon(
-                      onPressed: widget.onAdd,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add a transaction'),
-                    ),
-                  ],
+              if (widget.transactions.isEmpty)
+                Text(
+                  'No transactions yet.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 )
               else
-                ...recent.map((tx) => TransactionRow(tx: tx)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Activity',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: OverviewFilter.values
-                    .map(
-                      (filter) => ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 48),
-                        child: ChoiceChip(
-                          label: Text(switch (filter) {
-                            OverviewFilter.all => 'All',
-                            OverviewFilter.expenses => 'Expenses',
-                            OverviewFilter.income => 'Income',
-                          }),
-                          selected: _filter == filter,
-                          onSelected: (_) => setState(() => _filter = filter),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Spending trend',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Last three months',
-                style: TextStyle(color: AppColors.muted),
-              ),
-              const SizedBox(height: 16),
-              SpendingTrend(transactions: widget.transactions, now: now),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        SectionCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Scheduled expenses',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _adjustRecurring,
-                    icon: const Icon(Icons.tune),
-                    label: const Text('Manage'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (widget.recurring.isEmpty)
-                const Text(
-                  'No scheduled expenses yet. Add one from the Add tab.',
-                  style: TextStyle(color: AppColors.muted),
-                )
-              else
-                ...widget.recurring
-                    .take(2)
-                    .map((item) => ScheduledExpenseRow(item: item)),
+                ...widget.transactions
+                    .take(4)
+                    .map((tx) => TransactionRow(tx: tx)),
             ],
           ),
         ),
@@ -1499,179 +1538,78 @@ class _OverviewPageState extends State<OverviewPage> {
   }
 }
 
-class CashFlowMetric extends StatelessWidget {
-  const CashFlowMetric({
+class StatCard extends StatelessWidget {
+  const StatCard({
     super.key,
     required this.label,
     required this.value,
     required this.icon,
-    required this.color,
   });
 
   final String label;
   final String value;
   final IconData icon;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: '$label: $value',
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: ExcludeSemantics(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: color, size: 26),
-              const SizedBox(height: 12),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.muted,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 6),
-              FittedBox(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+    return Container(
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(22),
       ),
-    );
-  }
-}
-
-class SpendingTrend extends StatelessWidget {
-  const SpendingTrend({
-    super.key,
-    required this.transactions,
-    required this.now,
-  });
-
-  final List<Tx> transactions;
-  final DateTime now;
-
-  @override
-  Widget build(BuildContext context) {
-    final months = List.generate(
-      3,
-      (index) => DateTime(now.year, now.month - (2 - index)),
-    );
-    final amounts = months
-        .map(
-          (month) => transactions
-              .where(
-                (tx) =>
-                    tx.type == TxType.expense &&
-                    tx.date.year == month.year &&
-                    tx.date.month == month.month,
-              )
-              .fold(0, (sum, tx) => sum + tx.amount),
-        )
-        .toList();
-    final maximum = amounts.fold<int>(
-      1,
-      (current, amount) => amount > current ? amount : current,
-    );
-
-    return Column(
-      children: List.generate(
-        months.length,
-        (index) => Padding(
-          padding: EdgeInsets.only(bottom: index == months.length - 1 ? 0 : 12),
-          child: Semantics(
-            label:
-                '${DateFormat.MMM('en_US').format(months[index])} spending '
-                '${moneyText(amounts[index])}',
-            child: ExcludeSemantics(
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 42,
-                    child: Text(
-                      DateFormat.MMM('en_US').format(months[index]),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  Expanded(
-                    child: LinearProgressIndicator(
-                      value: amounts[index] / maximum,
-                      minHeight: 10,
-                      borderRadius: BorderRadius.circular(999),
-                      color: AppColors.primary,
-                      backgroundColor: AppColors.primarySoft,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 94,
-                    child: FittedBox(
-                      alignment: Alignment.centerRight,
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        moneyText(amounts[index]),
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.primary, size: 28),
+          const SizedBox(height: 15),
+          Text(
+            label,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
             ),
           ),
-        ),
+          const SizedBox(height: 6),
+          FittedBox(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class ScheduledExpenseRow extends StatelessWidget {
-  const ScheduledExpenseRow({super.key, required this.item});
+class AutomaticRow extends StatelessWidget {
+  const AutomaticRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.amount,
+  });
 
-  final RecurringExpense item;
+  final IconData icon;
+  final String label;
+  final int amount;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          categoryByName(item.category).icon,
-          color: AppColors.primary,
-          size: 28,
-        ),
+        Icon(icon, color: AppColors.primary, size: 28),
         const SizedBox(width: 14),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.title,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              Text(
-                item.frequency == RecurringFrequency.daily
-                    ? 'Every day'
-                    : 'Monthly on day ${item.dayOfMonth}',
-                style: const TextStyle(color: AppColors.muted),
-              ),
-            ],
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
         Text(
-          moneyText(item.amount),
+          moneyText(amount),
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ],
@@ -1722,7 +1660,10 @@ class TransactionRow extends StatelessWidget {
                   '${dateFormat.format(tx.date)}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 15),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 15,
+                  ),
                 ),
               ],
             ),
@@ -1735,7 +1676,9 @@ class TransactionRow extends StatelessWidget {
               child: Text(
                 '${income ? '+' : '-'} ${moneyText(tx.amount)}',
                 style: TextStyle(
-                  color: income ? AppColors.primary : AppColors.danger,
+                  color: income
+                      ? AppColors.primary
+                      : Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1873,79 +1816,126 @@ class _AddExpensePageState extends State<AddExpensePage> {
   Widget build(BuildContext context) {
     final categories = _type == TxType.income
         ? [categoryByName('Income')]
-        : moneyCategories
-              .where(
-                (item) =>
-                    item.name != 'Income' &&
-                    item.name != 'Daily' &&
-                    item.name != 'Monthly',
-              )
-              .toList();
+        : moneyCategories.where((item) => item.name != 'Income').toList();
     final dark = Theme.of(context).brightness == Brightness.dark;
     return PageList(
       children: [
         SectionCard(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                height: 52,
-                child: SegmentedButton<TxType>(
-                  segments: const [
-                    ButtonSegment(
-                      value: TxType.expense,
-                      icon: Icon(Icons.north_east_rounded),
-                      label: Text('Expense'),
-                    ),
-                    ButtonSegment(
-                      value: TxType.income,
-                      icon: Icon(Icons.south_west_rounded),
-                      label: Text('Income'),
-                    ),
-                  ],
-                  selected: {_type},
-                  onSelectionChanged: (selection) {
-                    if (selection.isNotEmpty) _selectType(selection.first);
-                  },
-                ),
-              ),
-              const SizedBox(height: 20),
               Container(
                 width: double.infinity,
-                height: 170,
+                height: 130,
                 padding: const EdgeInsets.all(22),
-                alignment: Alignment.centerRight,
                 decoration: BoxDecoration(
-                  color: dark ? const Color(0xFF203A25) : AppColors.primarySoft,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.heroBorder, width: 1.5),
+                  color: dark ? const Color(0xFF252D26) : AppColors.primarySoft,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: dark
+                        ? const Color(0xFF405744)
+                        : AppColors.heroBorder,
+                    width: 1.5,
+                  ),
                 ),
-                child: Semantics(
-                  label: 'Amount ${moneyFormat.format(_amount)}',
-                  child: ExcludeSemantics(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        moneyFormat.format(_amount),
-                        style: const TextStyle(
-                          fontSize: 54,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -1,
+                child: Stack(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          moneyFormat.format(_amount),
+                          style: const TextStyle(
+                            fontSize: 54,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1,
+                          ),
                         ),
                       ),
                     ),
+                    Align(
+                      alignment: Alignment.bottomLeft,
+                      child: TextButton(
+                        onPressed: () => _selectType(
+                          _type == TxType.expense
+                              ? TxType.income
+                              : TxType.expense,
+                        ),
+                        child: Text(
+                          _type == TxType.expense ? 'Income' : 'Expense',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: categories
+                    .map(
+                      (category) => FilterChip(
+                        selected: category.name == _category.name,
+                        showCheckmark: false,
+                        avatar: Icon(
+                          category.icon,
+                          color: category.name == _category.name
+                              ? (dark
+                                    ? Theme.of(context).colorScheme.onSurface
+                                    : AppColors.ink)
+                              : AppColors.primary,
+                        ),
+                        label: Text(category.name),
+                        labelStyle: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                        ),
+                        side: BorderSide(
+                          color: category.name == _category.name
+                              ? Colors.transparent
+                              : Theme.of(context).colorScheme.onSurfaceVariant
+                                    .withValues(alpha: .45),
+                        ),
+                        selectedColor: dark
+                            ? const Color(0xFF354A38)
+                            : const Color(0xFFDCECCB),
+                        backgroundColor: Theme.of(context).cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        onSelected: (_) => setState(() {
+                          _category = category;
+                          _recurrence = switch (category.name) {
+                            'Daily' => RecurringFrequency.daily,
+                            'Monthly' => RecurringFrequency.monthly,
+                            _ => null,
+                          };
+                        }),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _note,
+                decoration: const InputDecoration(
+                  hintText: 'Note',
+                  prefixIcon: Icon(Icons.notes),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
               GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 crossAxisCount: 3,
                 crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: 2,
+                mainAxisSpacing: 8,
+                childAspectRatio: 2.2,
                 children:
                     const [
                           '1',
@@ -1962,32 +1952,35 @@ class _AddExpensePageState extends State<AddExpensePage> {
                           'backspace',
                         ]
                         .map(
-                          (value) => FilledButton(
-                            onPressed: () => _key(value),
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(44, 52),
-                              padding: EdgeInsets.zero,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
+                          (value) => Semantics(
+                            button: true,
+                            label: value == 'backspace'
+                                ? 'Delete last digit'
+                                : value,
+                            child: FilledButton(
+                              onPressed: () => _key(value),
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(44, 52),
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
                               ),
-                            ),
-                            child: value == 'backspace'
-                                ? const Icon(
-                                    Icons.backspace_outlined,
-                                    semanticLabel: 'Delete last digit',
-                                  )
-                                : Text(
-                                    value,
-                                    style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.w900,
+                              child: value == 'backspace'
+                                  ? const Icon(Icons.backspace_outlined)
+                                  : Text(
+                                      value,
+                                      style: const TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                      ),
                                     ),
-                                  ),
+                            ),
                           ),
                         )
                         .toList(),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               FilledButton.icon(
                 onPressed: _amount > 0 && !_busy ? _save : null,
                 icon: const Icon(Icons.check),
@@ -1999,142 +1992,10 @@ class _AddExpensePageState extends State<AddExpensePage> {
                       : 'Save expense',
                 ),
               ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              Text(
-                'Details (optional)',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Category: ${_category.name}',
-                style: const TextStyle(color: AppColors.muted),
-              ),
-              const SizedBox(height: 14),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = _type == TxType.income
-                      ? constraints.maxWidth
-                      : (constraints.maxWidth - 8) / 2;
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: categories
-                        .map(
-                          (category) => SizedBox(
-                            width: width,
-                            height: 48,
-                            child: FilterChip(
-                              selected: category.name == _category.name,
-                              showCheckmark: false,
-                              avatar: Icon(
-                                category.icon,
-                                color: category.name == _category.name
-                                    ? AppColors.ink
-                                    : AppColors.primary,
-                              ),
-                              label: Text(
-                                category.name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              labelStyle: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                              side: BorderSide(
-                                color: category.name == _category.name
-                                    ? Colors.transparent
-                                    : AppColors.muted.withValues(alpha: .45),
-                              ),
-                              selectedColor: dark
-                                  ? const Color(0xFF315A34)
-                                  : const Color(0xFFDCECCB),
-                              backgroundColor: Theme.of(context).cardColor,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              onSelected: (_) =>
-                                  setState(() => _category = category),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  );
-                },
-              ),
-              if (_type == TxType.expense) ...[
-                const SizedBox(height: 20),
-                Text(
-                  'Repeat',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _RepeatChip(
-                      label: 'No repeat',
-                      selected: _recurrence == null,
-                      onSelected: () => setState(() => _recurrence = null),
-                    ),
-                    _RepeatChip(
-                      label: 'Every day',
-                      selected: _recurrence == RecurringFrequency.daily,
-                      onSelected: () => setState(
-                        () => _recurrence = RecurringFrequency.daily,
-                      ),
-                    ),
-                    _RepeatChip(
-                      label: 'Every month',
-                      selected: _recurrence == RecurringFrequency.monthly,
-                      onSelected: () => setState(
-                        () => _recurrence = RecurringFrequency.monthly,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 20),
-              TextField(
-                controller: _note,
-                decoration: const InputDecoration(
-                  labelText: 'Note (optional)',
-                  prefixIcon: Icon(Icons.notes),
-                ),
-              ),
             ],
           ),
         ),
       ],
-    );
-  }
-}
-
-class _RepeatChip extends StatelessWidget {
-  const _RepeatChip({
-    required this.label,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: ChoiceChip(
-        label: Text(label),
-        selected: selected,
-        onSelected: (_) => onSelected(),
-      ),
     );
   }
 }
@@ -2198,15 +2059,10 @@ class _HistoryPageState extends State<HistoryPage> {
                   tx.category.toLowerCase().contains(query)),
         )
         .toList();
-    final byDay = <DateTime, List<Tx>>{};
-    for (final tx in filtered) {
-      final day = DateTime(tx.date.year, tx.date.month, tx.date.day);
-      byDay.putIfAbsent(day, () => []).add(tx);
-    }
     return PageList(
       children: [
         const PageTitle('History'),
-        const SizedBox(height: 18),
+        const SizedBox(height: 22),
         TextField(
           onChanged: (value) => setState(() => _query = value),
           decoration: const InputDecoration(
@@ -2214,15 +2070,13 @@ class _HistoryPageState extends State<HistoryPage> {
             prefixIcon: Icon(Icons.search, size: 30),
           ),
         ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: OverviewFilter.values
-              .map(
-                (filter) => ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: ChoiceChip(
+        if (widget.transactions.any((tx) => tx.type == TxType.income)) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            children: OverviewFilter.values
+                .map(
+                  (filter) => ChoiceChip(
                     label: Text(switch (filter) {
                       OverviewFilter.all => 'All',
                       OverviewFilter.expenses => 'Expenses',
@@ -2231,80 +2085,36 @@ class _HistoryPageState extends State<HistoryPage> {
                     selected: _typeFilter == filter,
                     onSelected: (_) => setState(() => _typeFilter = filter),
                   ),
-                ),
-              )
-              .toList(),
-        ),
+                )
+                .toList(),
+          ),
+        ],
         const SizedBox(height: 18),
         if (filtered.isEmpty)
           SectionCard(
             child: Text(
-              _typeFilter == OverviewFilter.all && query.isEmpty
-                  ? 'No transactions yet.'
-                  : 'No matching transactions.',
-              style: const TextStyle(color: AppColors.muted),
+              'No matching transactions.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           )
         else
-          ...byDay.entries.map((entry) {
-            final income = entry.value
-                .where((tx) => tx.type == TxType.income)
-                .fold(0, (sum, tx) => sum + tx.amount);
-            final expenses = entry.value
-                .where((tx) => tx.type == TxType.expense)
-                .fold(0, (sum, tx) => sum + tx.amount);
-            final net = income - expenses;
-            return Padding(
+          ...filtered.map(
+            (tx) => Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: SectionCard(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
-                  vertical: 8,
+                  vertical: 10,
                 ),
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              DateFormat(
-                                'EEEE, MMM d',
-                                'en_US',
-                              ).format(entry.key),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            (net >= 0 ? '+' : '-') + moneyText(net.abs()),
-                            style: TextStyle(
-                              color: net >= 0
-                                  ? AppColors.primary
-                                  : AppColors.danger,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    ...entry.value.asMap().entries.expand(
-                      (item) => [
-                        TransactionRow(
-                          tx: item.value,
-                          onDelete: () => _confirmRemove(item.value),
-                        ),
-                        if (item.key != entry.value.length - 1)
-                          const Divider(height: 1),
-                      ],
-                    ),
-                  ],
+                child: TransactionRow(
+                  tx: tx,
+                  onDelete: () => _confirmRemove(tx),
                 ),
               ),
-            );
-          }),
+            ),
+          ),
       ],
     );
   }
@@ -2693,7 +2503,7 @@ class _AccountPageState extends State<AccountPage> {
                 width: 64,
                 height: 64,
                 decoration: BoxDecoration(
-                  color: dark ? const Color(0xFF315A34) : AppColors.primarySoft,
+                  color: dark ? const Color(0xFF354A38) : AppColors.primarySoft,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: const Icon(Icons.person_outline, size: 34),
@@ -2711,9 +2521,11 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                     ),
                     if (offline)
-                      const Text(
+                      Text(
                         'Stored on this device',
-                        style: TextStyle(color: AppColors.muted),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                   ],
                 ),
@@ -2726,11 +2538,19 @@ class _AccountPageState extends State<AccountPage> {
           child: SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: dark,
-            onChanged: (value) {
-              MoneyManagerApp.themeMode.value = value
-                  ? ThemeMode.dark
-                  : ThemeMode.light;
-              setState(() {});
+            onChanged: (value) async {
+              try {
+                final prefs = await SharedPreferences.getInstance();
+                if (!await prefs.setBool(MoneyManagerApp.themeModeKey, value)) {
+                  throw const FormatException('Could not save dark mode.');
+                }
+                MoneyManagerApp.themeMode.value = value
+                    ? ThemeMode.dark
+                    : ThemeMode.light;
+                if (mounted) setState(() {});
+              } catch (_) {
+                _toast('Could not save dark mode. Try again.');
+              }
             },
             secondary: Icon(
               dark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
@@ -2784,7 +2604,7 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'App updates',
+                'LAN update',
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
@@ -2799,8 +2619,8 @@ class _AccountPageState extends State<AccountPage> {
               Text(
                 'Current ${widget.versionName ?? AppUpdateService.currentVersionName}+'
                 '${widget.versionCode ?? AppUpdateService.currentVersionCode}',
-                style: const TextStyle(
-                  color: AppColors.muted,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -2809,19 +2629,16 @@ class _AccountPageState extends State<AccountPage> {
         ),
         const SizedBox(height: 20),
         SectionCard(
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: const EdgeInsets.only(top: 16),
-            title: const Text('Change password'),
-            leading: const Icon(Icons.lock_outline),
-            onExpansionChanged: (expanded) {
-              if (!expanded) {
-                _currentPassword.clear();
-                _newPassword.clear();
-                _confirmPassword.clear();
-              }
-            },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                'Change password',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: _currentPassword,
                 obscureText: true,
@@ -2860,12 +2677,16 @@ class _AccountPageState extends State<AccountPage> {
         ),
         const SizedBox(height: 20),
         SectionCard(
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: const EdgeInsets.only(top: 16),
-            title: const Text('Delete transactions'),
-            leading: const Icon(Icons.delete_outline, color: AppColors.danger),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                'Reset spending data',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 16),
               OutlinedButton.icon(
                 onPressed: _busy
                     ? null
@@ -2878,10 +2699,6 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                 icon: const Icon(Icons.today_outlined),
                 label: const Text('Clear Today'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.danger,
-                  side: const BorderSide(color: AppColors.danger),
-                ),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
@@ -2896,10 +2713,6 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                 icon: const Icon(Icons.calendar_month_outlined),
                 label: const Text('Clear This Month'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.danger,
-                  side: const BorderSide(color: AppColors.danger),
-                ),
               ),
             ],
           ),

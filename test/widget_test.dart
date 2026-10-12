@@ -248,6 +248,41 @@ void main() {
     expect(store.transactions().single.type, TxType.income);
   });
 
+  testWidgets('Daily category creates a recurring expense', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'vmc-auth-user': 'preview',
+      'vmc-auth-password': 'preview-password',
+    });
+    tester.view.physicalSize = const Size(465, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MoneyManagerApp());
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Add'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daily'));
+    await tester.tap(find.text('1'));
+    await tester.tap(find.text('000'));
+    await tester.pump();
+    expect(find.text('VND 1,000'), findsOneWidget);
+    final save = find.widgetWithText(FilledButton, 'Save expense');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(find.text('Overview'), findsWidgets);
+
+    final store = await MoneyStore.load();
+    expect(store.transactions().single.category, 'Daily');
+    expect(store.recurring().single.frequency, RecurringFrequency.daily);
+  });
+
   testWidgets('quick entry remains overflow-free on a narrow phone', (
     tester,
   ) async {
@@ -346,5 +381,45 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: 'viewport width $width');
     }
+  });
+
+  testWidgets('dark mode uses charcoal surfaces and survives reopening', (
+    tester,
+  ) async {
+    MoneyManagerApp.themeMode.value = ThemeMode.light;
+    addTearDown(() => MoneyManagerApp.themeMode.value = ThemeMode.light);
+    SharedPreferences.setMockInitialValues({
+      'vmc-auth-user': 'preview',
+      'vmc-auth-password': 'preview-password',
+    });
+
+    await tester.pumpWidget(const MoneyManagerApp());
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Account'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(SwitchListTile, 'Dark mode'));
+    await tester.pumpAndSettle();
+
+    final theme = Theme.of(tester.element(find.byType(Scaffold).first));
+    expect(theme.brightness, Brightness.dark);
+    expect(theme.scaffoldBackgroundColor, const Color(0xFF121512));
+    expect(theme.colorScheme.onSurface, const Color(0xFFD7DFD8));
+    expect(
+      (await SharedPreferences.getInstance()).getBool(
+        MoneyManagerApp.themeModeKey,
+      ),
+      isTrue,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    MoneyManagerApp.themeMode.value = ThemeMode.light;
+    await tester.pumpWidget(const MoneyManagerApp());
+    await tester.pumpAndSettle();
+    expect(MoneyManagerApp.themeMode.value, ThemeMode.dark);
   });
 }
