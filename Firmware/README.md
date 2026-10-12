@@ -195,6 +195,14 @@ Button 1 trên ESP32 để quay lại Wi-Fi.
 - App gửi tối đa 180 byte sau mã hóa JSON. Lệnh có `requestId` được xác nhận
   bằng `ok:<loại>:<requestId>`: `navigation`, `popup`, `clear`, `mode`,
   `wifi_saved`, `ping`. Lệnh cũ không có ID vẫn nhận ACK không kèm ID.
+- Khi có hai bước rẽ, app dùng `apiVersion: 2` cho riêng lệnh `navigation`:
+  `m` là ID hướng OsmAnd (1–14), `d` là khoảng cách tới bước rẽ gần nhất (mét),
+  `s` là tên đường; `e`/`a` tùy chọn là số lối ra/góc của vòng xuyến hiện tại.
+  `then: [turnType, distanceMeters]` là bước sau đó; vòng xuyến dùng
+  `[turnType, distanceMeters, exitNumber, angle]` (`999` nghĩa là thiếu góc).
+  Gói vẫn có `command`, `requestId`, `timestamp`; firmware tiếp tục nhận v1.
+  Phải nạp firmware 1.3.34 trở lên trước khi dùng app mới: firmware cũ từ chối
+  v2, không được diễn giải thiếu trường thành một hướng đi khác.
 - Mọi nhãn trạng thái/menu dùng tiếng Anh; tên đường vẫn được bỏ dấu để
   phù hợp với font TFT. Lệnh `ping` kiểm tra kết nối và đồng bộ giờ, không
   tạo popup.
@@ -220,12 +228,33 @@ Button 1 trên ESP32 để quay lại Wi-Fi.
   hiện thành dải nhỏ ba giây khi đang dẫn đường; trong menu thì được hoãn tới
   khi thoát menu. Thay đổi trạng thái BLE không che mất chỉ dẫn. Khi chỉ
   khoảng cách thay đổi, màn hình chỉ vẽ lại vùng số.
+- Tên đường dùng toàn bộ cột trái từ y=100 đến y=157, gồm cả vùng trước đây
+  dành cho thông báo: tối đa ba dòng mỗi trang, tự xuống dòng theo từ.
+  Tên ngắn giữ chữ rộng; tên dài thu gọn chiều ngang, vẫn giữ chiều cao chữ.
+  Firmware nhận tối đa 80 ký tự; BLE app vẫn giới hạn theo số byte còn lại
+  trong gói 180 byte, không tăng MTU hoặc gửi gói quá lớn. Nếu hơn ba dòng
+  thì đổi trang mỗi 3,5 giây. Cột tốc
+  độ và đồng hồ không đổi. Thông báo phủ tạm ba giây rồi vẽ lại tên đường,
+  không để lại khoảng trống hoặc xóa mất dòng cuối.
 - Với một lượt rẽ đã biết: từ 2 km trở lên hiện mũi tên đi thẳng, số km còn
   lại và tên đường sẽ rẽ vào; dưới 2 km chuyển sang mũi tên rẽ, chỉ dưới 200 m
   mũi tên rẽ mới nhấp nháy mỗi 500 ms. Dưới 1 km khoảng cách hiện bằng mét
   (ví dụ `999 m`; đúng `1 km` trở lên hiện `1.00 km`). Chỉ vùng mũi tên được vẽ lại khi nhấp
   nháy. Nếu OsmAnd báo `straight` thay vì một lượt rẽ, firmware không tự
   suy đoán lượt rẽ kế tiếp hoặc tên đường chưa được API cung cấp.
+- Phía dưới khoảng cách chính, phía trên cột tốc độ (y=69–99), hiển thị
+  mũi tên 24×30 px màu tương phản và khoảng cách của **bước rẽ sau bước gần nhất**.
+  Số cao gấp đôi bản đầu; ví dụ `1.6` dùng chữ 2×2, số dài thu gọn chiều ngang
+  nhưng giữ chiều cao. Khoảng cách km dùng một chữ số thập phân.
+  Dấu phân trang tên đường chuyển xuống y=156, không che bước rẽ thứ hai.
+  Khoảng cách lấy nguyên từ OsmAnd: tính từ bước thứ nhất tới bước thứ hai,
+  không cộng khoảng cách từ vị trí hiện tại. Dưới 1 km dùng mét.
+  Icon nhỏ dùng cùng bộ vẽ với icon chính, giữ đúng loại rẽ/góc vòng xuyến;
+  không nhấp nháy. Tên đường, tốc độ và đồng hồ không bị thu hẹp.
+  App đọc `after_nextturn_*` từ cùng snapshot `turnInfo` của AIDL; không đoán
+  từ số km trong thông báo. Nếu OsmAnd không cung cấp, hết tuyến, hoặc chuyển
+  sang notification fallback thì vùng này tự xóa, không giữ hướng rẽ cũ.
+  Mẫu `Straight` trong app có thêm bước rẽ trái sau 1,6 km và tự xóa sau 15 giây.
 - Lệnh dẫn đường tùy chọn `requestId` (số dương); trạng thái BLE phản hồi
   `ok:navigation:<requestId>` sau khi đã xử lý, để app phân biệt xếp hàng gửi
   với ESP32 đã nhận. Lệnh cũ không có `requestId` vẫn nhận `ok:navigation`.

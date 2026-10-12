@@ -87,7 +87,7 @@ internal object NavigationBleSender {
         .replace(Regex("\\p{M}+"), "")
         .replace(Regex("[^ -~]"), " ")
         .trim()
-        .take(32)
+        .take(80)
 
     @Synchronized
     fun isConnected(): Boolean = connected && channelReady
@@ -147,7 +147,10 @@ internal object NavigationBleSender {
         if (distanceMeters !in 0..999_999) return false
         val sent = sendNavigation(
             context,
-            roundaboutSample ?: OsmAndNavigation(maneuver, distanceMeters, streetName),
+            roundaboutSample ?: OsmAndNavigation(
+                maneuver, distanceMeters, streetName,
+                afterNext = if (maneuver == "straight") OsmAndTurnPreview(2, 1600) else null,
+            ),
         )
         if (sent) {
             val sampleRequestId = synchronized(this) { wantedRequestId }
@@ -192,11 +195,33 @@ internal object NavigationBleSender {
             .put("timestamp", timestamp)
         navigation.exitNumber?.takeIf { it in 1..99 }?.let { packet.put("exit", it) }
         navigation.turnAngle?.takeIf { it in -180..180 }?.let { packet.put("angle", it) }
+        val primaryType = OsmAndDirectionMapper.typeForManeuver(navigation.maneuver)
+        val next = navigation.afterNext?.takeIf {
+            it.isValid() && primaryType in 1..14 && primaryType != 12
+        }
+        val streetKey = if (next != null) "s" else "street"
+        next?.let {
+            // Version 2 aliases leave room for BOTH turns and the road name.
+            // Old firmware rejects v2 instead of silently showing a wrong turn.
+            packet.put("apiVersion", 2)
+            packet.put("m", primaryType)
+            packet.remove("maneuver")
+            packet.put("d", packet.remove("distance_m"))
+            packet.put("s", packet.remove("street"))
+            if (packet.has("exit")) packet.put("e", packet.remove("exit"))
+            if (packet.has("angle")) packet.put("a", packet.remove("angle"))
+            // Compact optional preview keeps the same 180-byte ATT budget.
+            val preview = org.json.JSONArray().put(next.turnType).put(next.distanceMeters)
+            if (next.turnType == 13 || next.turnType == 14) {
+                preview.put(next.exitNumber ?: 0).put(next.turnAngle ?: 999)
+            }
+            packet.put("then", preview)
+        }
         // JSON escapes (quotes/backslashes) count toward the actual ATT limit.
         var payload = packet.toString()
         while (payload.toByteArray(StandardCharsets.UTF_8).size > 180 &&
-            packet.getString("street").isNotEmpty()) {
-            packet.put("street", packet.getString("street").dropLast(1))
+            packet.getString(streetKey).isNotEmpty()) {
+            packet.put(streetKey, packet.getString(streetKey).dropLast(1))
             payload = packet.toString()
         }
         return payload
@@ -697,7 +722,20 @@ internal data class OsmAndNavigation(
     val streetName: String = "",
     val exitNumber: Int? = null,
     val turnAngle: Int? = null,
+    val afterNext: OsmAndTurnPreview? = null,
 )
+
+internal data class OsmAndTurnPreview(
+    val turnType: Int,
+    // Distance from the first turn to the second, as supplied by OsmAnd.
+    val distanceMeters: Int,
+    val exitNumber: Int? = null,
+    val turnAngle: Int? = null,
+) {
+    fun isValid(): Boolean = turnType in 1..14 && turnType != 12 &&
+        distanceMeters in 1..999_999 && (exitNumber == null || exitNumber in 0..99) &&
+        (turnAngle == null || turnAngle in -180..180)
+}
 
 internal object OsmAndNotificationParser {
     private val distancePattern = Regex(
@@ -763,6 +801,31 @@ internal object OsmAndDirectionMapper {
 
     fun angleFromBundle(value: Any?): Int? = (value as? Number)?.toDouble()
         ?.takeIf(Double::isFinite)?.roundToInt()
+
+    fun typeForManeuver(maneuver: String): Int = (1..14).firstOrNull {
+        map(it, 1, false)?.maneuver == maneuver
+    } ?: 0
+
+    fun fromTurnInfo(read: (String) -> Any?): OsmAndNavigation? {
+        val primary = fromNextTurn(
+            read("next_turn_type") as? String,
+            read("next_turn_distance") as? Int ?: -1,
+            read("next_turn_name") as? String,
+            angleFromBundle(read("next_turn_angle")),
+        ) ?: return null
+        // ExternalApiHelper uses "after_next" WITHOUT a trailing underscore.
+        // Keep both turns in the same snapshot; never infer from notification text.
+        val next = fromNextTurn(
+            read("after_nextturn_type") as? String,
+            read("after_nextturn_distance") as? Int ?: -1,
+            null,
+            angleFromBundle(read("after_nextturn_angle")),
+        ) ?: return primary
+        if (primary.maneuver == "off_route") return primary
+        val type = typeForManeuver(next.maneuver)
+        val preview = OsmAndTurnPreview(type, next.distanceMeters, next.exitNumber, next.turnAngle)
+        return primary.copy(afterNext = preview.takeIf { it.isValid() })
+    }
 
     fun map(turnType: Int, distanceMeters: Int, leftSide: Boolean): OsmAndNavigation? {
         if (distanceMeters < 0) return null

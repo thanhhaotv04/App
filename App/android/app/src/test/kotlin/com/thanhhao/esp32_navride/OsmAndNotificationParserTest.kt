@@ -9,6 +9,112 @@ import org.json.JSONObject
 
 class OsmAndNotificationParserTest {
     @Test
+    fun readsBothTurnsFromTheSameOfficialSnapshotWithoutAddingPrimaryDistance() {
+        val info = mapOf(
+            "next_turn_type" to "TR", "next_turn_distance" to 250,
+            "next_turn_name" to "Nguyen Thi Minh Khai",
+            // The unusual key prefix and leg distance are from ExternalApiHelper.
+            "after_nextturn_type" to "TL", "after_nextturn_distance" to 1600,
+        )
+        val navigation = OsmAndDirectionMapper.fromTurnInfo(info::get)!!
+        assertEquals("right", navigation.maneuver)
+        assertEquals(250, navigation.distanceMeters)
+        assertEquals("Nguyen Thi Minh Khai", navigation.streetName)
+        assertEquals(OsmAndTurnPreview(2, 1600), navigation.afterNext)
+        val packet = JSONObject(NavigationBleSender.encodeNavigationPacket(navigation, 1, 1790900000L))
+        assertEquals(2, packet.getInt("apiVersion"))
+        assertEquals(5, packet.getInt("m"))
+        assertEquals(250, packet.getInt("d"))
+        assertEquals(navigation.streetName, packet.getString("s"))
+        assertEquals(2, packet.getJSONArray("then").getInt(0))
+        assertEquals(1600, packet.getJSONArray("then").getInt(1))
+    }
+
+    @Test
+    fun missingOrInvalidSecondTurnNeverReusesAPreviousPreviewOrCurrentRoad() {
+        val primary = mapOf<String, Any?>("next_turn_type" to "TR", "next_turn_distance" to 250)
+        for (extra in listOf(
+            emptyMap(),
+            mapOf("after_nextturn_type" to "TL"),
+            mapOf("after_nextturn_type" to "TL", "after_nextturn_distance" to -1),
+            mapOf("after_nextturn_type" to "TL", "after_nextturn_distance" to 0),
+            mapOf("after_nextturn_type" to "unknown", "after_nextturn_distance" to 300),
+            mapOf("after_nextturn_type" to "OFFR", "after_nextturn_distance" to 300),
+            mapOf("current_turn_type" to "TL", "current_turn_distance" to 300),
+        )) {
+            val info = primary + extra
+            val navigation = OsmAndDirectionMapper.fromTurnInfo(info::get)!!
+            assertNull(navigation.afterNext)
+            assertEquals("", navigation.streetName)
+            val packet = JSONObject(NavigationBleSender.encodeNavigationPacket(navigation, 1, 1790900000L))
+            assertEquals(1, packet.getInt("apiVersion"))
+            assertTrue(!packet.has("then"))
+        }
+        assertNull(OsmAndDirectionMapper.fromTurnInfo(emptyMap<String, Any?>()::get))
+        assertNull(OsmAndNotificationParser.parse("250 m • Turn right onto Road")?.afterNext)
+    }
+
+    @Test
+    fun secondRoundaboutPreservesItsOwnExitAndAngleAndAllPacketsFitAtt() {
+        for (primaryType in 1..14) for (nextType in 1..14) {
+            val navigation = OsmAndDirectionMapper.map(primaryType, 999999, false)!!.copy(
+                streetName = "\\\"".repeat(80), exitNumber = 99, turnAngle = -180,
+                afterNext = OsmAndTurnPreview(nextType, 999999, 99, -180),
+            )
+            val encoded = NavigationBleSender.encodeNavigationPacket(navigation, Int.MAX_VALUE, 1790900000L)
+            assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= 180)
+            val packet = JSONObject(encoded)
+            if (primaryType != 12 && nextType != 12) {
+                assertEquals(primaryType, packet.getInt("m"))
+                assertEquals(nextType, packet.getJSONArray("then").getInt(0))
+                if (nextType == 13 || nextType == 14) {
+                    assertEquals(99, packet.getJSONArray("then").getInt(2))
+                    assertEquals(-180, packet.getJSONArray("then").getInt(3))
+                }
+            } else assertTrue(!packet.has("then"))
+        }
+        val info = mapOf("next_turn_type" to "TL", "next_turn_distance" to 500,
+            "after_nextturn_type" to "RNDB4", "after_nextturn_distance" to 1200,
+            "after_nextturn_angle" to -90f)
+        assertEquals(OsmAndTurnPreview(13, 1200, 4, -90),
+            OsmAndDirectionMapper.fromTurnInfo(info::get)?.afterNext)
+        val bothRoundabouts = info + mapOf("next_turn_type" to "RNDB2", "next_turn_angle" to 0f)
+        val snapshot = OsmAndDirectionMapper.fromTurnInfo(bothRoundabouts::get)!!
+        assertEquals(2, snapshot.exitNumber)
+        assertEquals(0, snapshot.turnAngle)
+        assertEquals(OsmAndTurnPreview(13, 1200, 4, -90), snapshot.afterNext)
+        val offRoute = info + mapOf("next_turn_type" to "OFFR")
+        assertNull(OsmAndDirectionMapper.fromTurnInfo(offRoute::get)?.afterNext)
+    }
+
+    @Test
+    fun invalidPreviewCannotBreakAnOtherwiseValidPrimaryPacket() {
+        for (preview in listOf(
+            OsmAndTurnPreview(0, 300), OsmAndTurnPreview(15, 300),
+            OsmAndTurnPreview(2, -1), OsmAndTurnPreview(2, 1_000_000),
+            OsmAndTurnPreview(13, 300, 100, 0), OsmAndTurnPreview(13, 300, 2, 181),
+        )) {
+            val packet = JSONObject(NavigationBleSender.encodeNavigationPacket(
+                OsmAndNavigation("left", 250, "Nguyen Hue", afterNext = preview), 1, 1790900000L,
+            ))
+            assertEquals(1, packet.getInt("apiVersion"))
+            assertEquals("left", packet.getString("maneuver"))
+            assertEquals("Nguyen Hue", packet.getString("street"))
+            assertTrue(!packet.has("then"))
+        }
+    }
+
+    @Test
+    fun longStreetUsesMoreThanThirtyTwoCharactersWithoutExceedingBleBudget() {
+        val street = "Duong Nguyen Thi Minh Khai Quan Mot";
+        val encoded = NavigationBleSender.encodeNavigationPacket(
+            OsmAndNavigation("left", 250, street), 1, 1_791_700_000L,
+        )
+        assertEquals(street, JSONObject(encoded).getString("street"))
+        assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= 180)
+    }
+
+    @Test
     fun roundaboutAngleAcceptsNumericBundleTypesWithoutGuessingMissingAngle() {
         assertEquals(-90, OsmAndDirectionMapper.angleFromBundle(-90f))
         assertEquals(75, OsmAndDirectionMapper.angleFromBundle(75.4))

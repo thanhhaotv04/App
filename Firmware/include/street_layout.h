@@ -4,6 +4,18 @@
 #include <stdint.h>
 #include <string.h>
 
+constexpr uint8_t STREET_ROWS_PER_PAGE = 3;
+constexpr int16_t STREET_TOP = 100;
+constexpr int16_t STREET_HEIGHT = 58;
+constexpr uint8_t STREET_ROW_STEP = 19;
+constexpr int16_t NEXT_TURN_X = 62;
+constexpr int16_t NEXT_TURN_TOP = 69;
+constexpr int16_t NEXT_TURN_WIDTH = 64;
+constexpr int16_t NEXT_TURN_HEIGHT = 31;
+constexpr int16_t NEXT_ICON_WIDTH = 24;
+constexpr int16_t NEXT_ICON_HEIGHT = 30;
+constexpr int16_t STREET_PAGE_MARKER_Y = 156;
+
 struct StreetLine {
   uint8_t start;
   uint8_t length;

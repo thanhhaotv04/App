@@ -160,6 +160,15 @@ Không dùng lệnh cài cho mọi user trên điện thoại có hồ sơ công
 
 Tài liệu OsmAnd: [Voice Prompts / Notifications](https://osmand.net/docs/user/navigation/guidance/voice-navigation/)
 và [Navigation Settings](https://osmand.net/docs/user/navigation/guidance/navigation-settings/).
+
+### Xem trước lần rẽ thứ hai trên ESP32
+
+Nạp firmware **1.3.34 trở lên**, kết nối Bluetooth và bật cầu nối OsmAnd.
+Khi AIDL cung cấp hai bước rẽ, TFT hiện thêm mũi tên nhỏ và khoảng cách
+giữa hai bước rẽ, ngay dưới khoảng cách chính và trên tốc độ. Dưới 1 km
+dùng mét. Phần này tự ẩn khi thiếu dữ liệu hoặc dừng chỉ đường; không suy
+đoán từ thông báo. Mẫu `Straight` có bước rẽ trái sau 1,6 km để thử khi đứng yên.
+Nguồn dữ liệu: [ExternalApiHelper của OsmAnd](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd/src/net/osmand/plus/helpers/ExternalApiHelper.java).
 Trường API đối chiếu từ [ExternalApiHelper](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd/src/net/osmand/plus/helpers/ExternalApiHelper.java).
 Sau khi build APK release, chạy `bash tool/check_osmand_release.sh` trong thư
 mục App. Quy tắc R8 giữ tên lớp `ALatLon` để đọc Bundle từ ứng dụng OsmAnd;

@@ -146,12 +146,7 @@ internal class OsmAndAidlBridge(context: Context) {
                 reportedTurnKeys = keys
                 Log.i("NavRide", "OsmAnd turnInfo keys=[$keys]; no documented speed-limit field")
             }
-            OsmAndDirectionMapper.fromNextTurn(
-                info.getString("next_turn_type"),
-                info.getInt("next_turn_distance", -1),
-                info.getString("next_turn_name"),
-                OsmAndDirectionMapper.angleFromBundle(info.get("next_turn_angle")),
-            )
+            OsmAndDirectionMapper.fromTurnInfo { key -> info.get(key) }
         }
     }.onSuccess { snapshotFailureReported = false }.onFailure {
         if (!snapshotFailureReported) {

@@ -19,6 +19,7 @@
 #include "clock_timers.h"
 #include "speed_state.h"
 #include "street_layout.h"
+#include "navigation_preview.h"
 #include "hardware_pins.h"
 
 SpeedState speedState;
@@ -27,7 +28,7 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.32";
+constexpr char FIRMWARE_VERSION[] = "1.3.35";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -63,6 +64,9 @@ static_assert(5 * 6 * 4 <= 128 && 10 * 6 * 2 <= 128,
 static_assert(6 * 12 <= STREET_WIDTH && 13 * 6 <= STREET_WIDTH &&
                   2 + STREET_WIDTH < SPEED_X && SPEED_X + SPEED_WIDTH <= 126,
               "Street and speed columns must not overlap");
+static_assert(STREET_TOP + STREET_HEIGHT == 158 &&
+                  1 + (STREET_ROWS_PER_PAGE - 1) * STREET_ROW_STEP + 16 <= STREET_HEIGHT,
+              "Street rows must use the lower area without clipping");
 static_assert(2 * 6 * 3 <= SPEED_WIDTH && 3 * 6 * 2 <= SPEED_WIDTH &&
                   101 + 8 * 5 < 145,
               "Enlarged speed digits must fit above the unit");
@@ -167,6 +171,7 @@ String navigationStreet;
 int navigationDistanceMeters = 0;
 int navigationExitNumber = 0;
 int navigationTurnAngle = 999;  // OsmAnd angle; 999 means it was not supplied.
+TurnPreview navigationAfterNext;
 bool navigationVisible = false;
 bool navigationOnScreen = false;
 bool navigationArrowVisible = true;
@@ -1296,7 +1301,7 @@ bool blinkTurnArrow(const String &maneuver, int distanceMeters) {
   return isTurnManeuver(maneuver) && blinkTurnAt(distanceMeters);
 }
 
-void drawThickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+void drawThickLine(Adafruit_GFX &surface, int16_t x0, int16_t y0, int16_t x1, int16_t y1,
                    int16_t width, uint16_t color) {
   const float dx = x1 - x0;
   const float dy = y1 - y0;
@@ -1304,25 +1309,25 @@ void drawThickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
   if (length == 0) return;
   const int16_t ox = lroundf(-dy * width / (2 * length));
   const int16_t oy = lroundf(dx * width / (2 * length));
-  tft.fillTriangle(x0 + ox, y0 + oy, x0 - ox, y0 - oy,
+  surface.fillTriangle(x0 + ox, y0 + oy, x0 - ox, y0 - oy,
                    x1 + ox, y1 + oy, color);
-  tft.fillTriangle(x1 + ox, y1 + oy, x0 - ox, y0 - oy,
+  surface.fillTriangle(x1 + ox, y1 + oy, x0 - ox, y0 - oy,
                    x1 - ox, y1 - oy, color);
-  tft.fillCircle(x0, y0, width / 2, color);
-  tft.fillCircle(x1, y1, width / 2, color);
+  surface.fillCircle(x0, y0, width / 2, color);
+  surface.fillCircle(x1, y1, width / 2, color);
 }
 
-void drawNavigationArrow(const String &maneuver, int distanceMeters,
+void renderNavigationArrow(Adafruit_GFX &surface, const String &maneuver, int distanceMeters,
                          bool visible, int exitNumber = 0,
                          int turnAngle = 999) {
   // The arrow is the only region touched by the 500 ms blink.
-  tft.fillRect(2, 34, 58, 66, COLOR_PANEL);
+  surface.fillRect(2, 34, 58, 66, COLOR_PANEL);
   if (!visible) return;
   if (maneuver == "off_route") {
     // OsmAnd OFFR: an interrupted forward arrow, never a turn.
-    tft.fillRect(26, 88, 8, 11, COLOR_TEXT);
-    tft.fillRect(26, 69, 8, 12, COLOR_TEXT);
-    tft.fillTriangle(30, 46, 16, 70, 44, 70, COLOR_TEXT);
+    surface.fillRect(26, 88, 8, 11, COLOR_TEXT);
+    surface.fillRect(26, 69, 8, 12, COLOR_TEXT);
+    surface.fillTriangle(30, 46, 16, 70, 44, 70, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "slight_left" || maneuver == "slight_right" ||
               maneuver == "sharp_left" || maneuver == "sharp_right" ||
@@ -1332,53 +1337,53 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     const bool sharp = maneuver.startsWith("sharp");
     const int16_t startX = right ? 22 : 38;
     const int16_t bendX = right ? 42 : 18;
-    drawThickLine(startX, 95, startX, 78, 8, COLOR_TEXT);
-    drawThickLine(startX, 78, bendX, 62, 8, COLOR_TEXT);
+    drawThickLine(surface, startX, 95, startX, 78, 8, COLOR_TEXT);
+    drawThickLine(surface, startX, 78, bendX, 62, 8, COLOR_TEXT);
     if (keep) {
-      drawThickLine(bendX, 62, bendX, 55, 8, COLOR_TEXT);
-      tft.fillTriangle(bendX, 45, bendX - 12, 62, bendX + 12, 62,
+      drawThickLine(surface, bendX, 62, bendX, 55, 8, COLOR_TEXT);
+      surface.fillTriangle(bendX, 45, bendX - 12, 62, bendX + 12, 62,
                        COLOR_TEXT);
     } else if (sharp) {
       // Sharp turn folds back after the approach, unlike a slight turn.
       const int16_t tipX = right ? 51 : 9;
-      drawThickLine(bendX, 62, tipX, 77, 8, COLOR_TEXT);
-      if (right) tft.fillTriangle(55, 89, 39, 77, 54, 68, COLOR_TEXT);
-      else tft.fillTriangle(5, 89, 21, 77, 6, 68, COLOR_TEXT);
+      drawThickLine(surface, bendX, 62, tipX, 77, 8, COLOR_TEXT);
+      if (right) surface.fillTriangle(55, 89, 39, 77, 54, 68, COLOR_TEXT);
+      else surface.fillTriangle(5, 89, 21, 77, 6, 68, COLOR_TEXT);
     } else {
-      if (right) tft.fillTriangle(53, 50, 34, 52, 48, 70, COLOR_TEXT);
-      else tft.fillTriangle(7, 50, 26, 52, 12, 70, COLOR_TEXT);
+      if (right) surface.fillTriangle(53, 50, 34, 52, 48, 70, COLOR_TEXT);
+      else surface.fillTriangle(7, 50, 26, 52, 12, 70, COLOR_TEXT);
     }
   } else if (showTurnArrow(maneuver, distanceMeters) &&
       (maneuver == "left" || maneuver == "right")) {
     const bool right = maneuver == "right";
     // Approach from the bottom, follow a rounded 90-degree corner, then turn.
     const int16_t cornerX = right ? 22 : 38;
-    tft.fillCircle(cornerX, 70, 12, COLOR_TEXT);
-    tft.fillCircle(cornerX, 70, 4, COLOR_PANEL);
+    surface.fillCircle(cornerX, 70, 12, COLOR_TEXT);
+    surface.fillCircle(cornerX, 70, 4, COLOR_PANEL);
     if (right) {
-      tft.fillRect(22, 58, 13, 25, COLOR_PANEL);
-      tft.fillRect(10, 70, 25, 13, COLOR_PANEL);
-      tft.fillRect(10, 69, 9, 30, COLOR_TEXT);
-      tft.fillRect(22, 58, 20, 9, COLOR_TEXT);
-      tft.fillTriangle(56, 62, 39, 50, 39, 74, COLOR_TEXT);
+      surface.fillRect(22, 58, 13, 25, COLOR_PANEL);
+      surface.fillRect(10, 70, 25, 13, COLOR_PANEL);
+      surface.fillRect(10, 69, 9, 30, COLOR_TEXT);
+      surface.fillRect(22, 58, 20, 9, COLOR_TEXT);
+      surface.fillTriangle(56, 62, 39, 50, 39, 74, COLOR_TEXT);
     } else {
-      tft.fillRect(26, 58, 12, 25, COLOR_PANEL);
-      tft.fillRect(26, 70, 25, 13, COLOR_PANEL);
-      tft.fillRect(41, 69, 9, 30, COLOR_TEXT);
-      tft.fillRect(18, 58, 20, 9, COLOR_TEXT);
-      tft.fillTriangle(4, 62, 21, 50, 21, 74, COLOR_TEXT);
+      surface.fillRect(26, 58, 12, 25, COLOR_PANEL);
+      surface.fillRect(26, 70, 25, 13, COLOR_PANEL);
+      surface.fillRect(41, 69, 9, 30, COLOR_TEXT);
+      surface.fillRect(18, 58, 20, 9, COLOR_TEXT);
+      surface.fillTriangle(4, 62, 21, 50, 21, 74, COLOR_TEXT);
     }
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "u_turn" || maneuver == "u_turn_right")) {
     // Mirror the return lane for OsmAnd's TU and TRU types.
     const bool right = maneuver == "u_turn_right";
-    tft.fillCircle(29, 71, 18, COLOR_TEXT);
-    tft.fillCircle(29, 71, 11, COLOR_PANEL);
-    tft.fillRect(9, 71, 41, 24, COLOR_PANEL);
-    tft.fillRoundRect(right ? 41 : 9, 66, 8, 27, 4, COLOR_TEXT);
-    tft.fillRoundRect(right ? 9 : 41, 66, 8, 32, 4, COLOR_TEXT);
-    if (right) tft.fillTriangle(45, 99, 33, 88, 54, 88, COLOR_TEXT);
-    else tft.fillTriangle(13, 99, 4, 88, 25, 88, COLOR_TEXT);
+    surface.fillCircle(29, 71, 18, COLOR_TEXT);
+    surface.fillCircle(29, 71, 11, COLOR_PANEL);
+    surface.fillRect(9, 71, 41, 24, COLOR_PANEL);
+    surface.fillRoundRect(right ? 41 : 9, 66, 8, 27, 4, COLOR_TEXT);
+    surface.fillRoundRect(right ? 9 : 41, 66, 8, 32, 4, COLOR_TEXT);
+    if (right) surface.fillTriangle(45, 99, 33, 88, 54, 88, COLOR_TEXT);
+    else surface.fillTriangle(13, 99, 4, 88, 25, 88, COLOR_TEXT);
   } else if (showTurnArrow(maneuver, distanceMeters) &&
              (maneuver == "roundabout" || maneuver == "roundabout_left")) {
     // Exit ordinal alone does not determine direction. Without OsmAnd's angle,
@@ -1388,12 +1393,12 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
     constexpr int16_t outerRadius = 19;
     constexpr int16_t innerRadius = 12;
     const bool clockwise = maneuver == "roundabout_left";
-    tft.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 10, 3,
+    surface.fillRoundRect(centerX - 4, centerY + outerRadius - 1, 8, 10, 3,
                       COLOR_TEXT);
     const bool hasAngle = turnAngle >= -180 && turnAngle <= 180;
     const uint16_t ringOutline = lightTheme ? 0xAD55 : 0x630C;
-    tft.drawCircle(centerX, centerY, outerRadius, ringOutline);
-    tft.drawCircle(centerX, centerY, innerRadius, ringOutline);
+    surface.drawCircle(centerX, centerY, outerRadius, ringOutline);
+    surface.drawCircle(centerX, centerY, innerRadius, ringOutline);
     {
       // OsmAnd uses t + 180 for left-hand circulation and t - 180 for
       // right-hand circulation. Without an angle, stop at the upper side and
@@ -1410,7 +1415,7 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
           const float ux = -sinf(theta);
           const float uy = cosf(theta);
           for (int16_t r = outerRadius; r <= 26; r += 2) {
-            tft.fillCircle(lroundf(centerX + ux * r),
+            surface.fillCircle(lroundf(centerX + ux * r),
                            lroundf(centerY + uy * r), 1, ringOutline);
           }
         }
@@ -1433,8 +1438,8 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
         const int16_t ayIn = lroundf(centerY + ay * innerRadius);
         const int16_t bxIn = lroundf(centerX + bx * innerRadius);
         const int16_t byIn = lroundf(centerY + by * innerRadius);
-        tft.fillTriangle(axOut, ayOut, bxOut, byOut, axIn, ayIn, COLOR_TEXT);
-        tft.fillTriangle(axIn, ayIn, bxIn, byIn, bxOut, byOut, COLOR_TEXT);
+        surface.fillTriangle(axOut, ayOut, bxOut, byOut, axIn, ayIn, COLOR_TEXT);
+        surface.fillTriangle(axIn, ayIn, bxIn, byIn, bxOut, byOut, COLOR_TEXT);
       }
       const float theta = sweep * DEG_TO_RAD;
       const float ux = -sinf(theta);
@@ -1444,13 +1449,13 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
         const int16_t y0 = lroundf(centerY + uy * 16);
         const int16_t x1 = lroundf(centerX + ux * 23);
         const int16_t y1 = lroundf(centerY + uy * 23);
-        tft.fillTriangle(lroundf(x0 - uy * 4), lroundf(y0 + ux * 4),
+        surface.fillTriangle(lroundf(x0 - uy * 4), lroundf(y0 + ux * 4),
                          lroundf(x1 - uy * 4), lroundf(y1 + ux * 4),
                          lroundf(x0 + uy * 4), lroundf(y0 - ux * 4), COLOR_TEXT);
-        tft.fillTriangle(lroundf(x0 + uy * 4), lroundf(y0 - ux * 4),
+        surface.fillTriangle(lroundf(x0 + uy * 4), lroundf(y0 - ux * 4),
                          lroundf(x1 + uy * 4), lroundf(y1 - ux * 4),
                          lroundf(x1 - uy * 4), lroundf(y1 + ux * 4), COLOR_TEXT);
-        tft.fillTriangle(lroundf(centerX + ux * 28),
+        surface.fillTriangle(lroundf(centerX + ux * 28),
                          lroundf(centerY + uy * 28),
                          lroundf(centerX + ux * 21 - uy * 8),
                          lroundf(centerY + uy * 21 + ux * 8),
@@ -1461,7 +1466,7 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
         const float ty = (clockwise ? -1 : 1) * sinf(theta);
         const float x = centerX + ux * outerRadius;
         const float y = centerY + uy * outerRadius;
-        tft.fillTriangle(lroundf(x + tx * 9), lroundf(y + ty * 9),
+        surface.fillTriangle(lroundf(x + tx * 9), lroundf(y + ty * 9),
                          lroundf(x - tx * 3 + ux * 6),
                          lroundf(y - ty * 3 + uy * 6),
                          lroundf(x - tx * 3 - ux * 6),
@@ -1473,33 +1478,75 @@ void drawNavigationArrow(const String &maneuver, int distanceMeters,
       const uint8_t scale = label.length() == 1 ? 2 : 1;
       // The classic font's last spacing column is blank; center its 5x7 ink.
       const int16_t inkWidth = label.length() * 6 * scale - scale;
-      drawText(label, centerX - inkWidth / 2, centerY - 7 * scale / 2,
-               scale, COLOR_ACCENT, COLOR_PANEL);
+      surface.setTextSize(scale);
+      surface.setTextColor(COLOR_ACCENT, COLOR_PANEL);
+      surface.setCursor(centerX - inkWidth / 2, centerY - 7 * scale / 2);
+      surface.print(label);
     }
   } else if (maneuver == "arrive") {
-    tft.fillCircle(29, 73, 20, COLOR_TEXT);
-    tft.fillCircle(29, 73, 12, COLOR_PANEL);
-    tft.fillCircle(29, 73, 5, COLOR_OK);
+    surface.fillCircle(29, 73, 20, COLOR_TEXT);
+    surface.fillCircle(29, 73, 12, COLOR_PANEL);
+    surface.fillCircle(29, 73, 5, COLOR_OK);
   } else {
-    tft.fillRect(25, 62, 9, 37, COLOR_TEXT);
-    tft.fillTriangle(29, 44, 12, 66, 46, 66, COLOR_TEXT);
+    surface.fillRect(25, 62, 9, 37, COLOR_TEXT);
+    surface.fillTriangle(29, 44, 12, 66, 46, 66, COLOR_TEXT);
   }
+}
+
+void drawNavigationArrow(const String &maneuver, int distanceMeters,
+                         bool visible, int exitNumber = 0, int turnAngle = 999) {
+  renderNavigationArrow(tft, maneuver, distanceMeters, visible, exitNumber, turnAngle);
+}
+
+void drawAfterNextTurn() {
+  tft.fillRect(NEXT_TURN_X, NEXT_TURN_TOP, NEXT_TURN_WIDTH, NEXT_TURN_HEIGHT, COLOR_PANEL);
+  if (!navigationAfterNext.valid()) return;
+  // Reuse exactly the main OsmAnd shapes, including roundabout exit angles.
+  // Allocate once; the small icon stays steady, regardless of turn distance.
+  static GFXcanvas16 icon(60, 100);
+  if (icon.getBuffer() == nullptr) return;
+  icon.setTextWrap(false);
+  renderNavigationArrow(icon, maneuverForTurnType(navigationAfterNext.turnType),
+                        0, true, navigationAfterNext.exitNumber,
+                        navigationAfterNext.turnAngle);
+  uint16_t pixels[NEXT_ICON_WIDTH * NEXT_ICON_HEIGHT];
+  for (int16_t y = 0; y < NEXT_ICON_HEIGHT; ++y) {
+    for (int16_t x = 0; x < NEXT_ICON_WIDTH; ++x) {
+      const uint16_t color = icon.getPixel(2 + x * 58 / NEXT_ICON_WIDTH,
+                                           34 + y * 66 / NEXT_ICON_HEIGHT);
+      pixels[y * NEXT_ICON_WIDTH + x] = color;
+    }
+  }
+  tft.drawRGBBitmap(NEXT_TURN_X + 1, NEXT_TURN_TOP, pixels, NEXT_ICON_WIDTH, NEXT_ICON_HEIGHT);
+  char number[8];
+  formatPreviewNumber(navigationAfterNext.distanceMeters, number, sizeof(number));
+  const size_t length = strlen(number);
+  const uint8_t scaleX = previewNumberScaleX(length);
+  constexpr int16_t numberX = NEXT_TURN_X + NEXT_ICON_WIDTH + 3;
+  constexpr int16_t numberWidth = NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3;
+  tft.setTextSize(scaleX, 2);
+  tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+  tft.setCursor(numberX + (numberWidth - length * 6 * scaleX) / 2, NEXT_TURN_TOP + 1);
+  tft.print(number);
+  const String unit = navigationAfterNext.distanceMeters < 1000 ? "m" : "km";
+  drawText(unit, numberX + (numberWidth - unit.length() * 6) / 2,
+           NEXT_TURN_TOP + 21, 1, COLOR_ACCENT, COLOR_PANEL);
 }
 
 void drawNavigationStreet(const String &street, bool resetPage) {
   String name = toDisplayAscii(street);
   name.trim();
   if (name.isEmpty()) name = "--";
-  StreetLine lines[8]{};
-  uint8_t count = wrapStreet(name.c_str(), 6, lines, 8);
-  const bool compact = count > 2;
-  if (compact) count = wrapStreet(name.c_str(), 13, lines, 8);
-  roadPageCount = (count + 1) / 2;
+  StreetLine lines[16]{};
+  uint8_t count = wrapStreet(name.c_str(), 6, lines, 16);
+  const bool compact = count > STREET_ROWS_PER_PAGE;
+  if (compact) count = wrapStreet(name.c_str(), 13, lines, 16);
+  roadPageCount = (count + STREET_ROWS_PER_PAGE - 1) / STREET_ROWS_PER_PAGE;
   if (resetPage || roadPage >= roadPageCount) roadPage = 0;
   lastRoadPageAt = millis();
-  tft.fillRect(2, 100, STREET_WIDTH, 34, COLOR_PANEL);
-  for (uint8_t row = 0; row < 2; ++row) {
-    const uint8_t index = roadPage * 2 + row;
+  tft.fillRect(2, STREET_TOP, STREET_WIDTH, STREET_HEIGHT, COLOR_PANEL);
+  for (uint8_t row = 0; row < STREET_ROWS_PER_PAGE; ++row) {
+    const uint8_t index = roadPage * STREET_ROWS_PER_PAGE + row;
     if (index < count) {
       const uint8_t scaleX = compact ? 1 : 2;
       const String line = name.substring(lines[index].start,
@@ -1507,16 +1554,17 @@ void drawNavigationStreet(const String &street, bool resetPage) {
       tft.setTextSize(scaleX, 2);
       tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
       tft.setCursor(2 + (STREET_WIDTH - line.length() * 6 * scaleX) / 2,
-                    101 + row * 16);
+                    STREET_TOP + 1 + row * STREET_ROW_STEP);
       tft.print(line);
     }
   }
-  tft.fillRect(98, 92, 28, 8, COLOR_PANEL);
   if (roadPageCount > 1) {
     for (uint8_t page = 0; page < roadPageCount; ++page)
-      tft.drawFastHLine(100 + page * 5, 96, 3,
+      tft.drawFastHLine(4 + page * 5, STREET_PAGE_MARKER_Y, 3,
                        page == roadPage ? COLOR_TEXT : COLOR_WAIT);
   }
+  // Thông báo chỉ phủ tạm, không còn vùng trống dành riêng khi đang dẫn đường.
+  if (navigationBannerUntil != 0) drawNavigationBanner();
 }
 
 void drawNavigation(const String &maneuver, int distanceMeters,
@@ -1528,10 +1576,10 @@ void drawNavigation(const String &maneuver, int distanceMeters,
   drawNavigationArrow(maneuver, distanceMeters, true, exitNumber, turnAngle);
   drawNavigationStreet(street, true);
   drawNavigationDistance(distanceMeters);
+  drawAfterNextTurn();
   navigationOnScreen = true;
   drawClockBadge(true);
   drawSpeed(true);
-  if (navigationBannerUntil != 0) drawNavigationBanner();
 }
 
 void showPopup(const String &kind, const String &title, const String &body) {
@@ -1560,10 +1608,12 @@ void showPopup(const String &kind, const String &title, const String &body) {
 
 void showNavigation(const String &maneuver, int distanceMeters,
                     const String &street, int exitNumber = 0,
-                    int turnAngle = 999) {
-  const String safeStreet = clippedText(toDisplayAscii(street), 40);
+                    int turnAngle = 999, const TurnPreview &afterNext = {}) {
+  const String safeStreet = clippedText(toDisplayAscii(street), 80);
   const String key = maneuver + ":" + String(distanceMeters) + ":" +
-                     String(exitNumber) + ":" + String(turnAngle) + ":" + safeStreet;
+                     String(exitNumber) + ":" + String(turnAngle) + ":" + safeStreet + ":" +
+                     String(afterNext.turnType) + ":" + String(afterNext.distanceMeters) + ":" +
+                     String(afterNext.exitNumber) + ":" + String(afterNext.turnAngle);
   if (navigationOnScreen && lastNavigationKey == key) return;
   const bool distanceOnly = navigationOnScreen &&
                             navigationManeuver == maneuver &&
@@ -1575,6 +1625,7 @@ void showNavigation(const String &maneuver, int distanceMeters,
           showTurnArrow(maneuver, distanceMeters) ||
       blinkTurnArrow(navigationManeuver, navigationDistanceMeters) !=
           blinkTurnArrow(maneuver, distanceMeters);
+  const bool previewChanged = !(navigationAfterNext == afterNext);
   popupKind = "navigation";
   navigationVisible = true;
   navigationManeuver = maneuver;
@@ -1582,11 +1633,13 @@ void showNavigation(const String &maneuver, int distanceMeters,
   navigationExitNumber = exitNumber;
   navigationTurnAngle = turnAngle;
   navigationStreet = safeStreet;
+  navigationAfterNext = afterNext;
   lastNavigationKey = key;
   popupUntil = 0;
   if (detailsUntil == 0 && menuView == MenuView::Closed) {
     if (distanceOnly) {
       drawNavigationDistance(distanceMeters);
+      if (previewChanged) drawAfterNextTurn();
       if (arrowStageChanged) {
         navigationArrowVisible = true;
         lastNavigationBlink = millis();
@@ -1636,8 +1689,10 @@ bool processCommand(const String &payload) {
     }
     sendBleStatus(requestId > 0 ? status + ":" + String(requestId) : status);
   };
+  const bool compactNavigation = document["apiVersion"].is<int>() &&
+      document["apiVersion"].as<int>() == 2 && strcmp(command, "navigation") == 0;
   if (!document["apiVersion"].is<int>() ||
-      document["apiVersion"].as<int>() != 1) {
+      (document["apiVersion"].as<int>() != 1 && !compactNavigation)) {
     sendBleStatus("error:api_version");
     return false;
   }
@@ -1678,7 +1733,14 @@ bool processCommand(const String &payload) {
   }
 
   if (strcmp(command, "navigation") == 0) {
-    const String maneuver = document["maneuver"] | "straight";
+    if (compactNavigation && (!document["m"].is<int>() ||
+        !document["d"].is<int>() || !document["s"].is<const char *>())) {
+      sendBleStatus("error:navigation");
+      return false;
+    }
+    const String maneuver = compactNavigation
+        ? maneuverForTurnType(document["m"] | 0)
+        : document["maneuver"] | "straight";
     if (maneuver != "left" && maneuver != "right" &&
         maneuver != "straight" && maneuver != "u_turn" &&
         maneuver != "slight_left" && maneuver != "slight_right" &&
@@ -1690,16 +1752,31 @@ bool processCommand(const String &payload) {
       sendBleStatus("error:maneuver");
       return false;
     }
-    const int distanceMeters = constrain(document["distance_m"] | 0, 0, 999999);
-    const String street = document["street"] | "";
+    const int distanceMeters = constrain(document[compactNavigation ? "d" : "distance_m"] | 0, 0, 999999);
+    const String street = document[compactNavigation ? "s" : "street"] | "";
     const int exitNumber = maneuver == "roundabout" || maneuver == "roundabout_left"
-                               ? constrain(document["exit"] | 0, 0, 99)
+                               ? constrain(document[compactNavigation ? "e" : "exit"] | 0, 0, 99)
                                : 0;
-    const int suppliedAngle = document["angle"] | 999;
+    const int suppliedAngle = document[compactNavigation ? "a" : "angle"] | 999;
     const int turnAngle = (maneuver == "roundabout" || maneuver == "roundabout_left") &&
                                   suppliedAngle >= -180 && suppliedAngle <= 180
                               ? suppliedAngle : 999;
-    showNavigation(maneuver, distanceMeters, street, exitNumber, turnAngle);
+    TurnPreview afterNext;
+    const JsonArrayConst preview = document["then"].as<JsonArrayConst>();
+    if (preview.size() >= 2 && preview.size() <= 4 &&
+        preview[0].is<int>() && preview[1].is<int>()) {
+      afterNext.turnType = preview[0].as<int>();
+      afterNext.distanceMeters = preview[1].as<int>();
+      const bool roundabout = afterNext.turnType == 13 || afterNext.turnType == 14;
+      if (roundabout && preview.size() == 4 && preview[2].is<int>() && preview[3].is<int>()) {
+        afterNext.exitNumber = preview[2].as<int>();
+        afterNext.turnAngle = preview[3].as<int>();
+      } else if (preview.size() != 2) {
+        afterNext = {};
+      }
+    }
+    if (!afterNext.valid() || maneuver == "off_route" || maneuver == "arrive") afterNext = {};
+    showNavigation(maneuver, distanceMeters, street, exitNumber, turnAngle, afterNext);
     acknowledge("ok:navigation");
     return true;
   }
@@ -1714,6 +1791,7 @@ bool processCommand(const String &payload) {
     } else {
       navigationVisible = false;
       navigationOnScreen = false;
+      navigationAfterNext = {};
       navigationBannerUntil = 0;
       lastNavigationKey = "";
     }
@@ -2344,8 +2422,9 @@ void loop() {
   if (navigationBannerUntil != 0 &&
       static_cast<int32_t>(millis() - navigationBannerUntil) >= 0) {
     navigationBannerUntil = 0;
-    if (navigationOnScreen && menuView == MenuView::Closed)
-      tft.fillRect(2, 136, STREET_WIDTH, 22, COLOR_PANEL);
+    if (navigationOnScreen && menuView == MenuView::Closed &&
+        detailsUntil == 0 && popupUntil == 0)
+      drawNavigationStreet(navigationStreet, false);
   }
 
   if (menuView == MenuView::Closed && detailsUntil == 0 && popupUntil == 0 &&
