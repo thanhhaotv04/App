@@ -28,7 +28,7 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.41";
+constexpr char FIRMWARE_VERSION[] = "1.3.45";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -69,8 +69,11 @@ static_assert(STREET_TOP + STREET_HEIGHT == 158 &&
                   1 + (STREET_ROWS_PER_PAGE - 1) * STREET_ROW_STEP + 16 <= STREET_HEIGHT,
               "Street rows must use the lower area without clipping");
 static_assert(2 * 6 * 3 <= SPEED_WIDTH && 3 * 6 * 2 <= SPEED_WIDTH &&
-                  101 + 8 * 5 < 145,
-              "Enlarged speed digits must fit above the unit");
+                  112 + 8 * 5 <= 158,
+              "Speed digits must fit inside the lower column");
+static_assert(3 * 6 * 3 <= 64 && 5 * 6 * 2 <= 64 &&
+                  35 + 3 * 8 < 60 && 60 + 8 <= NEXT_TURN_TOP,
+              "Primary distance must fit above the next-turn preview");
 static_assert(5 + (6 + SETUP_PASSWORD_LENGTH) * 6 <= 128,
               "Setup AP password must fit the TFT width");
 constexpr uint32_t MODE_SWITCH_DELAY_MS = 250;
@@ -527,19 +530,14 @@ void drawSpeed(bool force = false) {
   if (!force && key == lastRenderedSpeed) return;
   lastRenderedSpeed = key;
   const uint16_t bg = navigationOnScreen ? COLOR_PANEL : COLOR_BACKGROUND;
-  if (force) {
-    tft.fillRect(SPEED_X, 100, SPEED_WIDTH, 60, bg);
-    if (navigationOnScreen)
-      tft.drawFastVLine(85, 100, 59, COLOR_BACKGROUND);
-    drawText("km/h", SPEED_X + (SPEED_WIDTH - 24) / 2, 146, 1, COLOR_ACCENT, bg);
-  } else {
-    tft.fillRect(SPEED_X, 100, SPEED_WIDTH, 42, bg);
-  }
+  tft.fillRect(SPEED_X, 100, SPEED_WIDTH, 60, bg);
+  if (force && navigationOnScreen)
+    tft.drawFastVLine(85, 100, 59, COLOR_BACKGROUND);
   const uint8_t scaleX = label.length() == 1 ? 5 : label.length() == 2 ? 3 : 2;
   const int16_t x = SPEED_X + (SPEED_WIDTH - label.length() * 6 * scaleX) / 2;
   tft.setTextSize(scaleX, 5);
   tft.setTextColor(speed < 0 ? COLOR_WAIT : COLOR_TEXT, bg);
-  tft.setCursor(x, 101);
+  tft.setCursor(x, 112);
   tft.print(label);
 }
 
@@ -1350,11 +1348,12 @@ void drawNavigationDistance(int distanceMeters) {
   const String distance = formatNavigationDistance(distanceMeters);
   const int split = distance.indexOf(' ');
   const String number = distance.substring(0, split);
-  // Five digits fit this half-width region; very long distances stay legible.
-  const uint8_t size = number.length() <= 5 ? 2 : 1;
-  drawText(number, 62 + (64 - number.length() * 6 * size) / 2, 39, size,
-           COLOR_WAIT, COLOR_PANEL);
-  drawText(distance.substring(split + 1), 88, 59, 1, COLOR_WAIT, COLOR_PANEL);
+  const uint8_t scaleX = number.length() <= 3 ? 3 : number.length() <= 5 ? 2 : 1;
+  tft.setTextSize(scaleX, 3);
+  tft.setTextColor(COLOR_WAIT, COLOR_PANEL);
+  tft.setCursor(62 + (64 - number.length() * 6 * scaleX) / 2, 35);
+  tft.print(number);
+  drawText(distance.substring(split + 1), 88, 60, 1, COLOR_WAIT, COLOR_PANEL);
 }
 
 bool isTurnManeuver(const String &maneuver) {
@@ -1594,16 +1593,15 @@ void drawAfterNextTurn() {
   char number[8];
   formatPreviewNumber(navigationAfterNext.distanceMeters, number, sizeof(number));
   const size_t length = strlen(number);
-  const uint8_t scaleX = previewNumberScaleX(length);
   constexpr int16_t numberX = NEXT_TURN_X + NEXT_ICON_WIDTH + 3;
   constexpr int16_t numberWidth = NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3;
-  tft.setTextSize(scaleX, 2);
+  tft.setTextSize(1);
   tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
-  tft.setCursor(numberX + (numberWidth - length * 6 * scaleX) / 2, NEXT_TURN_TOP + 1);
+  tft.setCursor(numberX + (numberWidth - length * 6) / 2, NEXT_TURN_TOP + 5);
   tft.print(number);
   const String unit = navigationAfterNext.distanceMeters < 1000 ? "m" : "km";
   drawText(unit, numberX + (numberWidth - unit.length() * 6) / 2,
-           NEXT_TURN_TOP + 21, 1, COLOR_ACCENT, COLOR_PANEL);
+           NEXT_TURN_TOP + 18, 1, COLOR_ACCENT, COLOR_PANEL);
 }
 
 void drawNavigationStreet(const String &street, bool resetPage) {

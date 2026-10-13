@@ -8,8 +8,6 @@ inline void formatPreviewNumber(int meters, char *text, size_t capacity) {
   else snprintf(text, capacity, "%d.%d", meters / 1000, (meters % 1000) / 100);
 }
 
-constexpr int previewNumberScaleX(size_t length) { return length <= 3 ? 2 : 1; }
-
 // IDs match the public OsmAnd ADirectionInfo turn types (1..14).
 inline const char *maneuverForTurnType(int type) {
   static constexpr const char *names[] = {

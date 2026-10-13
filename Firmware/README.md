@@ -3,15 +3,15 @@
 Firmware cho ESP32-S3 + TFT ST7735 1.8 inch 128x160. Pin TFT giữ nguyên theo
 `ESP32_TFT1.8inch`:
 
-Phiên bản hiện tại: `1.3.41`.
+Phiên bản hiện tại: `1.3.45`.
 
 32 pixel trên cùng (1/5 màn hình): hàng đầu là ngày/tháng/năm
 `dd/mm/yyyy`, phút của Stopwatch/Timer và trạng thái kết nối;
 hàng dưới là đồng hồ `HH:MM`. Chỉ đường chiếm vùng chính; tối đa ba dòng tên đường
-chiếm khoảng 2/3 chiều ngang bên trái, cột 1/3 bên phải dành cho tốc độ
-và đơn vị `km/h`. Tên ngắn dùng font lớn; tên dài dùng chữ hẹp hơn, ngắt theo từ
+chiếm khoảng 2/3 chiều ngang bên trái, cột 1/3 bên phải chỉ hiện số tốc độ,
+không có nhãn `km/h`. Tên ngắn dùng font lớn; tên dài dùng chữ hẹp hơn, ngắt theo từ
 (ví dụ `Nguyen Thi` / `Minh Khai`). Không còn nhãn `GPS`:
-số tốc độ cao 40 px, tự chọn bề ngang nét cho 1–3 chữ số để không tràn cột.
+số tốc độ cao 40 px, đặt thấp trong cột và tự chọn bề ngang nét cho 1–3 chữ số để không tràn cột.
 Không hiện giới hạn tốc độ.
 Chỉ vùng tốc độ thay đổi được vẽ lại. Không có dữ liệu hợp lệ hoặc mất kết nối
 thì hiện `--`, không giả định xe đang đứng yên. Tốc độ hết hạn sau 5 giây

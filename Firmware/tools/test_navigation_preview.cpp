@@ -12,7 +12,6 @@ int main() {
                 "Preview must stay above the street and speed columns");
   static_assert(NEXT_TURN_X + NEXT_TURN_WIDTH <= 126 &&
                     NEXT_ICON_HEIGHT <= NEXT_TURN_HEIGHT &&
-                    NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3 >= 3 * 6 * 2 &&
                     NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3 >= 5 * 6,
                 "Icon and longest distance must fit on TFT");
   static_assert(STREET_PAGE_MARKER_Y >= STREET_TOP + 1 +
@@ -23,12 +22,11 @@ int main() {
     char number[8];
     formatPreviewNumber(distance, number, sizeof(number));
     const size_t length = std::string(number).size();
-    assert(length * 6 * previewNumberScaleX(length) <= NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3);
+    assert(length * 6 <= NEXT_TURN_WIDTH - NEXT_ICON_WIDTH - 3);
   }
   char number[8];
   formatPreviewNumber(1600, number, sizeof(number));
   assert(std::string(number) == "1.6");
-  assert(previewNumberScaleX(3) == 2 && previewNumberScaleX(5) == 1);
   assert(!TurnPreview{}.valid());
   assert((TurnPreview{2, 1600}.valid()));
   assert((TurnPreview{13, 1200, 4, -90}.valid()));
