@@ -238,7 +238,8 @@ class SpeedService : Service(), LocationListener {
                 val user = FirebaseAuth.getInstance().currentUser
                 val requestedFleet = intent.getStringExtra("fleetId").orEmpty()
                 val requestedVehicle = intent.getStringExtra("vehicleId").orEmpty()
-                if (user == null || !requestedFleet.matches(Regex("[A-Za-z0-9_-]{1,64}")) ||
+                if (fleetActive || user == null || user.uid != intent.getStringExtra("uid") ||
+                    !requestedFleet.matches(Regex("[A-Za-z0-9_-]{1,64}")) ||
                     !requestedVehicle.matches(Regex("[A-Za-z0-9_-]{1,64}"))) {
                     fleetMessage = "Sign in and choose a valid fleet vehicle"
                     if (!running) stopSelf()
@@ -269,6 +270,13 @@ class SpeedService : Service(), LocationListener {
                 if (!fleetActive) {
                     if (!running) stopSelf()
                     return START_NOT_STICKY
+                }
+                if (intent.getBooleanExtra("ride", false)) {
+                    running = true
+                    latestKmh = null
+                    fixAt = 0
+                    acknowledgedAt = 0
+                    message = "Waiting for a GPS fix"
                 }
             }
             else -> {

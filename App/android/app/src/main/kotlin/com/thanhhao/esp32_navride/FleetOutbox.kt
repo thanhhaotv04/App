@@ -25,8 +25,8 @@ internal class FleetOutbox(context: Context, name: String = "fleet-outbox.db") :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     fun add(uid: String, kind: String, path: String, fields: JSONObject) {
-        require(uid.isNotBlank() && kind in setOf("start", "point", "end", "marker", "photo"))
-        val collection = when (kind) { "point" -> "track_points"; "marker", "photo" -> "markers"; else -> "trips" }
+        require(uid.isNotBlank() && kind in setOf("start", "point", "end", "marker", "photo", "marker_edit", "marker_delete"))
+        val collection = when (kind) { "point" -> "track_points"; "marker", "photo", "marker_edit", "marker_delete" -> "markers"; else -> "trips" }
         require(path.matches(Regex("fleets/[A-Za-z0-9_-]{1,64}/vehicles/[A-Za-z0-9_-]{1,64}/$collection/" +
             "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" +
             (if (kind == "photo") "/photos/image" else ""))))
@@ -38,6 +38,28 @@ internal class FleetOutbox(context: Context, name: String = "fleet-outbox.db") :
     fun countKind(uid: String, kind: String): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM pending WHERE uid = ? AND kind = ?", arrayOf(uid, kind),
     ).use { it.moveToFirst(); it.getInt(0) }
+
+    // Không đọc dữ liệu ảnh Base64 vào danh sách; chỉ lấy theo yêu cầu xem ảnh.
+    fun markers(uid: String): List<Entry> = readableDatabase.rawQuery(
+        "SELECT id, uid, kind, path, CASE WHEN kind = 'photo' THEN '{}' ELSE fields END " +
+            "FROM pending WHERE uid = ? AND kind IN ('marker','photo','marker_edit','marker_delete') ORDER BY id LIMIT 5000",
+        arrayOf(uid),
+    ).use { cursor -> buildList {
+        while (cursor.moveToNext()) add(Entry(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
+            cursor.getString(3), JSONObject(cursor.getString(4))))
+    } }
+
+    fun photo(uid: String, path: String): String? = readableDatabase.rawQuery(
+        "SELECT fields FROM pending WHERE uid = ? AND path = ? AND kind = 'photo' LIMIT 1",
+        arrayOf(uid, "$path/photos/image"),
+    ).use { if (it.moveToFirst()) JSONObject(it.getString(0)).getJSONObject("data").getString("stringValue") else null }
+
+    fun mutateMarker(uid: String, kind: String, path: String, fields: JSONObject) {
+        require(kind == "marker_edit" || kind == "marker_delete")
+        check(count(uid) < 5000) { "Upload queue is full" }
+        // Xếp sau create/photo để không đua với gói đang được gửi.
+        add(uid, kind, path, fields)
+    }
 
     fun addMarker(uid: String, path: String, fields: JSONObject, photo: JSONObject?) {
         val db = writableDatabase

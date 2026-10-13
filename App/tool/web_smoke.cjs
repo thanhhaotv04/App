@@ -17,7 +17,7 @@ const fs = require('node:fs');
       activePage = page;
       page.setDefaultTimeout(12000);
       const destination = name => page.getByRole('tab', {name, exact: true})
-        .or(page.getByRole('button', {name: new RegExp(`^${name}\\s+Tab \\d of 3$`)}));
+        .or(page.getByRole('button', {name: new RegExp(`^${name}\\s+Tab \\d of 4$`)}));
       page.on('pageerror', error => errors.push(error.message));
       // Flutter replaces the semantics proxy on focus; type into the real editor.
       async function enter(name, value) {
@@ -44,9 +44,22 @@ const fs = require('node:fs');
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
       await destination('Settings').waitFor();
       await page.screenshot({path: `build/ux/navigation-${width}.png`});
+      const navigationHelp = page.getByRole('button', {name: 'Help about Navigation', exact: true});
+      await navigationHelp.click();
+      await page.getByText(/Connect ESP32 using Bluetooth, allow OsmAnd/).waitFor();
+      await page.screenshot({path: `build/ux/navigation-help-${width}.png`});
+      await page.getByRole('button', {name: 'Close help', exact: true}).click();
       await destination('Content').click();
       await page.getByRole('button', {name: 'Add notification', exact: true}).waitFor();
       await page.screenshot({path: `build/ux/content-${width}.png`});
+      await destination('Trips').click();
+      await page.getByRole('button', {name: 'Help about Trips', exact: true}).waitFor();
+      await page.screenshot({path: `build/ux/trips-${width}.png`});
+      await page.getByRole('button', {name: 'Help about Trips', exact: true}).click();
+      await page.getByText(/The first valid GPS point is saved immediately/).waitFor();
+      await page.screenshot({path: `build/ux/fleet-help-${width}.png`});
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', {name: 'Close help', exact: true}).waitFor({state: 'hidden'});
       await destination('Settings').click();
       await page.getByRole('checkbox', {name: 'Bluetooth', exact: true}).waitFor();
       await page.screenshot({path: `build/ux/settings-${width}.png`});
@@ -87,7 +100,7 @@ const fs = require('node:fs');
         await page.getByRole('button', {name: 'Save', exact: true}).click();
         await page.getByRole('group', {name: /^Edited reminder/}).waitFor();
         await destination('Settings').click();
-        const privacy = page.getByRole('button', {name: /Privacy and data/});
+        const privacy = page.getByRole('button', {name: 'Privacy and data', exact: true});
         await reveal(privacy);
         await privacy.click();
         const clear = page.getByRole('button', {name: 'Delete saved data', exact: true});
@@ -101,7 +114,8 @@ const fs = require('node:fs');
         await reveal(clear);
         await clear.click();
         await page.getByRole('button', {name: 'Delete data', exact: true}).click();
-        await page.getByText('Saved data deleted. GPS speed and sharing are off.', {exact: true}).waitFor();
+        await page.getByText('Saved data deleted. GPS speed and sharing are off.', {exact: true})
+          .last().waitFor();
         assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)
           .filter(key => /esp32-(?:navride|monitor)\.snapshot/.test(key))), []);
         await destination('Content').click();

@@ -60,14 +60,26 @@ class FleetHistoryUploadTest {
                 while (offset < chars.size) offset += reader.read(chars, offset, chars.size - offset)
                 val body = JSONObject(String(chars))
                 val write = body.getJSONArray("writes").getJSONObject(0)
-                assertEquals(entry.kind == "end", write.getJSONObject("currentDocument").getBoolean("exists"))
+                if (entry.kind == "marker_delete") {
+                    assertEquals(2, body.getJSONArray("writes").length())
+                    assertTrue(write.getString("delete").endsWith("/photos/image"))
+                    remote = null
+                } else {
+                assertEquals(entry.kind in setOf("end", "marker_edit"), write.getJSONObject("currentDocument").getBoolean("exists"))
                 assertEquals("REQUEST_TIME", write.getJSONArray("updateTransforms")
                     .getJSONObject(0).getString("setToServerValue"))
                 if (entry.kind == "end") assertEquals("endedAt",
                     write.getJSONObject("updateMask").getJSONArray("fieldPaths").getString(0))
+                if (entry.kind == "marker_edit") assertEquals(listOf("kind", "note"),
+                    write.getJSONObject("updateMask").getJSONArray("fieldPaths").let { fields ->
+                        (0 until fields.length()).map { fields.getString(it) }
+                    })
                 remote = write.getJSONObject("update")
+                }
                 writes++
-                response = JSONObject().put("writeResults", JSONArray().put(JSONObject()))
+                val results = JSONArray().put(JSONObject())
+                if (entry.kind == "marker_delete") results.put(JSONObject())
+                response = JSONObject().put("writeResults", results)
                     .put("commitTime", "1970-01-01T00:00:01Z")
                 commitStatus
             }
@@ -90,6 +102,32 @@ class FleetHistoryUploadTest {
         uploader.upload(entry)
         assertEquals(1, writes)
         assertEquals(entry.fields.toString(), remote!!.getJSONObject("fields").toString())
+    }
+
+    @Test fun markerEditUsesPartialUpdateAndLostAckIsIdempotent() {
+        entry = FleetOutbox.Entry(4, "owner", "marker_edit", entry.path.replace("track_points", "markers"),
+            JSONObject().put("driverUid", FleetHistoryUpload.string("owner"))
+                .put("kind", FleetHistoryUpload.string("food")).put("note", FleetHistoryUpload.string("Lunch")))
+        remote = JSONObject().put("fields", JSONObject().put("driverUid", FleetHistoryUpload.string("owner")))
+        commitStatus = 503
+        try { uploader.upload(entry); fail("Lost ACK") } catch (_: IOException) { }
+        uploader.upload(entry)
+        assertEquals(1, writes)
+    }
+
+    @Test fun markerDeleteIsAtomicAndMissingMarkerConfirmsLostAck() {
+        entry = FleetOutbox.Entry(4, "owner", "marker_delete", entry.path.replace("track_points", "markers"), JSONObject())
+        remote = JSONObject().put("fields", JSONObject().put("driverUid", FleetHistoryUpload.string("owner")))
+        commitStatus = 503
+        try { uploader.upload(entry); fail("Lost ACK") } catch (_: IOException) { }
+        uploader.upload(entry)
+        assertEquals(1, writes)
+    }
+
+    @Test fun markerEditCannotRecreateDeletedRecord() {
+        entry = FleetOutbox.Entry(4, "owner", "marker_edit", entry.path.replace("track_points", "markers"), JSONObject())
+        uploader.upload(entry)
+        assertEquals(0, writes)
     }
 
     @Test fun markerWithPhotoFlagUsesServerTimeAndIdempotentRead() {

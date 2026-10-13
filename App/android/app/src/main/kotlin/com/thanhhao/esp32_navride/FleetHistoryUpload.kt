@@ -93,8 +93,26 @@ internal class FleetHistoryUpload(
 
     fun upload(entry: FleetOutbox.Entry) {
         val (status, existing) = request("GET", "/${entry.path}")
+        if (entry.kind == "marker_delete") {
+            if (status == 404) return
+            if (status != 200 || existing.optJSONObject("fields")?.optJSONObject("driverUid")?.optString("stringValue") != entry.uid)
+                throw IOException("Marker deletion could not be confirmed")
+            val writes = JSONArray()
+                .put(JSONObject().put("delete", "$documents/${entry.path}/photos/image"))
+                .put(JSONObject().put("delete", "$documents/${entry.path}"))
+            val (code, reply) = request("POST", ":commit", JSONObject().put("writes", writes))
+            if (code != 200 || reply.optJSONArray("writeResults")?.length() != 2 || !reply.has("commitTime"))
+                throw IOException("Marker deletion could not be confirmed")
+            return
+        }
         if (status == 200 && matches(entry, existing)) return
-        if (status != 404 && !(status == 200 && entry.kind == "end" &&
+        // Xóa trên thiết bị khác thắng bản sửa offline; không tái tạo điểm đã xóa
+        // và không để bản sửa này chặn mọi điểm/ảnh phía sau trong hàng đợi.
+        if (entry.kind == "marker_edit" && status == 404) return
+        if (entry.kind == "marker_edit" && (status != 200 ||
+                existing.optJSONObject("fields")?.optJSONObject("driverUid")?.optString("stringValue") != entry.uid))
+            throw IOException("Marker edit could not be confirmed")
+        if (entry.kind != "marker_edit" && status != 404 && !(status == 200 && entry.kind == "end" &&
                 existing.optJSONObject("fields")?.optJSONObject("endedAt")?.has("nullValue") == true)) {
             throw IOException("Route sync could not be confirmed")
         }
@@ -103,7 +121,10 @@ internal class FleetHistoryUpload(
             .put("name", "$documents/${entry.path}").put("fields", entry.fields))
             .put("updateTransforms", JSONArray().put(JSONObject()
                 .put("fieldPath", transform).put("setToServerValue", "REQUEST_TIME")))
-            .put("currentDocument", JSONObject().put("exists", entry.kind == "end"))
+            .put("currentDocument", JSONObject().put("exists", entry.kind in setOf("end", "marker_edit")))
+        if (entry.kind == "marker_edit") {
+            write.put("updateMask", JSONObject().put("fieldPaths", JSONArray().put("kind").put("note")))
+        }
         if (entry.kind == "end") {
             write.put("updateMask", JSONObject().put("fieldPaths", JSONArray().put("endedAt")))
         }
@@ -113,5 +134,28 @@ internal class FleetHistoryUpload(
             // Không xóa bản chờ; lần sau GET sẽ xác minh nếu server đã nhận mà ACK bị mất.
             throw IOException("Route sync could not be confirmed")
         }
+    }
+
+    fun listMarkers(base: String): List<JSONObject> {
+        require(base.matches(Regex("fleets/[A-Za-z0-9_-]{1,64}/vehicles/[A-Za-z0-9_-]{1,64}")))
+        val (code, reply) = request("GET", "/$base/markers?pageSize=200&orderBy=capturedAt%20desc")
+        if (code !in 200..299) throw IOException("Cloud markers unavailable")
+        val docs = reply.optJSONArray("documents") ?: return emptyList()
+        return (0 until docs.length()).map { docs.getJSONObject(it) }
+    }
+
+    fun photo(path: String): String? {
+        val (code, reply) = request("GET", "/$path/photos/image")
+        if (code == 404) return null
+        if (code != 200) throw IOException("Photo unavailable")
+        return reply.optJSONObject("fields")?.optJSONObject("data")?.optString("stringValue")
+    }
+
+    fun listTrips(base: String): List<JSONObject> {
+        require(base.matches(Regex("fleets/[A-Za-z0-9_-]{1,64}/vehicles/[A-Za-z0-9_-]{1,64}")))
+        val (code, reply) = request("GET", "/$base/trips?pageSize=100&orderBy=startedAt%20desc")
+        if (code !in 200..299) throw IOException("Trip history unavailable")
+        val docs = reply.optJSONArray("documents") ?: return emptyList()
+        return (0 until docs.length()).map { docs.getJSONObject(it) }
     }
 }

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import 'models.dart';
 import 'fleet_tracking_panel.dart';
+import 'feature_help.dart';
 import 'storage.dart';
 import 'transport.dart';
 import 'update_service.dart';
@@ -69,6 +70,10 @@ class _NavRideAppState extends State<NavRideApp> {
         seedColor: NavRideColors.blue,
         primary: NavRideColors.blue,
         surface: Colors.white,
+        onSurface: NavRideColors.ink,
+        onSurfaceVariant: NavRideColors.muted,
+        outline: const Color(0xFFCDCDD2),
+        outlineVariant: const Color(0xFFE5E5EA),
       ),
       scaffoldBackgroundColor: NavRideColors.canvas,
       textTheme: ThemeData.light().textTheme.apply(
@@ -79,7 +84,7 @@ class _NavRideAppState extends State<NavRideApp> {
         color: Colors.white,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -94,10 +99,18 @@ class _NavRideAppState extends State<NavRideApp> {
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 48),
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -106,6 +119,7 @@ class _NavRideAppState extends State<NavRideApp> {
         backgroundColor: Colors.white,
         indicatorColor: NavRideColors.blueSoft,
         elevation: 0,
+        height: 72,
       ),
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
@@ -696,7 +710,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     try {
       if (_config.mode != ConnectionMode.bluetooth ||
           _config.bluetoothId.isEmpty) {
-        setState(() => _page = 2);
+        setState(() => _page = 3);
         return;
       }
       if (_bridge['configured'] != true ||
@@ -749,7 +763,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     }
     if (_config.mode != ConnectionMode.bluetooth ||
         _config.bluetoothId.isEmpty) {
-      setState(() => _page = 2);
+      setState(() => _page = 3);
       await _changeMode(ConnectionMode.bluetooth);
     } else if (_listenerNeedsRestore) {
       if (_deviceBusy) return;
@@ -1179,6 +1193,11 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         label: 'Content',
       ),
       NavigationDestination(
+        icon: Icon(Icons.route_outlined),
+        selectedIcon: Icon(Icons.route),
+        label: 'Trips',
+      ),
+      NavigationDestination(
         icon: Icon(Icons.settings_outlined),
         selectedIcon: Icon(Icons.settings),
         label: 'Settings',
@@ -1187,6 +1206,29 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     final page = switch (_page) {
       0 => _navigationPage(),
       1 => _contentPage(),
+      2 => _pageLayout(
+        'Trips',
+        'Start a ride to use phone GPS. Share with Fleet is optional and off by default. '
+            'With sharing on, you can save markers, add photos and view your route history. '
+            'Fleet works without an ESP32.\n\n'
+            'The first valid GPS point is saved immediately; further route points need '
+            'at least 1 minute and more than 100 m of movement. Offline data syncs when '
+            'internet returns and leaves the upload queue only after server confirmation. '
+            'Private rides are not stored in Fleet. End ride stops GPS speed and Fleet sharing; '
+            'Bluetooth remains available for the clock, content and OsmAnd directions.',
+        [
+          FleetTrackingPanel(
+            key: const ValueKey('trips-panel'),
+            enabled: _android && widget.firebaseReady,
+            rideAvailable: _android,
+            savedDeviceId: _config.mode == ConnectionMode.bluetooth
+                ? _config.bluetoothId
+                : '',
+            trips: true,
+            onOpenSettings: () => setState(() => _page = 3),
+          ),
+        ],
+      ),
       _ => _settingsPage(),
     };
     return Scaffold(
@@ -1259,32 +1301,20 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -.6,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: NavRideColors.muted,
-                    height: 1.45,
-                  ),
-                ),
-              ],
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -.6,
+              ),
             ),
           ),
+          FeatureHelp(title: title, message: subtitle),
           ?action,
         ],
       ),
-      const SizedBox(height: 24),
+      const SizedBox(height: 16),
       ...children,
     ],
   );
@@ -1296,35 +1326,6 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     return _bridge['lastNavigationConfirmed'] == true
         ? 'Sending directions'
         : 'Waiting for ESP32';
-  }
-
-  String get _navigationDescription {
-    if (!_android) {
-      return 'Connect your Android phone to ESP32 for turn-by-turn directions from OsmAnd.';
-    }
-    if (_config.mode != ConnectionMode.bluetooth ||
-        _config.bluetoothId.isEmpty) {
-      return 'Connect ESP32 over Bluetooth to get started. No Wi-Fi needed on the road.';
-    }
-    if (_bridge['notificationAccess'] != true) {
-      return 'Allow notification access so NavRide can receive directions and street names from OsmAnd.';
-    }
-    if (_listenerNeedsRestore) {
-      return _bridge['listenerRecovering'] == true
-          ? 'Reconnecting navigation in the background. This may take a few seconds.'
-          : 'Notification access is already enabled. Tap Retry connection to restart the navigation connection.';
-    }
-    if (!_navigationReady) {
-      return _bridge['bleConnected'] == true
-          ? 'Check that OsmAnd is installed on your phone.'
-          : 'Wait for automatic reconnection. If BLT stops flashing, press Button 2 on ESP32, then tap Reconnect ESP32.';
-    }
-    if (_bridge['osmandDataRecent'] != true) {
-      return 'Open OsmAnd, choose a destination and start navigation.';
-    }
-    return _bridge['lastNavigationConfirmed'] == true
-        ? 'ESP32 confirmed the latest directions from OsmAnd.'
-        : 'Directions received from OsmAnd. Waiting for delivery confirmation from ESP32.';
   }
 
   String get _navigationButton {
@@ -1346,43 +1347,33 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 
   Widget _navigationPage() => _pageLayout(
     'Navigation',
-    'ESP32-NavRide',
+    'Connect ESP32 using Bluetooth, allow OsmAnd notification access and start a route in OsmAnd. '
+        'Directions and street names appear on your display. Download maps in OsmAnd for offline navigation. '
+        'Use Help in Settings for the complete setup.',
     [
       _Panel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: NavRideColors.blueSoft,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: const Icon(
-                Icons.navigation_outlined,
-                size: 40,
-                color: NavRideColors.blue,
-              ),
+            Row(
+              children: [
+                const Icon(
+                  Icons.navigation_outlined,
+                  color: NavRideColors.blue,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _navigationTitle,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 24),
-            Text(
-              _navigationTitle,
-              style: const TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.w600,
-                height: 1.2,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _navigationDescription,
-              style: const TextStyle(
-                color: NavRideColors.muted,
-                fontSize: 16,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -1434,9 +1425,13 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'GPS speed',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            const FeatureHeading(
+              title: 'GPS speed',
+              help:
+                  'Uses your Android phone GPS, including while OsmAnd is open. '
+                  'No internet is needed. Connect ESP32 over Bluetooth to send speed to the display. '
+                  'Start while parked and allow precise location. GPS may take a moment to find your position; '
+                  'OsmAnd simulation does not replace real GPS speed.',
             ),
             const SizedBox(height: 8),
             Text(
@@ -1445,15 +1440,13 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
               style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
-            Text(
-              !_android
-                  ? 'GPS speed requires an Android phone connected by Bluetooth.'
-                  : _speed['running'] == true
-                  ? _speed['kmh'] == null
-                        ? '${_speed['message'] ?? 'Waiting for GPS'}'
-                        : '${_speed['message'] ?? 'GPS speed active'} · ${_speed['delivered'] == true ? 'ESP32 receiving' : 'Waiting for ESP32'}'
-                  : 'Uses phone GPS, including while OsmAnd is open. No internet needed. Start while parked.',
-            ),
+            if (_speed['running'] == true)
+              Text(
+                _speed['kmh'] == null
+                    ? '${_speed['message'] ?? 'Waiting for GPS'}'
+                    : '${_speed['message'] ?? 'GPS speed active'} · ${_speed['delivered'] == true ? 'ESP32 receiving' : 'Waiting for ESP32'}',
+              ),
+            if (!_android) const Text('Available on Android'),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               key: const ValueKey('gps-speed-toggle'),
@@ -1476,26 +1469,12 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
           ],
         ),
       ),
-      const SizedBox(height: 8),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: _showHelp,
-          icon: const Icon(Icons.help_outline),
-          label: const Text('OsmAnd and street name setup'),
-        ),
-      ),
       if (_android) ...[
         const SizedBox(height: 8),
         _Disclosure(
           title: 'Test display',
           icon: Icons.build_outlined,
           children: [
-            const Text(
-              'Send a Nguyen Hue · 250 m sample while parked. It clears after 15 seconds; real OsmAnd exit angles may differ.',
-              style: TextStyle(color: NavRideColors.muted),
-            ),
-            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1633,14 +1612,6 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         ),
       ),
       const SizedBox(height: 16),
-      if (_config.mode == ConnectionMode.demo)
-        const Padding(
-          padding: EdgeInsets.only(bottom: 16),
-          child: Text(
-            'Save content now. Connect ESP32 in Settings when you want to send it.',
-            style: TextStyle(color: NavRideColors.muted, height: 1.45),
-          ),
-        ),
       if (_showTasks && _tasks.isEmpty)
         const _EmptyContent(
           icon: Icons.checklist,
@@ -1811,378 +1782,349 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
     ],
   );
 
-  Widget
-  _settingsPage() => _pageLayout('Settings', 'Connect and manage your display.', [
-    _Panel(
-      title: 'Connect ESP32',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Use Bluetooth for navigation, or Wi-Fi to send content on the same network.',
-            style: TextStyle(color: NavRideColors.muted, height: 1.45),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final mode in [
-                ConnectionMode.bluetooth,
-                ConnectionMode.network,
-              ])
-                ChoiceChip(
-                  key: ValueKey('mode-${mode.name}'),
-                  label: Text(mode.label),
-                  avatar: Icon(
-                    mode == ConnectionMode.bluetooth
-                        ? Icons.bluetooth
-                        : Icons.wifi,
-                    size: 18,
-                  ),
-                  selected: _config.mode == mode,
-                  onSelected: _deviceBusy ? null : (_) => _changeMode(mode),
-                ),
-            ],
-          ),
-          if (_connectionBusy)
-            const Padding(
-              padding: EdgeInsets.only(top: 16),
-              child: LinearProgressIndicator(),
-            ),
-          const SizedBox(height: 16),
-          Text(
-            _connectionLabel,
-            style: TextStyle(
-              color: _connected ? NavRideColors.green : NavRideColors.muted,
-            ),
-          ),
-          if (_config.mode != ConnectionMode.demo)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: OutlinedButton.icon(
-                key: const ValueKey('disconnect-device'),
-                onPressed: _deviceBusy
-                    ? null
-                    : () => _changeMode(ConnectionMode.demo),
-                icon: const Icon(Icons.link_off),
-                label: const Text('Disconnect'),
-              ),
-            )
-          else if (_config.bluetoothId.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  OutlinedButton.icon(
-                    key: const ValueKey('reconnect-saved-ble'),
-                    onPressed: _deviceBusy
-                        ? null
-                        : () => _changeMode(ConnectionMode.bluetooth),
-                    icon: const Icon(Icons.bluetooth),
-                    label: const Text('Connect saved ESP32'),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'If BLT is not flashing, press Button 2 on ESP32 first.',
-                    style: TextStyle(color: NavRideColors.muted),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: const ValueKey('change-wifi'),
-            onPressed: _deviceBusy
-                ? null
-                : () => setState(() => _showWifiSetup = !_showWifiSetup),
-            icon: const Icon(Icons.wifi),
-            label: const Text('Change Wi-Fi'),
-          ),
-          if (_showWifiSetup) ...[
-            const SizedBox(height: 12),
-            Text(
-              _connected
-                  ? 'Enter the new network. ESP32 will switch to Wi-Fi after saving.'
-                  : 'Connect ESP32 over Bluetooth or Wi-Fi first, then enter the new network.',
-              style: const TextStyle(color: NavRideColors.muted, height: 1.45),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _wifiSsidController,
-              enabled: !_deviceBusy,
-              maxLength: 32,
-              decoration: const InputDecoration(
-                labelText: 'Wi-Fi name',
-                counterText: '',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _wifiPasswordController,
-              enabled: !_deviceBusy,
-              maxLength: 63,
-              obscureText: !_showWifiPassword,
-              enableSuggestions: false,
-              autocorrect: false,
-              decoration: InputDecoration(
-                labelText: 'Wi-Fi password',
-                counterText: '',
-                suffixIcon: IconButton(
-                  tooltip: _showWifiPassword
-                      ? 'Hide password'
-                      : 'Show password',
-                  onPressed: () =>
-                      setState(() => _showWifiPassword = !_showWifiPassword),
-                  icon: Icon(
-                    _showWifiPassword
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: !_connected || !_canSend ? null : _setupWifi,
-              child: const Text('Save Wi-Fi network'),
-            ),
-          ],
-          if (_config.mode == ConnectionMode.bluetooth) ...[
-            const SizedBox(height: 8),
-            const Text(
-              'Press and release Button 2 on ESP32, then select Find devices within 20 seconds. Android may ask for the PIN shown in ESP32 Info.',
-              style: TextStyle(color: NavRideColors.muted, height: 1.45),
-            ),
-            const SizedBox(height: 12),
+  Widget _settingsPage() => _pageLayout(
+    'Settings',
+    'Connect your display, choose your Fleet account, manage app updates and review privacy settings. '
+        'Tap the ! next to a feature for instructions.',
+    [
+      _Panel(
+        title: 'Connect ESP32',
+        help:
+            'Use Bluetooth for navigation, or Wi-Fi to send content on the same network.\n\n'
+            'Bluetooth: press and release Button 2 on ESP32, then select Find devices within 20 seconds. '
+            'Android may ask for the PIN shown in Menu → ESP32 Info. '
+            'Use Reconnect for your saved display, or Find devices to choose another. '
+            'If BLT is not flashing, press Button 2 first.\n\n'
+            'Wi-Fi: connect the phone and ESP32 to the same network. '
+            'Find the PIN and IP address in Menu → ESP32 Info. '
+            'Local Wi-Fi uses unencrypted HTTP; use a trusted network.\n\n'
+            'Disconnect pauses automatic connection until you connect again. '
+            'Otherwise, NavRide reconnects to your saved ESP32 when available. '
+            'In a browser, Bluetooth needs HTTPS or localhost and browser support.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton.icon(
-                  key: const ValueKey('scan-ble'),
-                  onPressed: _deviceBusy ? null : _scanBle,
-                  icon: const Icon(Icons.bluetooth_searching),
-                  label: const Text('Find devices'),
-                ),
-                if (_config.bluetoothId.isNotEmpty)
-                  TextButton(
-                    onPressed: _deviceBusy ? null : _reconnectDevice,
-                    child: const Text('Reconnect'),
+                for (final mode in [
+                  ConnectionMode.bluetooth,
+                  ConnectionMode.network,
+                ])
+                  ChoiceChip(
+                    key: ValueKey('mode-${mode.name}'),
+                    label: Text(mode.label),
+                    avatar: Icon(
+                      mode == ConnectionMode.bluetooth
+                          ? Icons.bluetooth
+                          : Icons.wifi,
+                      size: 18,
+                    ),
+                    selected: _config.mode == mode,
+                    onSelected: _deviceBusy ? null : (_) => _changeMode(mode),
                   ),
               ],
             ),
-            for (final candidate in _bleCandidates)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(candidate.name),
-                subtitle: Text(candidate.id),
-                trailing: TextButton(
-                  onPressed: _deviceBusy ? null : () => _connectBle(candidate),
-                  child: const Text('Connect'),
-                ),
-              ),
-            if (kIsWeb)
+            if (_connectionBusy)
               const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Text(
-                  'Web Bluetooth requires HTTPS or localhost and a supported browser.',
-                  style: TextStyle(color: NavRideColors.muted),
+                padding: EdgeInsets.only(top: 16),
+                child: LinearProgressIndicator(),
+              ),
+            const SizedBox(height: 16),
+            Text(
+              _connectionLabel,
+              style: TextStyle(
+                color: _connected ? NavRideColors.green : NavRideColors.muted,
+              ),
+            ),
+            if (_config.mode != ConnectionMode.demo)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  key: const ValueKey('disconnect-device'),
+                  onPressed: _deviceBusy
+                      ? null
+                      : () => _changeMode(ConnectionMode.demo),
+                  icon: const Icon(Icons.link_off),
+                  label: const Text('Disconnect'),
+                ),
+              )
+            else if (_config.bluetoothId.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('reconnect-saved-ble'),
+                      onPressed: _deviceBusy
+                          ? null
+                          : () => _changeMode(ConnectionMode.bluetooth),
+                      icon: const Icon(Icons.bluetooth),
+                      label: const Text('Connect saved ESP32'),
+                    ),
+                  ],
                 ),
               ),
-          ],
-          if (_config.mode == ConnectionMode.network) ...[
-            const SizedBox(height: 16),
-            TextField(
-              key: const ValueKey('device-pairing-pin'),
-              controller: _pairingPinController,
-              enabled: !_deviceBusy,
-              keyboardType: TextInputType.number,
-              obscureText: !_showPairingPin,
-              enableSuggestions: false,
-              autocorrect: false,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              maxLength: 6,
-              decoration: InputDecoration(
-                labelText: 'ESP32 pairing PIN',
-                hintText: 'Shown in ESP32 Info',
-                counterText: '',
-                suffixIcon: IconButton(
-                  tooltip: _showPairingPin ? 'Hide PIN' : 'Show PIN',
-                  onPressed: () =>
-                      setState(() => _showPairingPin = !_showPairingPin),
-                  icon: Icon(
-                    _showPairingPin
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const ValueKey('change-wifi'),
+              onPressed: _deviceBusy
+                  ? null
+                  : () => setState(() => _showWifiSetup = !_showWifiSetup),
+              icon: const Icon(Icons.wifi),
+              label: const Text('Change Wi-Fi'),
+            ),
+            if (_showWifiSetup) ...[
+              const SizedBox(height: 12),
+              if (!_connected) ...[
+                const Text('Connect ESP32 first.'),
+                const SizedBox(height: 12),
+              ],
+              TextField(
+                controller: _wifiSsidController,
+                enabled: !_deviceBusy,
+                maxLength: 32,
+                decoration: const InputDecoration(
+                  labelText: 'Wi-Fi name',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _wifiPasswordController,
+                enabled: !_deviceBusy,
+                maxLength: 63,
+                obscureText: !_showWifiPassword,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: 'Wi-Fi password',
+                  counterText: '',
+                  suffixIcon: IconButton(
+                    tooltip: _showWifiPassword
+                        ? 'Hide password'
+                        : 'Show password',
+                    onPressed: () =>
+                        setState(() => _showWifiPassword = !_showWifiPassword),
+                    icon: Icon(
+                      _showWifiPassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              key: const ValueKey('device-address'),
-              controller: _baseUrlController,
-              enabled: !_deviceBusy,
-              keyboardType: TextInputType.url,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _saveNetworkAddress(),
-              decoration: const InputDecoration(
-                labelText: 'ESP32 IP address',
-                hintText: '192.168.1.55',
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: !_connected || !_canSend ? null : _setupWifi,
+                child: const Text('Save Wi-Fi network'),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Find the PIN and IP on the display: Button 3 → ESP32 Info.',
-              style: TextStyle(color: NavRideColors.muted),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _deviceBusy ? null : _saveNetworkAddress,
-              child: const Text('Save and connect'),
-            ),
+            ],
+            if (_config.mode == ConnectionMode.bluetooth) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('scan-ble'),
+                    onPressed: _deviceBusy ? null : _scanBle,
+                    icon: const Icon(Icons.bluetooth_searching),
+                    label: const Text('Find devices'),
+                  ),
+                  if (_config.bluetoothId.isNotEmpty)
+                    TextButton(
+                      onPressed: _deviceBusy ? null : _reconnectDevice,
+                      child: const Text('Reconnect'),
+                    ),
+                ],
+              ),
+              for (final candidate in _bleCandidates)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(candidate.name),
+                  subtitle: Text(candidate.id),
+                  trailing: TextButton(
+                    onPressed: _deviceBusy
+                        ? null
+                        : () => _connectBle(candidate),
+                    child: const Text('Connect'),
+                  ),
+                ),
+            ],
+            if (_config.mode == ConnectionMode.network) ...[
+              const SizedBox(height: 16),
+              TextField(
+                key: const ValueKey('device-pairing-pin'),
+                controller: _pairingPinController,
+                enabled: !_deviceBusy,
+                keyboardType: TextInputType.number,
+                obscureText: !_showPairingPin,
+                enableSuggestions: false,
+                autocorrect: false,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                maxLength: 6,
+                decoration: InputDecoration(
+                  labelText: 'ESP32 pairing PIN',
+                  hintText: 'Shown in ESP32 Info',
+                  counterText: '',
+                  suffixIcon: IconButton(
+                    tooltip: _showPairingPin ? 'Hide PIN' : 'Show PIN',
+                    onPressed: () =>
+                        setState(() => _showPairingPin = !_showPairingPin),
+                    icon: Icon(
+                      _showPairingPin
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const ValueKey('device-address'),
+                controller: _baseUrlController,
+                enabled: !_deviceBusy,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _saveNetworkAddress(),
+                decoration: const InputDecoration(
+                  labelText: 'ESP32 IP address',
+                  hintText: '192.168.1.55',
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _deviceBusy ? null : _saveNetworkAddress,
+                child: const Text('Save and connect'),
+              ),
+            ],
+            if (_deviceError != null) ...[
+              const SizedBox(height: 12),
+              _connectionError(),
+            ],
           ],
-          if (_deviceError != null) ...[
-            const SizedBox(height: 12),
-            _connectionError(),
-          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+      FleetTrackingPanel(
+        key: const ValueKey('fleet-settings'),
+        enabled: _android && widget.firebaseReady,
+      ),
+      const SizedBox(height: 16),
+      _Disclosure(
+        title: 'Device info',
+        icon: Icons.info_outline,
+        children: [
+          Text('Device: ${_status?.deviceName ?? 'ESP32-NavRide'}'),
+          const SizedBox(height: 8),
+          Text('Connection: ${_config.mode.label}'),
+          if (_status?.ssid.isNotEmpty == true) Text('Wi-Fi: ${_status!.ssid}'),
+          if (_status?.ip.isNotEmpty == true)
+            SelectableText('IP: ${_status!.ip}'),
+          if (_status?.firmware.isNotEmpty == true)
+            Text('Firmware: ${_status!.firmware}'),
+          if (_config.bluetoothId.isNotEmpty)
+            SelectableText('Bluetooth: ${_config.bluetoothId}'),
         ],
       ),
-    ),
-    const SizedBox(height: 16),
-    FleetTrackingPanel(enabled: _android && widget.firebaseReady),
-    const SizedBox(height: 16),
-    _Disclosure(
-      title: 'Device info',
-      icon: Icons.info_outline,
-      children: [
-        Text('Device: ${_status?.deviceName ?? 'ESP32-NavRide'}'),
-        const SizedBox(height: 8),
-        Text('Connection: ${_config.mode.label}'),
-        if (_status?.ssid.isNotEmpty == true) Text('Wi-Fi: ${_status!.ssid}'),
-        if (_status?.ip.isNotEmpty == true)
-          SelectableText('IP: ${_status!.ip}'),
-        if (_status?.firmware.isNotEmpty == true)
-          Text('Firmware: ${_status!.firmware}'),
-        if (_config.bluetoothId.isNotEmpty)
-          SelectableText('Bluetooth: ${_config.bluetoothId}'),
-      ],
-    ),
-    const SizedBox(height: 12),
-    _Disclosure(
-      title: 'App updates',
-      icon: Icons.system_update_alt,
-      children: [
-        Text(
-          _appVersion == null
-              ? 'ESP32-NavRide · ${_android ? 'Android' : 'Preview'}'
-              : 'Version ${_appVersion!.name}',
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const ValueKey('update-server-url'),
-          controller: _updateUrlController,
-          enabled: !_updatingApp && !_clearingData,
-          keyboardType: TextInputType.url,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _checkAndInstallUpdate(),
-          decoration: const InputDecoration(
-            labelText: 'Update server',
-            hintText: 'http://192.168.1.149:3000',
+      const SizedBox(height: 12),
+      _Disclosure(
+        title: 'App updates',
+        icon: Icons.system_update_alt,
+        children: [
+          Text(
+            _appVersion == null
+                ? 'ESP32-NavRide · ${_android ? 'Android' : 'Preview'}'
+                : 'Version ${_appVersion!.name}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'The computer running the update server, not the ESP32 IP address.',
-          style: TextStyle(color: NavRideColors.muted),
-        ),
-        if (_updatingApp)
-          Padding(
-            padding: const EdgeInsets.only(top: 16),
-            child: LinearProgressIndicator(value: _updateProgress),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('update-server-url'),
+            controller: _updateUrlController,
+            enabled: !_updatingApp && !_clearingData,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _checkAndInstallUpdate(),
+            decoration: const InputDecoration(
+              labelText: 'Update server on your computer',
+              hintText: 'http://192.168.1.149:3000',
+            ),
           ),
-        const SizedBox(height: 12),
-        FilledButton(
-          key: const ValueKey('check-app-update'),
-          onPressed: _updatingApp || _clearingData
-              ? null
-              : _checkAndInstallUpdate,
-          child: Text(
-            _updatingApp
-                ? (_updateProgress == null
-                      ? 'Checking…'
-                      : 'Downloading ${(_updateProgress! * 100).round()}%')
-                : _android
-                ? 'Check for updates'
-                : 'Save server',
+          if (_updatingApp)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: LinearProgressIndicator(value: _updateProgress),
+            ),
+          const SizedBox(height: 12),
+          FilledButton(
+            key: const ValueKey('check-app-update'),
+            onPressed: _updatingApp || _clearingData
+                ? null
+                : _checkAndInstallUpdate,
+            child: Text(
+              _updatingApp
+                  ? (_updateProgress == null
+                        ? 'Checking…'
+                        : 'Downloading ${(_updateProgress! * 100).round()}%')
+                  : _android
+                  ? 'Check for updates'
+                  : 'Save server',
+            ),
           ),
-        ),
-      ],
-    ),
-    const SizedBox(height: 12),
-    _Disclosure(
-      title: 'Privacy and data',
-      icon: Icons.privacy_tip_outlined,
-      children: [
-        const Text(
-          'Saved content stays on this device until you send it. There is no analytics. '
-          'Android backups of app data are disabled.\n\n'
-          'Navigation sharing processes only OsmAnd notifications and directions. '
-          'GPS speed is optional and sent to ESP32. Fleet tracking is separate and opt-in: '
-          'during an active trip, phone GPS coordinates and speed are uploaded to Firebase. '
-          'After the first GPS fix, route points are saved at least 1 minute apart '
-          'when you move more than 100 m. Pending points are removed from this phone '
-          'only after the server confirms receipt; cloud history remains after a trip ends. '
-          'Personal content, QR images and OsmAnd directions are never uploaded.\n\n'
-          'Wi-Fi uses local HTTP, which is not encrypted. Use a trusted network or paired Bluetooth for private content. '
-          'Updates contact only the server you choose. OsmAnd has its own privacy settings.',
-          style: TextStyle(color: NavRideColors.muted, height: 1.5),
-        ),
-        if (_android) ...[
+        ],
+      ),
+      const SizedBox(height: 12),
+      _Disclosure(
+        title: 'Privacy and data',
+        icon: Icons.privacy_tip_outlined,
+        children: [
+          if (_android) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _clearingData
+                  ? null
+                  : () async {
+                      try {
+                        await _navigationChannel.invokeMethod<void>(
+                          'openAppPrivacySettings',
+                        );
+                      } catch (_) {
+                        _showMessage(
+                          'Open Android Settings → Apps → ESP32-NavRide to manage permissions.',
+                          error: true,
+                        );
+                      }
+                    },
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              label: const Text('Manage Android permissions'),
+            ),
+          ],
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: _clearingData
+            key: const ValueKey('clear-local-data'),
+            onPressed: _deviceBusy || _editing || _updatingApp || _speedBusy
                 ? null
-                : () async {
-                    try {
-                      await _navigationChannel.invokeMethod<void>(
-                        'openAppPrivacySettings',
-                      );
-                    } catch (_) {
-                      _showMessage(
-                        'Open Android Settings → Apps → ESP32-NavRide to manage permissions.',
-                        error: true,
-                      );
-                    }
-                  },
-            icon: const Icon(Icons.admin_panel_settings_outlined),
-            label: const Text('Manage Android permissions'),
+                : _clearLocalData,
+            icon: const Icon(Icons.delete_outline),
+            label: Text(_clearingData ? 'Deleting…' : 'Delete saved data'),
           ),
         ],
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          key: const ValueKey('clear-local-data'),
-          onPressed: _deviceBusy || _editing || _updatingApp || _speedBusy
-              ? null
-              : _clearLocalData,
-          icon: const Icon(Icons.delete_outline),
-          label: Text(_clearingData ? 'Deleting…' : 'Delete saved data'),
-        ),
-      ],
-    ),
-    const SizedBox(height: 12),
-    Card(
-      child: ListTile(
-        leading: const Icon(Icons.help_outline),
-        title: const Text('Help'),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: _showHelp,
       ),
-    ),
-  ]);
+      const SizedBox(height: 12),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.help_outline),
+          title: const Text('Help'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _showHelp,
+        ),
+      ),
+    ],
+  );
 
   Widget _connectionError() => Semantics(
     liveRegion: true,
@@ -2210,21 +2152,22 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
 }
 
 class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.title});
+  const _Panel({required this.child, this.title, this.help});
   final String? title;
+  final String? help;
   final Widget child;
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (title != null) ...[
-            Text(
-              title!,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-            ),
+            if (help != null)
+              FeatureHeading(title: title!, help: help!)
+            else
+              Text(title!, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
           ],
           child,
@@ -2254,6 +2197,7 @@ class _DisclosureState extends State<_Disclosure> {
   Widget build(BuildContext context) => Card(
     child: ExpansionTile(
       key: PageStorageKey(widget.title),
+      internalAddSemanticForOnTap: true,
       leading: Icon(widget.icon),
       title: Text(widget.title),
       shape: const Border(),
@@ -2286,7 +2230,7 @@ class _StatusRow extends StatelessWidget {
   final bool ready;
   @override
   Widget build(BuildContext context) => ListTile(
-    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
     leading: Icon(icon, color: NavRideColors.muted),
     title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
     subtitle: Text(detail),

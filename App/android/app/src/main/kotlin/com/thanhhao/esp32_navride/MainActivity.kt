@@ -111,7 +111,8 @@ class MainActivity : FlutterActivity() {
         startLocationService(result, Intent(this, SpeedService::class.java).setAction(SpeedService.START_SPEED))
     }
 
-    private fun startFleetTrip(result: MethodChannel.Result, fleetId: String, vehicleId: String) {
+    private fun startFleetTrip(result: MethodChannel.Result, fleetId: String, vehicleId: String,
+                               ride: Boolean = false, deviceId: String = "") {
         if (FirebaseAuth.getInstance().currentUser == null) {
             result.error("not_signed_in", "Sign in to your fleet account first.", null)
             return
@@ -127,6 +128,9 @@ class MainActivity : FlutterActivity() {
         }
         startLocationService(result, Intent(this, SpeedService::class.java)
             .setAction(SpeedService.START_FLEET)
+            .putExtra("ride", ride)
+            .putExtra("deviceId", deviceId)
+            .putExtra("uid", FirebaseAuth.getInstance().currentUser?.uid)
             .putExtra("fleetId", fleetId)
             .putExtra("vehicleId", vehicleId))
     }
@@ -151,6 +155,13 @@ class MainActivity : FlutterActivity() {
         }
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            if (intent.getBooleanExtra("ride", false)) {
+                // Một lần thử chủ động, vẫn tuân theo cửa sổ BLE 20 giây.
+                (intent.getStringExtra("deviceId")?.takeIf { it.isNotBlank() }
+                    ?: NavigationBridgeStore.deviceId(this))?.takeIf { it.isNotBlank() }?.let {
+                    runCatching { NavigationBleSender.connectSaved(this, it, restartPending = true) }
+                }
+            }
             result.success(true)
         } catch (error: Exception) {
             result.error("gps_start_failed", "Could not start GPS. Keep NavRide open and try again.", null)
@@ -203,6 +214,26 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "getSpeedStatus" -> result.success(SpeedService.status())
                     "getFleetStatus" -> result.success(SpeedService.fleetStatus(this))
+                    "getFleetSelection" -> result.success(FleetMarkerManagement.selection(this))
+                    "setFleetSelection" -> {
+                        try {
+                            FleetMarkerManagement.select(this, call.argument<String>("fleetId").orEmpty(),
+                                call.argument<String>("vehicleId").orEmpty())
+                            result.success(true)
+                        } catch (_: Exception) { result.error("vehicle_invalid", "End your trip and choose a valid vehicle.", null) }
+                    }
+                    "getFleetMarkers", "getFleetTrips", "editFleetMarker", "deleteFleetMarker", "getFleetMarkerPhoto" -> {
+                        val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                        val responseUid = FirebaseAuth.getInstance().currentUser?.uid
+                        FleetMarkerManagement.handle(this, call.method, args) { value, error ->
+                            runOnUiThread {
+                                if (FirebaseAuth.getInstance().currentUser?.uid != responseUid)
+                                    result.error("account_changed", "Fleet account changed. Refresh and try again.", null)
+                                else if (error == null) result.success(value)
+                                else result.error("marker_management", error, null)
+                            }
+                        }
+                    }
                     "saveFleetMarker" -> saveMarker(call.argument<String>("kind").orEmpty(),
                         call.argument<Boolean>("photo") == true, result)
                     "retryFleetSync" -> {
@@ -210,6 +241,23 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                     "startSpeed" -> startSpeed(result)
+                    "startRide" -> {
+                        if (call.argument<Boolean>("shareFleet") == true) {
+                            startFleetTrip(result, call.argument<String>("fleetId").orEmpty(),
+                                call.argument<String>("vehicleId").orEmpty(), ride = true,
+                                deviceId = call.argument<String>("deviceId").orEmpty())
+                        } else if (SpeedService.fleetActive) {
+                            result.error("trip_busy", "End the current Fleet trip first.", null)
+                        } else {
+                            startLocationService(result, Intent(this, SpeedService::class.java)
+                                .setAction(SpeedService.START_SPEED).putExtra("ride", true)
+                                .putExtra("deviceId", call.argument<String>("deviceId").orEmpty()))
+                        }
+                    }
+                    "endRide" -> {
+                        startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_ALL))
+                        result.success(true)
+                    }
                     "stopSpeed" -> {
                         startService(Intent(this, SpeedService::class.java).setAction(SpeedService.STOP_SPEED))
                         result.success(true)
@@ -303,6 +351,7 @@ class MainActivity : FlutterActivity() {
                         }
                         NavigationBridgeStore.clear(this)
                         stopService(Intent(this, SpeedService::class.java))
+                        getSharedPreferences("fleet-selection", MODE_PRIVATE).edit().clear().apply()
                         OsmAndNotificationListener.stopBridge()
                         NavigationBleSender.close()
                         val updates = File(cacheDir, "esp32-navride-updates")

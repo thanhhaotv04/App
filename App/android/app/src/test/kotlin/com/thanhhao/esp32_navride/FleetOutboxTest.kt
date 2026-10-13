@@ -36,6 +36,26 @@ class FleetOutboxTest {
         assertEquals(0, queue.count())
     }
 
+    @Test fun markerEditsAndDeletionStayOrderedAfterPhotoAndSurviveRestart() {
+        val path = point.replace("track_points", "markers")
+        queue.addMarker("owner", path, JSONObject(), JSONObject().put("data", FleetHistoryUpload.string("/9j/2Q==")))
+        queue.mutateMarker("owner", "marker_edit", path, JSONObject().put("note", FleetHistoryUpload.string("Lunch")))
+        queue.mutateMarker("owner", "marker_delete", path, JSONObject())
+        queue.close(); queue = FleetOutbox(app)
+        assertTrue(queue.markers("other").isEmpty())
+        assertEquals(listOf("marker", "photo", "marker_edit", "marker_delete"), queue.markers("owner").map { it.kind })
+        assertFalse(queue.markers("owner").any { it.fields.toString().contains("/9j/") })
+        assertEquals("/9j/2Q==", queue.photo("owner", path))
+        assertNull(queue.photo("other", path))
+        try {
+            queue.flush("owner") { if (it.kind == "marker_edit") throw IOException("No ACK") }
+            fail("Lost ACK")
+        } catch (_: IOException) { }
+        assertEquals(listOf("marker_edit", "marker_delete"), queue.markers("owner").map { it.kind })
+        queue.flush("owner") { }
+        assertEquals(0, queue.count())
+    }
+
     @Test fun offlineOrFailedUploadNeverDeletesPendingData() {
         queue.add("owner", "point", point, JSONObject())
         queue.flush("owner", mayContinue = { false }) { fail("Offline must not upload") }

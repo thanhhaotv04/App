@@ -189,12 +189,13 @@ void main() {
     },
   );
 
-  testApp('has three destinations, no fake device, profile or color picker', (
+  testApp('has four destinations, no fake device, profile or color picker', (
     tester,
   ) async {
     await tester.pumpWidget(const NavRideApp());
     await tester.pumpAndSettle();
-    expect(find.byType(NavigationDestination), findsNWidgets(3));
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.text('Trips'), findsOneWidget);
     expect(find.text('Not connected'), findsOneWidget);
     expect(find.text('Active'), findsNothing);
     await tester.tap(find.text('Settings').last);
@@ -333,118 +334,116 @@ void main() {
     expect(find.text('Đừng quên áo mưa'), findsOneWidget);
   });
 
-  testApp('native status, open OsmAnd and confirmed sample use the same bridge', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    SharedPreferences.setMockInitialValues({
-      'esp32-navride.snapshot.v1': jsonEncode({
-        'profileName': 'Hào',
-        'notices': [],
-        'tasks': [],
-        'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
-      }),
-    });
-    var connected = true;
-    var confirmed = false;
-    final calls = <MethodCall>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      navigationChannel,
-      (call) async {
-        calls.add(call);
-        if (call.method == 'getOsmAndBridgeStatus') {
-          return {
-            'configured': true,
-            'notificationAccess': true,
-            'osmandInstalled': true,
-            'ready': true,
-            'aidlSubscribed': true,
-            'bleConnected': connected,
-            'osmandDataRecent': false,
-            'lastNavigationConfirmed': confirmed,
-          };
-        }
-        if (call.method == 'sendOsmAndSample') {
-          confirmed = true;
-          return true;
-        }
-        return null;
-      },
-    );
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+  testApp(
+    'native status, open OsmAnd and confirmed sample use the same bridge',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      SharedPreferences.setMockInitialValues({
+        'esp32-navride.snapshot.v1': jsonEncode({
+          'profileName': 'Hào',
+          'notices': [],
+          'tasks': [],
+          'config': {'mode': 'bluetooth', 'bluetoothId': 'saved-board'},
+        }),
+      });
+      var connected = true;
+      var confirmed = false;
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         navigationChannel,
-        null,
-      ),
-    );
-    await tester.pumpWidget(const NavRideApp());
-    await tester.pumpAndSettle();
-    expect(find.text('Ready for directions'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('navigation-primary')));
-    await tester.pumpAndSettle();
-    expect(calls.where((call) => call.method == 'openOsmAnd'), hasLength(1));
-    await tester.scrollUntilVisible(find.text('Test display'), 250);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Test display'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('navigation-sample-left')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('navigation-sample-left')));
-    await tester.pumpAndSettle();
-    final sample = calls.singleWhere(
-      (call) => call.method == 'sendOsmAndSample',
-    );
-    expect(sample.arguments, {
-      'maneuver': 'left',
-      'distanceMeters': 250,
-      'streetName': 'Nguyen Hue',
-    });
-    expect(
-      find.text('ESP32 received the 250 m navigation sample.'),
-      findsOneWidget,
-    );
-    for (final exit in [4, 5, 6]) {
-      final button = find.byKey(ValueKey('navigation-sample-roundabout_$exit'));
-      await tester.ensureVisible(button);
-      await tester.pumpAndSettle();
-      await tester.tap(button);
-      await tester.pumpAndSettle();
-      expect(
-        calls
-            .lastWhere((call) => call.method == 'sendOsmAndSample')
-            .arguments['maneuver'],
-        'roundabout_$exit',
+        (call) async {
+          calls.add(call);
+          if (call.method == 'getOsmAndBridgeStatus') {
+            return {
+              'configured': true,
+              'notificationAccess': true,
+              'osmandInstalled': true,
+              'ready': true,
+              'aidlSubscribed': true,
+              'bleConnected': connected,
+              'osmandDataRecent': false,
+              'lastNavigationConfirmed': confirmed,
+            };
+          }
+          if (call.method == 'sendOsmAndSample') {
+            confirmed = true;
+            return true;
+          }
+          return null;
+        },
       );
-    }
-    connected = false;
-    await tester.pump(const Duration(seconds: 3));
-    await tester.pumpAndSettle();
-    expect(find.text('Ready for directions'), findsNothing);
-    expect(
-      tester
-          .widget<OutlinedButton>(
-            find.byKey(const ValueKey('navigation-sample-left')),
-          )
-          .onPressed,
-      isNull,
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('navigation-primary')),
-      -250,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Reconnect ESP32'), findsOneWidget);
-    expect(
-      find.text(
-        'Wait for automatic reconnection. If BLT stops flashing, press Button 2 on ESP32, then tap Reconnect ESP32.',
-      ),
-      findsOneWidget,
-    );
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-  });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          navigationChannel,
+          null,
+        ),
+      );
+      await tester.pumpWidget(const NavRideApp());
+      await tester.pumpAndSettle();
+      expect(find.text('Ready for directions'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('navigation-primary')));
+      await tester.pumpAndSettle();
+      expect(calls.where((call) => call.method == 'openOsmAnd'), hasLength(1));
+      await tester.scrollUntilVisible(find.text('Test display'), 250);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Test display'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('navigation-sample-left')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('navigation-sample-left')));
+      await tester.pumpAndSettle();
+      final sample = calls.singleWhere(
+        (call) => call.method == 'sendOsmAndSample',
+      );
+      expect(sample.arguments, {
+        'maneuver': 'left',
+        'distanceMeters': 250,
+        'streetName': 'Nguyen Hue',
+      });
+      expect(
+        find.text('ESP32 received the 250 m navigation sample.'),
+        findsOneWidget,
+      );
+      for (final exit in [4, 5, 6]) {
+        final button = find.byKey(
+          ValueKey('navigation-sample-roundabout_$exit'),
+        );
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(
+          calls
+              .lastWhere((call) => call.method == 'sendOsmAndSample')
+              .arguments['maneuver'],
+          'roundabout_$exit',
+        );
+      }
+      connected = false;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('Ready for directions'), findsNothing);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('navigation-sample-left')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('navigation-primary')),
+        -250,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Reconnect ESP32'), findsOneWidget);
+      expect(find.byTooltip('Help about Directions'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 
   testApp(
     'stopped listener offers access repair instead of claiming readiness',

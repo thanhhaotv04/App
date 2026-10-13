@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'feature_help.dart';
 
 class FleetMarkerControls extends StatelessWidget {
   const FleetMarkerControls({
@@ -20,17 +21,19 @@ class FleetMarkerControls extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const Divider(height: 32),
-      Text('Markers', style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 8),
-      Text(
-        active
-            ? 'Save your current location. Works offline and without ESP32.'
-            : 'Start a Fleet trip to save markers using phone GPS.',
+      const FeatureHeading(
+        title: 'Markers',
+        help:
+            'During a Fleet ride, save your current phone GPS location as Save Point, '
+            'Food or Danger. Markers appear on your fleet dashboard. '
+            'Works offline and without ESP32; unsent markers sync when internet returns. '
+            'From ESP32, use Menu → Marker while connected to the phone. '
+            'Take a photo opens the camera when saving a marker; photos are compressed before upload.',
       ),
+      if (!active) const Text('Start a Fleet trip to save markers.'),
       SwitchListTile.adaptive(
         contentPadding: EdgeInsets.zero,
         title: const Text('Take a photo'),
-        subtitle: const Text('Optional · compressed before upload'),
         value: photo,
         onChanged: active && !busy ? onPhotoChanged : null,
       ),

@@ -37,6 +37,12 @@ internal class FleetHistorySync private constructor(context: Context) {
     private val scheduler = app.getSystemService(JobScheduler::class.java)
     private var lastAttempt = -30_000L
     @Volatile private var error: String? = null
+    @Volatile var uploadingPath: String? = null
+        private set
+    @Volatile var failedPath: String? = null
+        private set
+    @Volatile var revision = 0L
+        private set
 
     companion object {
         private const val JOB = 7302
@@ -134,7 +140,17 @@ internal class FleetHistorySync private constructor(context: Context) {
             }, ownsSession = { auth.currentUser?.uid == user.uid })
             queue.flush(user.uid, mayContinue = {
                 auth.currentUser?.uid == user.uid && online() && SystemClock.elapsedRealtime() - now < 60_000L
-            }, upload = upload::upload)
+            }, upload = { entry ->
+                uploadingPath = entry.path
+                try {
+                    upload.upload(entry)
+                    failedPath = null
+                    revision++
+                } catch (failure: Exception) {
+                    failedPath = entry.path
+                    throw failure
+                } finally { uploadingPath = null }
+            })
             error = null
         } catch (_: Exception) {
             error = "Route sync paused. Data stays on this phone; check your connection and vehicle access."

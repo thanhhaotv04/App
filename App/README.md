@@ -12,8 +12,13 @@ flutter pub get
 flutter run -d chrome
 ```
 
-App có ba mục: `Navigation`, `Content`, `Settings`, dùng một nền trung tính và
-không có bộ chọn màu. Web có thể thử lưu thông báo và việc cần làm khi chưa
+App có bốn mục: `Navigation`, `Content`, `Trips`, `Settings`, dùng một nền trung tính và
+giao diện tối giản. Chỉ các nhóm chức năng lớn có dấu `!` để đọc hướng dẫn; các
+thao tác nhỏ như chụp ảnh, đổi Wi-Fi, lịch sử và cập nhật không có chú thích riêng.
+Phần trợ giúp
+mở từ dưới màn hình, có thể cuộn và đóng bằng `Close help` hoặc `Got it`.
+Trạng thái kết nối, GPS, lỗi và việc đang chia sẻ vị trí luôn hiện trực tiếp.
+Web có thể thử lưu thông báo và việc cần làm khi chưa
 kết nối; app không giả báo đã gửi hoặc đã kết nối ESP32. Muốn kết nối thật,
 vào `Settings`, chọn `Wi-Fi` hoặc `Bluetooth`. Web Bluetooth cần HTTPS/localhost
 và quyền Bluetooth của trình duyệt. Địa chỉ ESP32 chấp nhận cả `192.168.1.55`
@@ -40,18 +45,26 @@ bao gồm dữ liệu app. HTTP chỉ dành cho mạng nội bộ tin cậy vì 
 
 ### Fleet tracking (tùy chọn)
 
-Mở `Settings → Fleet tracking`, đăng nhập tài khoản tài xế Firebase đã được
-quản lý đội xe tạo, nhập `Fleet ID`/`Vehicle ID` được gán và bấm `Start trip`.
+Mở `Settings → Fleet account`, đăng nhập tài khoản tài xế Firebase đã được
+quản lý đội xe tạo, nhập `Fleet ID`/`Vehicle ID` được gán và bấm `Save vehicle`.
+Trong `Trips`, chọn `Share with Fleet` rồi bấm `Start ride`. Nếu không bật chia sẻ,
+chuyến chỉ dùng GPS tốc độ và thử kết nối ESP32 đã lưu, không ghi hành trình lên Fleet.
 Điện thoại yêu cầu GPS chính xác và hiện thông báo vị trí khi đang chia sẻ.
 Chỉ vị trí GPS thật, mới và đủ chính xác cùng tốc độ được gửi tối đa 30 giây/lần
-đến Firestore; không tải thông báo, ảnh QR hoặc chỉ dẫn OsmAnd. `End trip`
+đến Firestore; không tải thông báo, ảnh QR hoặc chỉ dẫn OsmAnd. `End ride`
 dừng chia sẻ và xóa tọa độ khỏi trạng thái hiện hành. Nếu mất mạng, app báo
-đang chờ đồng bộ; điểm đầu tiên lưu ngay khi có GPS đạt chuẩn, sau đó mỗi 10
-phút khi offline hoặc 5 phút khi online nếu đã di chuyển hơn 100 m.
-Firestore giữ các lệnh ghi trên điện thoại và tự tải lên khi có mạng; không
-gỡ app trước khi đồng bộ xong. Có thể mở lịch sử chuyến từ nút `View route
-dashboard`; chỉ đường BLE vẫn hoạt động. Tài khoản và xe cần được quản lý đội xe
+đang chờ đồng bộ; điểm đầu tiên lưu ngay khi có GPS đạt chuẩn, sau đó tối thiểu
+1 phút/lần nếu đã di chuyển hơn 100 m, kể cả offline.
+Hàng đợi SQLite giữ điểm/ảnh chưa đồng bộ, chỉ xóa sau ACK từ server; không
+gỡ app trước khi đồng bộ xong. `Trips → Recent trips` xem chuyến gần đây,
+`Open dashboard` mở bản đồ dashboard; chỉ đường BLE vẫn hoạt động. Tài khoản và xe cần được quản lý đội xe
 cấp quyền trước; xem lịch sử tại [NavRide Fleet Dashboard](https://navride-96851.web.app).
+
+`Trips → Saved markers` hiển thị `Saved on phone`, `Uploading`, `Synced` hoặc
+`Upload failed`. Có thể xem ảnh, sửa loại/ghi chú (tối đa 500 ký tự), xóa điểm bấm nhầm
+sau xác nhận. Xóa đồng thời điểm và ảnh; thao tác offline chờ trong SQLite theo thứ tự.
+Chỉ tác giả còn được gán xe mới được sửa/xóa; không cho thay tọa độ, chủ sở hữu hay chuyến.
+Các ảnh và lịch sử đã đồng bộ chỉ tải vào RAM khi xem. Firmware 1.3.37 không cần nạp lại.
 
 Ứng dụng tập trung vào bốn chức năng chính: chọn Wi-Fi/Bluetooth, gửi thông
 báo cá nhân, quản lý việc cần làm và chuyển chỉ dẫn OsmAnd qua BLE. Android

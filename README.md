@@ -37,6 +37,8 @@ Dùng ba nút trên bo để mở menu, đổi kết nối, xem QR hoặc dùng 
 
 ## Fleet management (đang phát triển)
 
+Trong **Trips**, bấm **Start ride** để bật tốc độ GPS và thử kết nối ESP32 đã lưu. Bật **Share with Fleet** trước khi bắt đầu nếu muốn lưu hành trình; mặc định không chia sẻ. **End ride** dừng GPS/Fleet, vẫn giữ Bluetooth cho đồng hồ và nội dung. Tài khoản và xe được cấu hình ở **Settings → Fleet account**.
+
 Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu tiên, sau đó tối thiểu **1 phút/lần nếu di chuyển hơn 100 m**. Điểm được lưu trên điện thoại trước, đồng bộ khi có mạng và chỉ xóa khỏi hàng đợi sau khi Firebase xác nhận. Lịch sử trên server được giữ lại. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
 
 <p align="center"><img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản"></p>
@@ -45,7 +47,9 @@ Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu t
 
 ### Đánh dấu địa điểm
 
-Khi chuyến Fleet đang chạy và GPS điện thoại đã sẵn sàng, chọn **Save Point**, **Food** hoặc **Danger** trong app (`Settings → Fleet tracking → Markers`) hoặc trên ESP32 (`Menu → Marker`, cần kết nối Bluetooth). Điểm sẽ hiện trên bản đồ dashboard theo từng chuyến. Trên điện thoại, bật **Take a photo** nếu muốn chụp kèm ảnh. Không có mạng, app giữ điểm và ảnh trên điện thoại rồi tự đồng bộ khi có mạng; ảnh được thu nhỏ và bỏ thông tin EXIF/GPS trước khi lưu.
+Khi chuyến Fleet đang chạy và GPS điện thoại đã sẵn sàng, chọn **Save Point**, **Food** hoặc **Danger** trong app (**Trips → Markers**) hoặc trên ESP32 (**Menu → Marker**, cần Bluetooth). Bật **Take a photo** để chụp kèm ảnh. **Saved markers** cho biết trạng thái đồng bộ, xem ảnh, thêm ghi chú, đổi loại hoặc xóa điểm và ảnh. Thao tác offline được gửi khi có mạng; dữ liệu chờ chỉ bị xóa sau xác nhận của server. Ảnh được thu nhỏ và bỏ EXIF/GPS.
+
+**Trips → Recent trips** xem các chuyến gần đây; mở dashboard để xem bản đồ đầy đủ. Lịch sử và ảnh đã đồng bộ chỉ được tải để xem, không giữ thêm bản sao lâu dài trên điện thoại.
 
 ## Bắt đầu
 

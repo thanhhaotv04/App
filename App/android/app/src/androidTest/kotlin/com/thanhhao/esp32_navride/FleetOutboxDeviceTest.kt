@@ -11,6 +11,27 @@ import java.io.IOException
 /** Chỉ dùng DB test riêng, không bật GPS, không sửa hàng đợi hoặc Firebase thật. */
 @RunWith(AndroidJUnit4::class)
 class FleetOutboxDeviceTest {
+    @Test fun markerMutationsSurviveRestartWithoutExposingPhotoInList() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "fleet-marker-mutations-test.db"
+        val path = "fleets/test/vehicles/test/markers/550e8400-e29b-41d4-a716-446655440003"
+        context.deleteDatabase(name)
+        var queue = FleetOutbox(context, name)
+        try {
+            queue.addMarker("test-owner", path, JSONObject(), JSONObject().put("data", FleetHistoryUpload.string("/9j/2Q==")))
+            queue.mutateMarker("test-owner", "marker_edit", path, JSONObject().put("note", FleetHistoryUpload.string("synthetic-note")))
+            queue.mutateMarker("test-owner", "marker_delete", path, JSONObject())
+            queue.close(); queue = FleetOutbox(context, name)
+            assertTrue(queue.markers("other-owner").isEmpty())
+            assertFalse(queue.markers("test-owner").any { it.fields.toString().contains("/9j/") })
+            val ordered = mutableListOf<String>()
+            queue.flush("test-owner") { ordered.add(it.kind) }
+            assertEquals(listOf("marker", "photo", "marker_edit", "marker_delete"), ordered)
+            assertEquals(0, queue.count())
+            assertFalse(context.getDatabasePath(name).readBytes().toString(Charsets.ISO_8859_1).contains("synthetic-note"))
+        } finally { queue.close(); context.deleteDatabase(name) }
+    }
+
     @Test fun markerPhotoSurvivesOfflineAndOnlyAcknowledgedDataIsRemoved() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "fleet-marker-device-test.db"
