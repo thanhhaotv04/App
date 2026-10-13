@@ -400,7 +400,7 @@ void main() {
       expect(sample.arguments, {
         'maneuver': 'left',
         'distanceMeters': 250,
-        'streetName': 'Nguyen Hue',
+        'streetName': 'Nguyen Thi Minh Khai',
       });
       expect(
         find.text('ESP32 received the 250 m navigation sample.'),

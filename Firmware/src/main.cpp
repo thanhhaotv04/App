@@ -28,7 +28,7 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.37";
+constexpr char FIRMWARE_VERSION[] = "1.3.41";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -61,7 +61,8 @@ static_assert(10 * 6 + 2 <= 64 && 5 * 6 <= 33 && 4 * 6 <= 28,
               "Date, timer badge and connection label must fit the top row");
 static_assert(5 * 6 * 4 <= 128 && 10 * 6 * 2 <= 128,
               "Offline time and full date must fit the 128-pixel display");
-static_assert(6 * 12 <= STREET_WIDTH && 13 * 6 <= STREET_WIDTH &&
+static_assert(6 * 12 <= STREET_WIDTH &&
+                  STREET_COMPACT_MAX_CHARS * STREET_COMPACT_CHAR_WIDTH <= STREET_WIDTH &&
                   2 + STREET_WIDTH < SPEED_X && SPEED_X + SPEED_WIDTH <= 126,
               "Street and speed columns must not overlap");
 static_assert(STREET_TOP + STREET_HEIGHT == 158 &&
@@ -1612,7 +1613,7 @@ void drawNavigationStreet(const String &street, bool resetPage) {
   StreetLine lines[16]{};
   uint8_t count = wrapStreet(name.c_str(), 6, lines, 16);
   const bool compact = count > STREET_ROWS_PER_PAGE;
-  if (compact) count = wrapStreet(name.c_str(), 13, lines, 16);
+  if (compact) count = wrapStreetCompactFill(name.c_str(), lines, 16);
   roadPageCount = (count + STREET_ROWS_PER_PAGE - 1) / STREET_ROWS_PER_PAGE;
   if (resetPage || roadPage >= roadPageCount) roadPage = 0;
   lastRoadPageAt = millis();
@@ -1620,14 +1621,23 @@ void drawNavigationStreet(const String &street, bool resetPage) {
   for (uint8_t row = 0; row < STREET_ROWS_PER_PAGE; ++row) {
     const uint8_t index = roadPage * STREET_ROWS_PER_PAGE + row;
     if (index < count) {
-      const uint8_t scaleX = compact ? 1 : 2;
       const String line = name.substring(lines[index].start,
                                          lines[index].start + lines[index].length);
-      tft.setTextSize(scaleX, 2);
-      tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
-      tft.setCursor(2 + (STREET_WIDTH - line.length() * 6 * scaleX) / 2,
-                    STREET_TOP + 1 + row * STREET_ROW_STEP);
-      tft.print(line);
+      const int16_t y = STREET_TOP + 1 + row * STREET_ROW_STEP;
+      if (compact) {
+        const int16_t startX =
+            2 + (STREET_WIDTH - line.length() * STREET_COMPACT_CHAR_WIDTH) / 2;
+        for (size_t column = 0; column < line.length(); ++column) {
+          const int16_t x = startX + column * STREET_COMPACT_CHAR_WIDTH;
+          tft.drawChar(x, y, line[column], COLOR_TEXT, COLOR_PANEL, 1, 2);
+          tft.drawChar(x + 1, y, line[column], COLOR_TEXT, COLOR_TEXT, 1, 2);
+        }
+      } else {
+        tft.setTextSize(2, 2);
+        tft.setTextColor(COLOR_TEXT, COLOR_PANEL);
+        tft.setCursor(2 + (STREET_WIDTH - line.length() * 12) / 2, y);
+        tft.print(line);
+      }
     }
   }
   if (roadPageCount > 1) {

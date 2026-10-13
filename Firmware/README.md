@@ -3,7 +3,7 @@
 Firmware cho ESP32-S3 + TFT ST7735 1.8 inch 128x160. Pin TFT giữ nguyên theo
 `ESP32_TFT1.8inch`:
 
-Phiên bản hiện tại: `1.3.37`.
+Phiên bản hiện tại: `1.3.41`.
 
 32 pixel trên cùng (1/5 màn hình): hàng đầu là ngày/tháng/năm
 `dd/mm/yyyy`, phút của Stopwatch/Timer và trạng thái kết nối;
@@ -246,7 +246,10 @@ Button 1 trên ESP32 để quay lại Wi-Fi.
   khoảng cách thay đổi, màn hình chỉ vẽ lại vùng số.
 - Tên đường dùng toàn bộ cột trái từ y=100 đến y=157, gồm cả vùng trước đây
   dành cho thông báo: tối đa ba dòng mỗi trang, tự xuống dòng theo từ.
-  Tên ngắn giữ chữ rộng; tên dài thu gọn chiều ngang, vẫn giữ chiều cao chữ.
+  Tên ngắn giữ chữ rộng; tên dài dùng kiểu chữ cũ không dấu nhưng tăng nét
+  thêm 1 pixel. Nếu tên dài mới chiếm hai hàng, firmware chia lại thành ba
+  hàng để tận dụng chỗ trống bên dưới. Các chữ cái trên tên đường dài được
+  giãn thêm 2 pixel; tên tự xuống dòng để không lấn sang cột tốc độ.
   Firmware nhận tối đa 80 ký tự; BLE app vẫn giới hạn theo số byte còn lại
   trong gói 180 byte, không tăng MTU hoặc gửi gói quá lớn. Nếu hơn ba dòng
   thì đổi trang mỗi 3,5 giây. Cột tốc

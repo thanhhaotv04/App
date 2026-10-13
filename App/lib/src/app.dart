@@ -794,7 +794,7 @@ class _NavRideHomeState extends State<NavRideHome> with WidgetsBindingObserver {
         {
           'maneuver': maneuver,
           'distanceMeters': 250,
-          'streetName': 'Nguyen Hue',
+          'streetName': 'Nguyen Thi Minh Khai',
         },
       );
       if (queued != true) {
