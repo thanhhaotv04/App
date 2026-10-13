@@ -8,6 +8,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.google.firebase.auth.FirebaseAuth
@@ -16,12 +17,91 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.security.MessageDigest
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val navigationChannelName = "esp32_navride/navigation"
     private val updateChannelName = "esp32_navride/update"
     private var locationPermissionResult: MethodChannel.Result? = null
     private var pendingLocationStart: Intent? = null
+    private var markerResult: MethodChannel.Result? = null
+    private var markerDraft: JSONObject? = null
+    private var markerFile: File? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        markerDraft = savedInstanceState?.getString("markerDraft")?.let { runCatching { JSONObject(it) }.getOrNull() }
+        markerFile = savedInstanceState?.getString("markerFile")?.let { name ->
+            File(File(cacheDir, "marker-camera"), name.takeIf { it.matches(Regex("capture-[A-Za-z0-9.-]+\\.jpg")) } ?: "invalid")
+        }
+        // Dọn ảnh thô còn lại từ lần camera bị hủy/crash, giữ đúng tệp đang chụp.
+        File(cacheDir, "marker-camera").listFiles()?.filter { it != markerFile }?.forEach { it.delete() }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        markerDraft?.let { outState.putString("markerDraft", it.toString()) }
+        markerFile?.let { outState.putString("markerFile", it.name) }
+        super.onSaveInstanceState(outState)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveMarker(kind: String, photo: Boolean, result: MethodChannel.Result) {
+        if (markerDraft != null) { result.error("marker_busy", "Finish the current photo first", null); return }
+        try {
+            val draft = FleetMarkers.prepare(kind, "phone")
+            if (!photo) {
+                check(FleetMarkers.save(this, draft)) { FleetMarkers.message }
+                result.success(FleetMarkers.message)
+                return
+            }
+            val dir = File(cacheDir, "marker-camera").apply { mkdirs() }
+            val file = File.createTempFile("capture-", ".jpg", dir)
+            markerFile = file; markerDraft = draft; markerResult = result
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+                .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.clipData = android.content.ClipData.newRawUri("Marker photo", uri)
+            startActivityForResult(intent, 7303)
+        } catch (error: Exception) {
+            clearMarkerCamera()
+            result.error("marker_failed", error.message?.takeIf { error is IllegalStateException || error is IllegalArgumentException }
+                ?: "Could not open camera or save marker. Try again", null)
+        }
+    }
+
+    private fun clearMarkerCamera() {
+        markerFile?.let {
+            runCatching { revokeUriPermission(FileProvider.getUriForFile(this, "$packageName.fileprovider", it),
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            it.delete()
+        }
+        markerFile = null; markerDraft = null; markerResult = null
+    }
+
+    @Deprecated("System camera result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 7303) return
+        val draft = markerDraft
+        val file = markerFile
+        val reply = markerResult
+        if (resultCode != RESULT_OK || draft == null || file == null) {
+            clearMarkerCamera(); reply?.success(null); return
+        }
+        val app = applicationContext
+        Thread({
+            val outcome = runCatching {
+                val jpeg = MarkerPhoto.compress(file)
+                check(FleetMarkers.save(app, draft, jpeg)) { FleetMarkers.message }
+            }
+            runOnUiThread {
+                clearMarkerCamera()
+                if (outcome.isSuccess) reply?.success(FleetMarkers.message)
+                else reply?.error("marker_failed", "Photo or marker could not be saved. Check GPS, account and phone storage, then retry", null)
+            }
+        }, "marker-photo").start()
+    }
 
     private fun startSpeed(result: MethodChannel.Result) {
         if (!NavigationBleSender.isConnected()) {
@@ -123,6 +203,8 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "getSpeedStatus" -> result.success(SpeedService.status())
                     "getFleetStatus" -> result.success(SpeedService.fleetStatus(this))
+                    "saveFleetMarker" -> saveMarker(call.argument<String>("kind").orEmpty(),
+                        call.argument<Boolean>("photo") == true, result)
                     "retryFleetSync" -> {
                         FleetHistorySync.get(this).requestSync(force = true)
                         result.success(true)

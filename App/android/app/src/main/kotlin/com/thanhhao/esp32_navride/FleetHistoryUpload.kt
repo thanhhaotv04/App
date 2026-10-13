@@ -43,6 +43,8 @@ internal class FleetHistoryUpload(
             expected.has("timestampValue") -> normalizedTime(expected.getString("timestampValue")) ==
                 normalizedTime(actual.optString("timestampValue"))
             expected.has("nullValue") -> actual.has("nullValue")
+            expected.has("booleanValue") -> actual.has("booleanValue") &&
+                expected.getBoolean("booleanValue") == actual.getBoolean("booleanValue")
             expected.has("stringValue") -> expected.getString("stringValue") == actual.optString("stringValue")
             else -> {
                 val wanted = expected.opt("doubleValue") ?: expected.opt("integerValue")
@@ -96,7 +98,7 @@ internal class FleetHistoryUpload(
                 existing.optJSONObject("fields")?.optJSONObject("endedAt")?.has("nullValue") == true)) {
             throw IOException("Route sync could not be confirmed")
         }
-        val transform = if (entry.kind == "point") "uploadedAt" else "updatedAt"
+        val transform = if (entry.kind in setOf("point", "marker", "photo")) "uploadedAt" else "updatedAt"
         val write = JSONObject().put("update", JSONObject()
             .put("name", "$documents/${entry.path}").put("fields", entry.fields))
             .put("updateTransforms", JSONArray().put(JSONObject()

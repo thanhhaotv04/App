@@ -11,6 +11,36 @@ import java.io.IOException
 /** Chỉ dùng DB test riêng, không bật GPS, không sửa hàng đợi hoặc Firebase thật. */
 @RunWith(AndroidJUnit4::class)
 class FleetOutboxDeviceTest {
+    @Test fun markerPhotoSurvivesOfflineAndOnlyAcknowledgedDataIsRemoved() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "fleet-marker-device-test.db"
+        val path = "fleets/test/vehicles/test/markers/550e8400-e29b-41d4-a716-446655440003"
+        context.deleteDatabase(name)
+        var queue = FleetOutbox(context, name)
+        try {
+            queue.addMarker("test-owner", path, JSONObject().put("kind", "food"),
+                JSONObject().put("data", "synthetic-private-photo"))
+            queue.close()
+            queue = FleetOutbox(context, name)
+            assertEquals(2, queue.count("test-owner"))
+            queue.flush("another-owner") { fail("Wrong account") }
+            queue.flush("test-owner", mayContinue = { false }) { fail("Offline upload") }
+            try {
+                queue.flush("test-owner") { if (it.kind == "photo") throw IOException("No ACK") }
+                fail("Expected failed photo upload")
+            } catch (_: IOException) { }
+            assertEquals(0, queue.countKind("test-owner", "marker"))
+            assertEquals(1, queue.countKind("test-owner", "photo"))
+            queue.flush("test-owner") { assertEquals("$path/photos/image", it.path) }
+            assertEquals(0, queue.count())
+            assertFalse(context.getDatabasePath(name).readBytes().toString(Charsets.ISO_8859_1)
+                .contains("synthetic-private-photo"))
+        } finally {
+            queue.close()
+            context.deleteDatabase(name)
+        }
+    }
+
     @Test fun offlineRestartAckAndAccountIsolationOnRealSQLite() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "fleet-outbox-device-test.db"

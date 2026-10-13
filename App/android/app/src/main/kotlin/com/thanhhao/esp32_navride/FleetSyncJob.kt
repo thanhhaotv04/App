@@ -70,6 +70,7 @@ internal class FleetHistorySync private constructor(context: Context) {
         val uid = auth.currentUser?.uid ?: return mapOf("queuedPoints" to 0, "historyPending" to false)
         return try {
             mapOf("queuedPoints" to queue.count(uid, true), "historyPending" to (queue.count(uid) > 0),
+                "queuedMarkers" to queue.countKind(uid, "marker"), "queuedPhotos" to queue.countKind(uid, "photo"),
                 "trackError" to error, "online" to online())
         } catch (_: Exception) {
             mapOf("historyPending" to true, "online" to online(),
@@ -78,6 +79,12 @@ internal class FleetHistorySync private constructor(context: Context) {
     }
 
     fun hasPending(): Boolean = runCatching { queue.count() > 0 }.getOrDefault(true)
+
+    fun enqueueMarker(uid: String, path: String, fields: JSONObject, photo: JSONObject?): Boolean {
+        val success = runCatching { queue.addMarker(uid, path, fields, photo) }.isSuccess
+        if (success) requestSync(force = true)
+        return success
+    }
 
     fun enqueue(uid: String, kind: String, path: String, fields: JSONObject, stored: (Boolean) -> Unit = {}) {
         // Ghi bền vững trước khi báo đã lưu; không đợi mạng trên luồng GPS/UI.

@@ -74,6 +74,25 @@ class NavigationBleRecoveryTest {
     }
 
     @Test
+    fun markerReplyDoesNotReplaceQueuedNavigationOrAnInflightWrite() = withSender { _, _, _ ->
+        val context = savedContext()
+        val reply = "{\"apiVersion\":1,\"command\":\"marker_result\",\"id\":\"a-1\",\"status\":\"saved\"}"
+        val navigation = "navigation".toByteArray()
+        set("pendingPayload", navigation)
+        set("pendingIsNavigation", true)
+        assertFalse(NavigationBleSender.sendMarkerResult(context, reply))
+        assertSame(navigation, get("pendingPayload"))
+        set("pendingPayload", null)
+        set("inFlightPayload", navigation)
+        assertFalse(NavigationBleSender.sendMarkerResult(context, reply))
+        assertSame(navigation, get("inFlightPayload"))
+        set("inFlightPayload", null)
+        set("connected", false)
+        assertFalse(NavigationBleSender.sendMarkerResult(context, reply))
+        assertNull(get("pendingPayload"))
+    }
+
+    @Test
     fun reconnectReusesReadyConnectionWithoutDisconnectingOrReplacingCommand() = withSender { gatt, _, _ ->
         val payload = get("pendingPayload")
         assertTrue(NavigationBleSender.connectSaved(savedContext(), "saved-board", restartPending = true))

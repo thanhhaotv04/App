@@ -74,6 +74,9 @@ class SpeedService : Service(), LocationListener {
                 "queuedPoints" to history["queuedPoints"],
                 "historyPending" to history["historyPending"],
                 "online" to history["online"],
+                "queuedMarkers" to history["queuedMarkers"],
+                "queuedPhotos" to history["queuedPhotos"],
+                "markerMessage" to FleetMarkers.message,
             )
         }
     }
@@ -193,6 +196,7 @@ class SpeedService : Service(), LocationListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             STOP_ALL -> {
+                FleetMarkers.end()
                 if (fleetActive) {
                     fleetActive = false
                     publishFleet(false)
@@ -214,6 +218,7 @@ class SpeedService : Service(), LocationListener {
                 return START_NOT_STICKY
             }
             STOP_FLEET -> {
+                FleetMarkers.end()
                 if (fleetActive) {
                     fleetActive = false
                     publishFleet(false)
@@ -253,6 +258,7 @@ class SpeedService : Service(), LocationListener {
                 lastFleetSyncAt = 0L
                 fleetOnline = hasInternet()
                 tripId = UUID.randomUUID().toString()
+                FleetMarkers.begin(fleetUid, fleetId, vehicleId, tripId)
                 tripStartedAt = Date(System.currentTimeMillis())
                 lastTrackAt = 0L
                 lastTrackLat = Double.NaN
@@ -309,6 +315,7 @@ class SpeedService : Service(), LocationListener {
 
         if (!fleetActive) return
         if (FirebaseAuth.getInstance().currentUser?.uid != fleetUid) {
+            FleetMarkers.end()
             fleetActive = false
             fleetMessage = "Fleet account changed; trip stopped"
             if (!running) stopSelf() else updateNotification()
@@ -326,6 +333,7 @@ class SpeedService : Service(), LocationListener {
         fleetOnline = hasInternet()
         lastAcceptedAt = now
         lastAcceptedLocation = Location(location)
+        FleetMarkers.update(location)
         val movedMeters = if (lastTrackAt == 0L) 0.0 else FleetLocationPolicy.distanceMeters(
             lastTrackLat, lastTrackLon, location.latitude, location.longitude)
         if (FleetLocationPolicy.shouldRecordTrack(now, lastTrackAt, movedMeters)) {
@@ -368,6 +376,7 @@ class SpeedService : Service(), LocationListener {
             "fleets/$fleetId/vehicles/$vehicleId/trips/$tripId", data) { saved ->
             tripError = if (saved) null else "Could not save trip. Check phone storage."
             if (!saved) {
+                FleetMarkers.end()
                 fleetActive = false
                 fleetMessage = "Trip not started; could not save on this phone"
             }
@@ -429,6 +438,7 @@ class SpeedService : Service(), LocationListener {
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
+        FleetMarkers.end()
         if (fleetActive) {
             fleetActive = false
             publishFleet(false)

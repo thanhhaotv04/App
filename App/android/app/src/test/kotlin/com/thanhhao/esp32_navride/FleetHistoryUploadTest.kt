@@ -92,6 +92,30 @@ class FleetHistoryUploadTest {
         assertEquals(entry.fields.toString(), remote!!.getJSONObject("fields").toString())
     }
 
+    @Test fun markerWithPhotoFlagUsesServerTimeAndIdempotentRead() {
+        entry = FleetOutbox.Entry(2, "owner", "marker",
+            "fleets/test/vehicles/test/markers/550e8400-e29b-41d4-a716-446655440003",
+            JSONObject().put("driverUid", FleetHistoryUpload.string("owner"))
+                .put("kind", FleetHistoryUpload.string("food"))
+                .put("hasPhoto", JSONObject().put("booleanValue", true)))
+        uploader.upload(entry)
+        uploader.upload(entry)
+        assertEquals(1, writes)
+        assertEquals(true, remote!!.getJSONObject("fields").getJSONObject("hasPhoto").getBoolean("booleanValue"))
+    }
+
+    @Test fun privatePhotoUsesCreateOnlyAndRetryDoesNotDuplicateBytes() {
+        entry = FleetOutbox.Entry(3, "owner", "photo",
+            "fleets/test/vehicles/test/markers/550e8400-e29b-41d4-a716-446655440003/photos/image",
+            JSONObject().put("driverUid", FleetHistoryUpload.string("owner"))
+                .put("contentType", FleetHistoryUpload.string("image/jpeg"))
+                .put("data", FleetHistoryUpload.string("/9j/2Q==")))
+        uploader.upload(entry)
+        uploader.upload(entry)
+        assertEquals(1, writes)
+        assertEquals("/9j/2Q==", remote!!.getJSONObject("fields").getJSONObject("data").getString("stringValue"))
+    }
+
     @Test fun lostAckRetriesSameIdWithoutSecondWrite() {
         commitStatus = 503
         try { uploader.upload(entry); fail("Lost ACK must keep the row") } catch (_: IOException) { }

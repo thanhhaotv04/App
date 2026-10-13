@@ -28,7 +28,7 @@ String lastRenderedSpeed;
 constexpr char SERVICE_UUID[] = "7e6d0001-5b1a-4d8f-9a2c-320001000001";
 constexpr char COMMAND_UUID[] = "7e6d0002-5b1a-4d8f-9a2c-320001000002";
 constexpr char BLE_NAME[] = "ESP32-NavRide";
-constexpr char FIRMWARE_VERSION[] = "1.3.35";
+constexpr char FIRMWARE_VERSION[] = "1.3.37";
 constexpr char SETUP_SSID[] = "ESP32-NavRide-Setup";
 constexpr size_t SETUP_PASSWORD_LENGTH = 12;
 constexpr uint32_t WIFI_TIMEOUT_MS = 12000;
@@ -181,11 +181,16 @@ uint8_t roadPage = 0;
 uint8_t roadPageCount = 1;
 enum class MenuView : uint8_t {
   Closed, List, Info, QrList, QrCode, ClockList, Stopwatch,
-  TimerList, TimerActive, TimerEdit, Alarm
+  TimerList, TimerActive, TimerEdit, Alarm, MarkerList, MarkerResult
 };
 MenuView menuView = MenuView::Closed;
 uint8_t menuSelection = 0;
 uint32_t menuLastInput = 0;
+String pendingMarkerId;
+uint32_t markerSequence = 0;
+uint32_t markerBootId = 0;
+uint32_t markerRequestedAt = 0;
+bool markerWaiting = false;
 bool lightTheme = false;
 uint32_t popupUntil = 0;
 uint32_t navigationBannerUntil = 0;
@@ -195,7 +200,6 @@ uint32_t lastDraw = 0;
 uint32_t wifiAttemptStarted = 0;
 uint32_t pendingModeAt = 0;
 String pendingMode;
-bool pendingDefaultWifi = false;
 bool clockFrameDrawn = false;
 bool setupFrameDrawn = false;
 String lastSetupStatus;
@@ -235,7 +239,7 @@ void drawNavigation(const String &maneuver, int distanceMeters,
                     const String &street, int exitNumber = 0,
                     int turnAngle = 999);
 void switchToBluetooth();
-void switchToWifi(bool useDefaultCredentials = false);
+void switchToWifi();
 void toggleClockOnlyMode();
 
 void applyTheme(bool light) {
@@ -881,19 +885,23 @@ bool updateClockTools() {
   return true;
 }
 
-constexpr uint8_t MENU_ITEM_COUNT = 6;
+constexpr uint8_t MENU_ITEM_COUNT = 7;
 constexpr uint8_t nextMenuItem(uint8_t index, uint8_t count = MENU_ITEM_COUNT) {
   return (index + 1) % count;
 }
-static_assert(nextMenuItem(5) == 0 && nextMenuItem(1, 2) == 0,
+static_assert(nextMenuItem(6) == 0 && nextMenuItem(5, 6) == 0 &&
+              nextMenuItem(2, 3) == 0 && nextMenuItem(1, 2) == 0,
               "Main and QR menu selections must wrap");
 
 bool isListMenu() {
   return menuView == MenuView::List || menuView == MenuView::QrList ||
-         menuView == MenuView::ClockList || menuView == MenuView::TimerList;
+         menuView == MenuView::ClockList || menuView == MenuView::TimerList ||
+         menuView == MenuView::MarkerList;
 }
 
 uint8_t menuItemCount() {
+  if (menuView == MenuView::MarkerList) return 3;
+  if (menuView == MenuView::TimerList) return 6;
   return menuView == MenuView::QrList || menuView == MenuView::ClockList
              ? 2 : MENU_ITEM_COUNT;
 }
@@ -941,20 +949,42 @@ static_assert((BANK_QR_SIZE == 0 || ((BANK_QR_SIZE + 8) * (128 / (BANK_QR_SIZE +
               "QR codes must fit with quiet zones and at least 2px modules");
 
 void drawMenuRow(uint8_t index) {
-  const int16_t y = 32 + index * 18;
+  const bool mainList = menuView == MenuView::List;
+  const int16_t y = mainList ? 30 + index * 16 : 32 + index * 18;
   const bool selected = index == menuSelection;
   const uint16_t background = selected ? COLOR_ACCENT : COLOR_PANEL;
   const uint16_t foreground = selected ? COLOR_BACKGROUND : COLOR_TEXT;
-  tft.fillRect(4, y, 120, 17, background);
+  tft.fillRect(4, y, 120, mainList ? 15 : 17, background);
   const char *timerLabels[] = {"5 min", "15 min", "30 min", "60 min", "At time", "View timer"};
   const String label = menuView == MenuView::QrList ? (index == 0 ? "Bank" : "Profile")
                        : menuView == MenuView::ClockList ? (index == 0 ? "Stopwatch" : "Timer")
                        : menuView == MenuView::TimerList ? timerLabels[index]
+                       : menuView == MenuView::MarkerList ? (index == 0 ? "Save Point" : index == 1 ? "Food" : "Danger")
                        : index == 0 ? "WiFi"
                        : index == 1 ? "Bluetooth"
                        : index == 2 ? (lightTheme ? "Theme: Light" : "Theme: Dark")
-                       : index == 3 ? "ESP32 Info" : index == 4 ? "QR" : "Clock";
-  drawText(label, 9, y + 5, 1, foreground, background);
+                       : index == 3 ? "ESP32 Info" : index == 4 ? "QR" : index == 5 ? "Clock" : "Marker";
+  drawText(label, menuView == MenuView::MarkerList ? 27 : 9, y + 4, 1, foreground, background);
+  if (menuView == MenuView::MarkerList) {
+    if (index == 0) {
+      // GFX fillEllipse calls drawFastHLine inside an SPI transaction on this
+      // display driver. Keep this tiny shadow to one non-nested fill call.
+      tft.fillRect(8, y + 11, 14, 4, ST77XX_GREEN);
+      tft.fillCircle(15, y + 6, 5, ST77XX_RED);
+      tft.fillTriangle(10, y + 7, 20, y + 7, 15, y + 14, ST77XX_RED);
+      tft.fillCircle(15, y + 6, 2, background);
+    } else if (index == 1) {
+      tft.drawCircle(15, y + 8, 4, foreground);
+      tft.drawFastVLine(8, y + 3, 11, foreground);
+      tft.drawFastVLine(22, y + 3, 11, foreground);
+      tft.drawFastVLine(6, y + 3, 4, foreground);
+      tft.drawFastVLine(10, y + 3, 4, foreground);
+      tft.drawFastHLine(6, y + 7, 5, foreground);
+    } else {
+      tft.drawTriangle(15, y + 2, 7, y + 14, 23, y + 14, foreground);
+      drawText("!", 13, y + 6, 1, foreground, background);
+    }
+  }
   if (menuView == MenuView::List && !clockOnlyMode &&
       ((index == 0 && activeMode == "wifi") ||
        (index == 1 && activeMode == "bluetooth"))) {
@@ -970,6 +1000,7 @@ void drawMenu() {
   tft.fillScreen(COLOR_BACKGROUND);
   drawCentered(menuView == MenuView::QrList ? "QR"
                : menuView == MenuView::ClockList ? "CLOCK"
+               : menuView == MenuView::MarkerList ? "MARKER"
                : menuView == MenuView::TimerList ? "TIMER" : "MENU", 5, 2, COLOR_ACCENT);
   tft.drawFastHLine(4, 29, 120, COLOR_PANEL);
   const uint8_t count = menuItemCount();
@@ -980,6 +1011,33 @@ void drawMenu() {
   drawText("1 NEXT 2 OK 3 BACK", 6, 149, 1, COLOR_WAIT);
   clockFrameDrawn = false;
   setupFrameDrawn = false;
+}
+
+void drawMarkerResult(const String &title, const String &detail) {
+  menuView = MenuView::MarkerResult;
+  menuLastInput = millis();
+  tft.fillScreen(COLOR_BACKGROUND);
+  drawCentered("MARKER", 5, 2, COLOR_ACCENT);
+  drawCentered(title, 50, 1, COLOR_TEXT);
+  drawCentered(detail, 75, 1, COLOR_WAIT);
+  drawCentered("3 BACK", 149, 1, COLOR_WAIT);
+}
+
+void sendBleStatus(const String &message);
+
+void requestMarker() {
+  if (markerWaiting) return;
+  if (!bleConnected || activeMode != "bluetooth" || clockOnlyMode) {
+    drawMarkerResult("Phone not connected", "Connect Bluetooth");
+    return;
+  }
+  if (markerBootId == 0) markerBootId = esp_random();
+  pendingMarkerId = String(markerBootId, HEX) + "-" + String(++markerSequence);
+  markerRequestedAt = millis();
+  markerWaiting = true;
+  const char *kind = menuSelection == 0 ? "save_point" : menuSelection == 1 ? "food" : "danger";
+  sendBleStatus(String("marker:") + kind + ":" + pendingMarkerId);
+  drawMarkerResult("Saving on phone...", "Please wait");
 }
 
 void openMenu() {
@@ -1009,6 +1067,7 @@ void closeMenu() {
 
 void selectMenuItem() {
   menuLastInput = millis();
+  if (menuView == MenuView::MarkerList) { requestMarker(); return; }
   if (menuView == MenuView::ClockList) {
     if (menuSelection == 0) {
       menuView = MenuView::Stopwatch;
@@ -1069,10 +1128,15 @@ void selectMenuItem() {
     menuSelection = 0;
     drawMenu();
     Serial.println("MENU: QR list");
-  } else {
+  } else if (menuSelection == 5) {
     menuView = MenuView::ClockList;
     menuSelection = 0;
     drawMenu();
+  } else {
+    menuView = MenuView::MarkerList;
+    menuSelection = 0;
+    drawMenu();
+    Serial.println("MENU: marker list ready");
   }
 }
 
@@ -1141,6 +1205,14 @@ void handleButtons() {
       menuView = MenuView::List;
       menuSelection = 5;
       drawMenu();
+    } else if (menuView == MenuView::MarkerList) {
+      menuView = MenuView::List;
+      menuSelection = 6;
+      drawMenu();
+    } else if (menuView == MenuView::MarkerResult) {
+      menuView = MenuView::MarkerList;
+      menuSelection = 0;
+      drawMenu();
     } else if (menuView == MenuView::TimerList) {
       menuView = MenuView::ClockList;
       menuSelection = 1;
@@ -1184,12 +1256,12 @@ void handleButtons() {
       menuLastInput = millis();
       drawQrCode();
     } else if (menuView == MenuView::Closed) {
-      if (activeMode == "wifi" && wifiSsid == DEFAULT_WIFI_SSID &&
+      if (!clockOnlyMode && activeMode == "wifi" &&
           WiFi.status() == WL_CONNECTED) {
         Serial.println("BUTTON G38: saved WiFi already connected");
       } else {
         Serial.println("BUTTON G38: quick saved WiFi");
-        switchToWifi(true);
+        switchToWifi();
       }
     }
   }
@@ -1661,9 +1733,8 @@ void sendBleStatus(const String &message) {
   bleStatus->notify();
 }
 
-void scheduleModeSwitch(const String &mode, bool useDefaultWifi = false) {
+void scheduleModeSwitch(const String &mode) {
   pendingMode = mode;
-  pendingDefaultWifi = useDefaultWifi;
   pendingModeAt = millis() + MODE_SWITCH_DELAY_MS;
 }
 
@@ -1698,6 +1769,24 @@ bool processCommand(const String &payload) {
   }
   if (strcmp(command, "ping") == 0) {
     acknowledge("ok:ping");
+    return true;
+  }
+
+  if (strcmp(command, "marker_result") == 0) {
+    if (!markerWaiting || !document["id"].is<const char *>() ||
+        pendingMarkerId != document["id"].as<const char *>()) return false;
+    const String status = document["status"] | "";
+    if (status != "saved" && status != "trip" && status != "gps" &&
+        status != "storage" && status != "busy" && status != "account") return false;
+    markerWaiting = false;
+    if (menuView == MenuView::MarkerResult) {
+      if (status == "saved") drawMarkerResult("Saved on phone", "Syncs when online");
+      else if (status == "trip") drawMarkerResult("Start Fleet trip", "Open phone app");
+      else if (status == "gps") drawMarkerResult("GPS not ready", "Try again shortly");
+      else if (status == "busy") drawMarkerResult("Please wait", "Try again shortly");
+      else if (status == "account") drawMarkerResult("Check Fleet account", "Open phone app");
+      else drawMarkerResult("Not saved", "Check phone storage");
+    }
     return true;
   }
 
@@ -2052,13 +2141,7 @@ void prepareConnectionScreen(const String &title, const String &message) {
   showPopup("connection", title, message);
 }
 
-void switchToWifi(bool useDefaultCredentials) {
-  if (useDefaultCredentials && strlen(DEFAULT_WIFI_SSID) > 0) {
-    wifiSsid = DEFAULT_WIFI_SSID;
-    wifiPassword = DEFAULT_WIFI_PASSWORD;
-    preferences.putString("ssid", wifiSsid);
-    preferences.putString("password", wifiPassword);
-  }
+void switchToWifi() {
   if (wifiSsid.isEmpty()) {
     Serial.println("WIFI: no saved credentials");
     closeMenu();
@@ -2289,14 +2372,12 @@ void applyPendingModeSwitch() {
     return;
   }
   const String mode = pendingMode;
-  const bool useDefaultWifi = pendingDefaultWifi;
   pendingModeAt = 0;
   pendingMode = "";
-  pendingDefaultWifi = false;
   if (mode == "bluetooth") {
     switchToBluetooth();
   } else if (mode == "wifi") {
-    switchToWifi(useDefaultWifi);
+    switchToWifi();
   }
 }
 
@@ -2378,6 +2459,11 @@ void loop() {
   handleButtons();
   applyPendingModeSwitch();
   handleConnectionState();
+  if (markerWaiting && millis() - markerRequestedAt >= 12000) {
+    markerWaiting = false;
+    if (menuView == MenuView::MarkerResult)
+      drawMarkerResult("No confirmation", "Check phone app");
+  }
 
   if (updateClockTools()) {
     delay(10);
@@ -2390,7 +2476,7 @@ void loop() {
     drawClockBadge();
   }
 
-  if ((isListMenu() || menuView == MenuView::Info) &&
+  if ((isListMenu() || menuView == MenuView::Info || menuView == MenuView::MarkerResult) &&
       millis() - menuLastInput >= MENU_TIMEOUT_MS) {
     Serial.println("MENU: timeout");
     closeMenu();

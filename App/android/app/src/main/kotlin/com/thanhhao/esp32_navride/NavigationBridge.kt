@@ -252,6 +252,12 @@ internal object NavigationBleSender {
             pendingPayload = null
     }
 
+    @Synchronized fun sendMarkerResult(context: Context, payload: String): Boolean {
+        // Không thay gói chỉ đường đang chờ bằng ACK của marker.
+        if (!isConnected() || writing || pendingPayload != null || inFlightPayload != null) return false
+        return send(context, payload)
+    }
+
     @SuppressLint("MissingPermission")
     @Synchronized
     fun send(context: Context, payload: String): Boolean {
@@ -690,6 +696,10 @@ internal object NavigationBleSender {
         synchronized(this) {
             if (gatt != bluetoothGatt || uuid != statusUuid) return
             val response = String(value, StandardCharsets.UTF_8)
+            if (response.startsWith("marker:")) {
+                reconnectContext?.let { FleetMarkerBle.receive(it, response) }
+                return
+            }
             if (response == "ok:speed") {
                 if (SpeedService.acknowledgedAt == 0L) Log.i("NavRide", "Speed telemetry acknowledged by ESP32")
                 SpeedService.acknowledgedAt = android.os.SystemClock.elapsedRealtime()

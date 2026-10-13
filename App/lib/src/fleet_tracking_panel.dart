@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'fleet_marker_controls.dart';
 
 class FleetTrackingPanel extends StatefulWidget {
   const FleetTrackingPanel({required this.enabled, super.key});
@@ -28,6 +29,8 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
   User? _user;
   Map<String, dynamic> _status = const {};
   bool _busy = false;
+  bool _markerPhoto = false;
+  String? _markerFeedback;
   String? _error;
 
   @override
@@ -37,7 +40,16 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
     WidgetsBinding.instance.addObserver(this);
     _user = FirebaseAuth.instance.currentUser;
     _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (mounted) setState(() => _user = user);
+      if (mounted) {
+        setState(() {
+          if (_user?.uid != user?.uid) {
+            _markerFeedback = null;
+            _markerPhoto = false;
+            _error = null;
+          }
+          _user = user;
+        });
+      }
       unawaited(_refreshStatus());
     });
     unawaited(_refreshStatus());
@@ -80,7 +92,12 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
       final status = await _channel.invokeMapMethod<String, dynamic>(
         'getFleetStatus',
       );
-      if (mounted && status != null) setState(() => _status = status);
+      if (mounted && status != null) {
+        setState(() {
+          if (_status['active'] != status['active']) _markerFeedback = null;
+          _status = status;
+        });
+      }
     } catch (_) {
       // Navigation and BLE do not depend on the optional fleet channel.
     }
@@ -219,6 +236,42 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
       if (mounted) {
         setState(() => _error = 'Could not open the fleet dashboard.');
       }
+    }
+  }
+
+  Future<void> _saveMarker(String kind) async {
+    if (_busy || _status['active'] != true) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _markerFeedback = null;
+    });
+    try {
+      final message = await _channel.invokeMethod<String>('saveFleetMarker', {
+        'kind': kind,
+        'photo': _markerPhoto,
+      });
+      if (mounted) {
+        setState(
+          () =>
+              _markerFeedback = message ?? 'Photo cancelled · no marker saved',
+        );
+      }
+      await _refreshStatus();
+    } on PlatformException catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = error.message ?? 'Could not save marker. Try again.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'Could not save marker. Reopen NavRide and try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -380,6 +433,30 @@ class _FleetTrackingPanelState extends State<FleetTrackingPanel>
                 ),
               ),
               const SizedBox(height: 8),
+              FleetMarkerControls(
+                active: active,
+                busy: _busy,
+                photo: _markerPhoto,
+                onPhotoChanged: (value) => setState(() => _markerPhoto = value),
+                onSave: (kind) => unawaited(_saveMarker(kind)),
+              ),
+              if (active &&
+                  _markerFeedback == null &&
+                  _status['markerMessage'] is String) ...[
+                const SizedBox(height: 8),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(_status['markerMessage'] as String),
+                ),
+              ],
+              if (_markerFeedback != null)
+                Semantics(liveRegion: true, child: Text(_markerFeedback!)),
+              if ((_status['queuedMarkers'] as int? ?? 0) > 0 ||
+                  (_status['queuedPhotos'] as int? ?? 0) > 0)
+                Text(
+                  '${_status['queuedMarkers'] ?? 0} markers · ${_status['queuedPhotos'] ?? 0} photos waiting to sync',
+                ),
+              const SizedBox(height: 12),
               TextButton.icon(
                 onPressed: _openDashboard,
                 icon: const Icon(Icons.map_outlined),

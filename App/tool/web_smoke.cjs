@@ -27,6 +27,19 @@ const fs = require('node:fs');
         await page.keyboard.insertText(value);
         await page.keyboard.press('Tab');
       }
+      // Flutter builds off-screen semantics lazily. Scroll the visible list as
+      // a user would; locating an unbuilt button cannot scroll it into view.
+      async function reveal(button) {
+        const height = page.viewportSize().height;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const box = await button.count() ? await button.boundingBox() : null;
+          if (box && box.y >= 0 && box.y + box.height < height - 90) return;
+          await page.mouse.move(width / 2, height / 2);
+          await page.mouse.wheel(0, box && box.y < 0 ? -350 : 350);
+          await page.waitForTimeout(150); // allow Flutter's wheel frame to render
+        }
+        throw new Error('Could not reveal the settings control');
+      }
       await page.goto(process.env.PREVIEW_URL || 'http://127.0.0.1:8080');
       await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
       await destination('Settings').waitFor();
@@ -74,15 +87,18 @@ const fs = require('node:fs');
         await page.getByRole('button', {name: 'Save', exact: true}).click();
         await page.getByRole('group', {name: /^Edited reminder/}).waitFor();
         await destination('Settings').click();
-        await page.getByRole('button', {name: /Privacy and data/}).click();
+        const privacy = page.getByRole('button', {name: /Privacy and data/});
+        await reveal(privacy);
+        await privacy.click();
         const clear = page.getByRole('button', {name: 'Delete saved data', exact: true});
-        await clear.scrollIntoViewIfNeeded();
+        await reveal(clear);
         await page.screenshot({path: 'build/ux/privacy-375.png'});
         await clear.click();
         await page.getByRole('button', {name: 'Cancel', exact: true}).click();
         await destination('Content').click();
         await page.getByRole('group', {name: /^Edited reminder/}).waitFor();
         await destination('Settings').click();
+        await reveal(clear);
         await clear.click();
         await page.getByRole('button', {name: 'Delete data', exact: true}).click();
         await page.getByText('Saved data deleted. GPS speed and sharing are off.', {exact: true}).waitFor();

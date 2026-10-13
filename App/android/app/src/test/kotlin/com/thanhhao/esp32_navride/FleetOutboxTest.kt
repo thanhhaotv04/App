@@ -96,6 +96,34 @@ class FleetOutboxTest {
         assertEquals(0, queue.count())
     }
 
+    @Test fun markersAndPhotosAreDurableScopedAndRemovedOnlyAfterAck() {
+        val marker = point.replace("track_points", "markers")
+        queue.addMarker("owner", marker, JSONObject().put("hasPhoto", true), JSONObject().put("data", "private-photo-test"))
+        queue.close(); queue = FleetOutbox(app)
+        assertEquals(1, queue.countKind("owner", "marker"))
+        assertEquals(1, queue.countKind("owner", "photo"))
+        queue.flush("other") { fail("Another account must not upload") }
+        try {
+            queue.flush("owner") { if (it.kind == "photo") throw IOException("No ACK") }
+        } catch (_: IOException) { }
+        assertEquals(0, queue.countKind("owner", "marker"))
+        assertEquals(1, queue.countKind("owner", "photo"))
+        queue.flush("owner") { assertEquals("$marker/photos/image", it.path) }
+        assertEquals(0, queue.count())
+        assertFalse(app.getDatabasePath("fleet-outbox.db").readBytes().toString(Charsets.ISO_8859_1).contains("private-photo-test"))
+    }
+
+    @Test fun photoQueueIsBoundedAndFullQueueDoesNotSaveHalfAMarker() {
+        val marker = point.replace("track_points", "markers")
+        repeat(40) { queue.addMarker("owner", marker, JSONObject(), JSONObject()) }
+        try { queue.addMarker("owner", marker, JSONObject(), JSONObject()); fail("Queue must be bounded") }
+        catch (_: IllegalStateException) { }
+        assertEquals(40, queue.countKind("owner", "marker"))
+        assertEquals(40, queue.countKind("owner", "photo"))
+        queue.addMarker("owner", marker, JSONObject(), null)
+        assertEquals(41, queue.countKind("owner", "marker"))
+    }
+
     @Test fun threeHoursAtOneMinuteIntervalsHaveOneHundredEightyOnePointsIncludingStart() {
         val origin = 1_000L
         var previous = 0L

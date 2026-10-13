@@ -43,6 +43,10 @@ Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu t
 
 [Xem lịch sử chuyến đi trên dashboard](https://navride-96851.web.app) (cần tài khoản được cấp quyền).
 
+### Đánh dấu địa điểm
+
+Khi chuyến Fleet đang chạy và GPS điện thoại đã sẵn sàng, chọn **Save Point**, **Food** hoặc **Danger** trong app (`Settings → Fleet tracking → Markers`) hoặc trên ESP32 (`Menu → Marker`, cần kết nối Bluetooth). Điểm sẽ hiện trên bản đồ dashboard theo từng chuyến. Trên điện thoại, bật **Take a photo** nếu muốn chụp kèm ảnh. Không có mạng, app giữ điểm và ảnh trên điện thoại rồi tự đồng bộ khi có mạng; ảnh được thu nhỏ và bỏ thông tin EXIF/GPS trước khi lưu.
+
 ## Bắt đầu
 
 - **App Android:** mã nguồn và cách cài/build APK ở [App/](App/README.md). APK cũ trong repo thuộc package ID cũ; để dùng Firebase, hãy build app hiện tại theo hướng dẫn.

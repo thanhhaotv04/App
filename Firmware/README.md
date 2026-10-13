@@ -3,14 +3,14 @@
 Firmware cho ESP32-S3 + TFT ST7735 1.8 inch 128x160. Pin TFT giữ nguyên theo
 `ESP32_TFT1.8inch`:
 
-Phiên bản hiện tại: `1.3.32`.
+Phiên bản hiện tại: `1.3.37`.
 
 32 pixel trên cùng (1/5 màn hình): hàng đầu là ngày/tháng/năm
 `dd/mm/yyyy`, phút của Stopwatch/Timer và trạng thái kết nối;
-hàng dưới là đồng hồ `HH:MM`. Chỉ đường chiếm vùng chính; hai dòng tên đường
+hàng dưới là đồng hồ `HH:MM`. Chỉ đường chiếm vùng chính; tối đa ba dòng tên đường
 chiếm khoảng 2/3 chiều ngang bên trái, cột 1/3 bên phải dành cho tốc độ
-và đơn vị `km/h`. Tên ngắn dùng font lớn; tên dài dùng chữ hẹp hơn nhưng vẫn
-cao hai dòng (ví dụ `Nguyen Thi` / `Minh Khai`). Không còn nhãn `GPS`:
+và đơn vị `km/h`. Tên ngắn dùng font lớn; tên dài dùng chữ hẹp hơn, ngắt theo từ
+(ví dụ `Nguyen Thi` / `Minh Khai`). Không còn nhãn `GPS`:
 số tốc độ cao 40 px, tự chọn bề ngang nét cho 1–3 chữ số để không tràn cột.
 Không hiện giới hạn tốc độ.
 Chỉ vùng tốc độ thay đổi được vẽ lại. Không có dữ liệu hợp lệ hoặc mất kết nối
@@ -88,14 +88,15 @@ Tham khảo [hướng dẫn phần cứng ESP32-S3 của Espressif](https://docs
 | Button 2 | GPIO39 - GND | Trong menu: chọn; ngoài menu: nhấn để ngắt BLE cũ và chờ kết nối mới |
 | Button 3 | GPIO0 - GND | Nhấn ngắn: menu/quay lại; giữ ít nhất 2 giây: bật/tắt đồng hồ offline |
 
-Nhấn ngắn Button 3 để mở menu `WiFi`, `Bluetooth`, `Theme: Light/Dark`, `ESP32 Info`, `QR`, `Clock`.
+Nhấn ngắn Button 3 để mở menu `WiFi`, `Bluetooth`, `Theme: Light/Dark`, `ESP32 Info`, `QR`, `Clock`, `Marker`.
 Trong menu, nhấn Button 1 để chuyển mục, Button 2 để chọn; ngoài
 menu, nhấn Button 1/2 một lần để chuyển nhanh phương thức, không cần giữ nút.
 Menu tự đóng sau 30 giây không thao tác, riêng trang hiển thị QR không tự đóng.
 Theme được lưu qua lần khởi động sau.
 Trang thông tin hiện tên thiết bị, phương thức, trạng thái, SSID, IP, RSSI và phiên bản
 firmware; không hiện mật khẩu Wi-Fi. Mục `WiFi` dùng mạng đã lưu; nếu đang ở
-đúng chế độ được chọn thì menu chỉ đóng, không ngắt kết nối. Hãy thao tác menu
+đúng chế độ được chọn thì menu chỉ đóng, không ngắt kết nối. Button 1 dùng mạng
+đã lưu qua `Change Wi-Fi`, không ghi đè bằng mạng mặc định trong bản build. Hãy thao tác menu
 khi xe đã dừng. **GPIO0 là chân BOOT:** không giữ Button 3 khi bật nguồn hoặc
 nạp firmware.
 
@@ -125,6 +126,21 @@ Công cụ giải mã ảnh gốc và kiểm tra lại bitmap đúng độ phân
 commit file private, ảnh QR gốc hoặc firmware binary chứa QR và mật khẩu thật.
 Button 1 chuyển Bank/Profile; Button 3 quay lại danh sách. Firmware không cần
 thư viện QR runtime.
+
+### Marker: lưu địa điểm
+
+Trong app, `Settings → Fleet tracking → Start trip` và chờ GPS sẵn sàng.
+Trên ESP32 đã nối Bluetooth, mở `Menu → Marker`, dùng Button 1 chọn
+`Save Point`, `Food` hoặc `Danger`, Button 2 lưu, Button 3 quay lại.
+`Saved on phone · Syncs when online` xác nhận điện thoại đã lưu điểm vào hàng
+đợi; chưa khẳng định server đã nhận. Điểm tự hiện trên dashboard khi đồng bộ
+xong. Nếu chưa bắt đầu chuyến, GPS chưa sẵn sàng hoặc bấm liên tục, màn hình
+hiện hướng dẫn tương ứng. ESP32 không có GPS riêng.
+
+Trong app có ba lựa chọn tương tự, hoạt động không cần ESP32. Bật `Take a photo`
+để chụp ảnh kèm điểm. Ảnh được thu nhỏ, bỏ EXIF và lưu cùng hàng đợi ngoại tuyến;
+chỉ xóa bản chờ sau khi server xác nhận. Thao tác Marker không thay đổi mốc
+lưu lịch sử hành trình 1 phút/100 m.
 
 ### Clock: Stopwatch và Timer
 

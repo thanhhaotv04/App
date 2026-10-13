@@ -25,13 +25,29 @@ internal class FleetOutbox(context: Context, name: String = "fleet-outbox.db") :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     fun add(uid: String, kind: String, path: String, fields: JSONObject) {
-        require(uid.isNotBlank() && kind in setOf("start", "point", "end"))
-        val collection = if (kind == "point") "track_points" else "trips"
+        require(uid.isNotBlank() && kind in setOf("start", "point", "end", "marker", "photo"))
+        val collection = when (kind) { "point" -> "track_points"; "marker", "photo" -> "markers"; else -> "trips" }
         require(path.matches(Regex("fleets/[A-Za-z0-9_-]{1,64}/vehicles/[A-Za-z0-9_-]{1,64}/$collection/" +
-            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" +
+            (if (kind == "photo") "/photos/image" else ""))))
         writableDatabase.insertOrThrow("pending", null, ContentValues().apply {
             put("uid", uid); put("kind", kind); put("path", path); put("fields", fields.toString())
         })
+    }
+
+    fun countKind(uid: String, kind: String): Int = readableDatabase.rawQuery(
+        "SELECT COUNT(*) FROM pending WHERE uid = ? AND kind = ?", arrayOf(uid, kind),
+    ).use { it.moveToFirst(); it.getInt(0) }
+
+    fun addMarker(uid: String, path: String, fields: JSONObject, photo: JSONObject?) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(count(uid) < 5000 && (photo == null || countKind(uid, "photo") < 40))
+            add(uid, "marker", path, fields)
+            if (photo != null) add(uid, "photo", "$path/photos/image", photo)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     fun count(uid: String? = null, pointsOnly: Boolean = false): Int {
