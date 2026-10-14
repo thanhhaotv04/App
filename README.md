@@ -12,7 +12,7 @@ nguồn, cách cài đặt và hướng dẫn chạy dự án.
 | Biểu tượng | Ứng dụng | Giới thiệu | Branch |
 | :---: | --- | --- | --- |
 | <img src="https://raw.githubusercontent.com/thanhhaotv04/App/VietNam-Checking-Map/assets/App_VietNamMap_Logo_no_background.png" width="48" alt="Biểu tượng VietNam Map Checkin"> | [VietNam Map Checkin](#vietnam-map-checkin) | Lưu địa điểm đã đến, ảnh và hành trình khám phá Việt Nam. | [`VietNam-Checking-Map`](https://github.com/thanhhaotv04/App/tree/VietNam-Checking-Map) |
-| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/Money-Manager/docs/images/app-icon.svg" width="48" alt="Biểu tượng Money Manager"> | [Money Manager](#money-manager) | Theo dõi thu nhập, chi tiêu và các khoản chi định kỳ. | [`Money-Manager`](https://github.com/thanhhaotv04/App/tree/Money-Manager) |
+| <img src="https://raw.githubusercontent.com/thanhhaotv04/App/Money-Manager/docs/images/app-icon.png" width="48" alt="Biểu tượng Money Manager"> | [Money Manager](#money-manager) | Theo dõi thu nhập, chi tiêu và các khoản chi định kỳ. | [`Money-Manager`](https://github.com/thanhhaotv04/App/tree/Money-Manager) |
 | <img src="https://raw.githubusercontent.com/thanhhaotv04/App/Task-Reminder/assets/branding/app_icon.png" width="48" alt="Biểu tượng Task Reminder"> | [Task Reminder](#task-reminder) | Quản lý công việc, lịch nhắc và tiến độ hằng ngày. | [`Task-Reminder`](https://github.com/thanhhaotv04/App/tree/Task-Reminder) |
 | <img src="https://raw.githubusercontent.com/thanhhaotv04/App/ESP32-NavRide/App/web/icons/Icon-512.png" width="48" alt="Biểu tượng ESP32-NavRide"> | [ESP32-NavRide](#esp32-navride) | Hiển thị chỉ dẫn đường từ điện thoại lên màn hình ESP32 cho xe máy. | [`ESP32-NavRide`](https://github.com/thanhhaotv04/App/tree/ESP32-NavRide) |
 
