@@ -1,0 +1,269 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberPath(fleetId, uid) {
+      return /databases/$(database)/documents/fleets/$(fleetId)/members/$(uid);
+    }
+
+    function vehiclePath(fleetId, vehicleId) {
+      return /databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId);
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.get('email', '') == 'thanhhao.admin@gmail.com'
+        && request.auth.token.get('email_verified', false) == true
+        && exists(/databases/$(database)/documents/system/access)
+        && get(/databases/$(database)/documents/system/access).data.adminUid == request.auth.uid;
+    }
+
+    function isDriver(fleetId) {
+      return signedIn() && exists(memberPath(fleetId, request.auth.uid))
+        && get(memberPath(fleetId, request.auth.uid)).data.role == 'driver';
+    }
+
+    function bounded(maximum) {
+      return request.query.limit != null && request.query.limit <= maximum;
+    }
+
+    function assignedMetadata(fleetId) {
+      return isDriver(fleetId) && resource.data.driverUid == request.auth.uid;
+    }
+
+    function isAssignedDriver(fleetId, vehicleId) {
+      return isDriver(fleetId)
+        && exists(vehiclePath(fleetId, vehicleId))
+        && get(vehiclePath(fleetId, vehicleId)).data.driverUid == request.auth.uid
+        && get(vehiclePath(fleetId, vehicleId)).data.get('archived', false) == false;
+    }
+
+    function validVehicle(fleetId) {
+      let data = request.resource.data;
+      return data.label is string && data.label.size() > 0 && data.label.size() <= 80
+        && data.archived is bool && data.updatedAt == request.time
+        && (data.driverUid == null || (data.driverUid is string
+          && data.driverUid.matches('^[A-Za-z0-9_-]{1,128}$')
+          && (data.archived || getAfter(memberPath(fleetId, data.driverUid)).data.role == 'driver')));
+    }
+
+    function ownsPointTrip(fleetId, vehicleId) {
+      return getAfter(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/trips/$(request.resource.data.tripId)).data.driverUid == request.auth.uid;
+    }
+
+    function validStatus() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['latitude', 'longitude', 'speedKmh', 'tripActive', 'capturedAt', 'updatedAt'])
+        && data.keys().hasAll(['latitude', 'longitude', 'speedKmh', 'tripActive', 'capturedAt', 'updatedAt'])
+        && data.tripActive is bool
+        && (
+          (data.tripActive == true
+            && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
+            && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
+            && data.capturedAt is timestamp
+            && data.capturedAt <= request.time + duration.value(5, 'm')
+            && (data.speedKmh == null ||
+              (data.speedKmh is number && data.speedKmh >= 0 && data.speedKmh <= 250)))
+          || (data.tripActive == false
+            && data.latitude == null && data.longitude == null && data.speedKmh == null
+            && data.capturedAt == null)
+        )
+        && data.updatedAt == request.time;
+    }
+
+    function validTrackPoint() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'latitude', 'longitude', 'accuracyMeters', 'speedKmh',
+          'tripId', 'capturedAt', 'uploadedAt'
+        ])
+        && data.keys().hasAll([
+          'latitude', 'longitude', 'accuracyMeters', 'speedKmh',
+          'tripId', 'capturedAt', 'uploadedAt'
+        ])
+        && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
+        && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
+        && data.accuracyMeters is number
+        && data.accuracyMeters >= 0 && data.accuracyMeters <= 50
+        && (data.speedKmh == null ||
+          (data.speedKmh is number && data.speedKmh >= 0 && data.speedKmh <= 250))
+        && data.tripId is string
+        && data.tripId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        && data.capturedAt is timestamp
+        && data.capturedAt <= request.time + duration.value(5, 'm')
+        && data.uploadedAt == request.time;
+    }
+
+    function validTripCreate() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['driverUid', 'startedAt', 'endedAt', 'updatedAt'])
+        && data.keys().hasAll(['driverUid', 'startedAt', 'endedAt', 'updatedAt'])
+        && data.driverUid == request.auth.uid
+        && data.startedAt is timestamp
+        && data.startedAt <= request.time + duration.value(5, 'm')
+        && data.endedAt == null
+        && data.updatedAt == request.time;
+    }
+
+    function validMarker() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['driverUid', 'kind', 'source', 'tripId', 'latitude',
+          'longitude', 'accuracyMeters', 'capturedAt', 'hasPhoto', 'uploadedAt'])
+        && data.keys().hasAll(['driverUid', 'kind', 'source', 'tripId', 'latitude',
+          'longitude', 'accuracyMeters', 'capturedAt', 'hasPhoto', 'uploadedAt'])
+        && data.driverUid == request.auth.uid
+        && data.kind in ['save_point', 'food', 'danger']
+        && data.source in ['phone', 'esp32']
+        && data.tripId is string
+        && data.tripId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
+        && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
+        && data.accuracyMeters is number && data.accuracyMeters >= 0 && data.accuracyMeters <= 50
+        && data.capturedAt is timestamp && data.capturedAt <= request.time + duration.value(5, 'm')
+        && data.hasPhoto is bool && data.uploadedAt == request.time;
+    }
+
+    function validMarkerPhoto(fleetId, vehicleId, markerId) {
+      let data = request.resource.data;
+      let marker = getAfter(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/markers/$(markerId)).data;
+      return data.keys().hasOnly(['driverUid', 'contentType', 'data', 'uploadedAt'])
+        && data.keys().hasAll(['driverUid', 'contentType', 'data', 'uploadedAt'])
+        && data.driverUid == request.auth.uid && marker.driverUid == request.auth.uid
+        && marker.hasPhoto == true && data.contentType == 'image/jpeg'
+        && data.data is string && data.data.size() > 0 && data.data.size() <= 204800
+        && data.data.matches('^/9j/[A-Za-z0-9+/]*={0,2}$')
+        && data.uploadedAt == request.time;
+    }
+
+    function validTripEnd() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['driverUid', 'startedAt', 'endedAt', 'updatedAt'])
+        && data.keys().hasAll(['driverUid', 'startedAt', 'endedAt', 'updatedAt'])
+        && data.driverUid == resource.data.driverUid
+        && data.startedAt == resource.data.startedAt
+        && resource.data.endedAt == null
+        && data.endedAt is timestamp
+        && data.endedAt >= data.startedAt
+        && data.endedAt <= request.time + duration.value(5, 'm')
+        && data.updatedAt == request.time;
+    }
+
+    // Only a trusted IAM operator can bootstrap/replace the single admin UID.
+    match /system/access {
+      allow get: if signedIn();
+      allow list, write: if false;
+    }
+
+    // Global fleet overview is restricted to the single verified administrator.
+    match /{path=**}/vehicles/{vehicleId} {
+      allow list: if isAdmin() && bounded(200);
+    }
+
+    match /fleets/{fleetId} {
+      allow get: if isAdmin() || isDriver(fleetId);
+      allow list: if isAdmin() && bounded(100);
+      allow create, update: if isAdmin()
+        && fleetId.matches('^[A-Za-z0-9_-]{1,64}$')
+        && request.resource.data.keys().hasOnly(['name', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow list: if isAdmin() && bounded(200);
+        allow create, update: if isAdmin()
+          && uid.matches('^[A-Za-z0-9_-]{1,128}$')
+          && request.resource.data.keys().hasOnly(['role', 'displayName', 'updatedAt'])
+          && request.resource.data.role == 'driver'
+          && request.resource.data.displayName is string
+          && request.resource.data.displayName.size() <= 80
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isAdmin();
+      }
+
+      match /vehicles/{vehicleId} {
+        allow get: if isAdmin() || assignedMetadata(fleetId);
+        allow list: if bounded(200) && (isAdmin() || assignedMetadata(fleetId));
+        allow create: if isAdmin()
+          && vehicleId.matches('^[A-Za-z0-9_-]{1,64}$')
+          && request.resource.data.keys().hasOnly(['label', 'driverUid', 'archived', 'updatedAt'])
+          && validVehicle(fleetId);
+        allow update: if isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['label', 'driverUid', 'archived', 'updatedAt'])
+          && validVehicle(fleetId);
+        // Archive/restore is reversible. Permanent deletion needs a separate trusted workflow.
+        allow delete: if false;
+
+        match /status/{statusId} {
+          allow get: if statusId == 'current' &&
+            (isAdmin() || isAssignedDriver(fleetId, vehicleId));
+          allow list, delete: if false;
+          allow create, update: if statusId == 'current'
+            && (isAssignedDriver(fleetId, vehicleId)
+              || (isAdmin() && request.resource.data.tripActive == false))
+            && validStatus();
+        }
+
+        match /track_points/{pointId} {
+          allow get: if isAdmin() || isAssignedDriver(fleetId, vehicleId);
+          allow list: if bounded(1000) && (isAdmin() || isAssignedDriver(fleetId, vehicleId));
+          allow create: if pointId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+            && isAssignedDriver(fleetId, vehicleId)
+            && validTrackPoint() && ownsPointTrip(fleetId, vehicleId);
+          allow update: if false;
+          // Cleanup is limited to the verified admin and already-ended trips.
+          allow delete: if isAdmin()
+            && exists(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/trips/$(resource.data.tripId))
+            && get(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/trips/$(resource.data.tripId)).data.endedAt is timestamp;
+        }
+
+        match /trips/{tripId} {
+          allow get: if isAdmin() || isAssignedDriver(fleetId, vehicleId);
+          allow list: if bounded(100) && (isAdmin() || isAssignedDriver(fleetId, vehicleId));
+          allow create: if tripId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+            && isAssignedDriver(fleetId, vehicleId) && validTripCreate();
+          allow update: if isAssignedDriver(fleetId, vehicleId)
+            && resource.data.driverUid == request.auth.uid && validTripEnd();
+          allow delete: if isAdmin() && resource.data.endedAt is timestamp;
+        }
+
+        match /markers/{markerId} {
+          allow get: if isAdmin() || isAssignedDriver(fleetId, vehicleId);
+          allow list: if bounded(200) && (isAdmin() || isAssignedDriver(fleetId, vehicleId));
+          allow create: if markerId.matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+            && isAssignedDriver(fleetId, vehicleId) && validMarker() && ownsPointTrip(fleetId, vehicleId);
+          allow update: if isAssignedDriver(fleetId, vehicleId)
+            && resource.data.driverUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['kind', 'note', 'updatedAt'])
+            && request.resource.data.kind in ['save_point', 'food', 'danger']
+            && request.resource.data.note is string && request.resource.data.note.size() <= 500
+            && request.resource.data.updatedAt == request.time;
+          // Xóa nguyên tử marker + ảnh; không để ảnh mồ côi tồn tại trên server.
+          allow delete: if isAssignedDriver(fleetId, vehicleId)
+            && resource.data.driverUid == request.auth.uid
+            && !existsAfter(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/markers/$(markerId)/photos/image);
+          match /photos/{photoId} {
+            allow get: if photoId == 'image' && (isAdmin() || isAssignedDriver(fleetId, vehicleId));
+            allow create: if photoId == 'image' && isAssignedDriver(fleetId, vehicleId)
+              && validMarkerPhoto(fleetId, vehicleId, markerId);
+            allow delete: if photoId == 'image' && isAssignedDriver(fleetId, vehicleId)
+              && get(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/markers/$(markerId)).data.driverUid == request.auth.uid
+              && !existsAfter(/databases/$(database)/documents/fleets/$(fleetId)/vehicles/$(vehicleId)/markers/$(markerId));
+            allow list, update: if false;
+          }
+        }
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

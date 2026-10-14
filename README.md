@@ -39,11 +39,13 @@ Dùng ba nút trên bo để mở menu, đổi kết nối, xem QR hoặc dùng 
 
 Trong **Trips**, bấm **Start ride** để bật tốc độ GPS và thử kết nối ESP32 đã lưu. Bật **Share with Fleet** trước khi bắt đầu nếu muốn lưu hành trình; mặc định không chia sẻ. **End ride** dừng GPS/Fleet, vẫn giữ Bluetooth cho đồng hồ và nội dung. Tài khoản và xe được cấu hình ở **Settings → Fleet account**.
 
-Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu tiên, sau đó tối thiểu **1 phút/lần nếu di chuyển hơn 100 m**. Điểm được lưu trên điện thoại trước, đồng bộ khi có mạng và chỉ xóa khỏi hàng đợi sau khi Firebase xác nhận. Lịch sử trên server được giữ lại. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
+Khi bạn chủ động bắt đầu chuyến đi, app lưu điểm GPS đầu tiên, sau đó tối thiểu **1 phút/lần nếu di chuyển hơn 100 m**. Điểm được lưu trên điện thoại trước, đồng bộ khi có mạng và chỉ xóa khỏi hàng đợi sau khi Firebase xác nhận. Dashboard giữ chuyến có ít nhất hai điểm GPS; admin đăng nhập sẽ dọn các chuyến đã kết thúc có ít hơn hai điểm, nhưng giữ marker và ảnh. Thông báo cá nhân và chỉ dẫn OsmAnd không được đưa lên Fleet.
 
 <p align="center"><img src="docs/images/07-fleet.png" width="260" alt="Giao diện Fleet tracking trong app, đã che email tài khoản"></p>
 
 [Xem lịch sử chuyến đi trên dashboard](https://navride-96851.web.app) (cần tài khoản được cấp quyền).
+
+[Mã nguồn dashboard và Firebase rules](Firebase/Fleet_Management/README.md).
 
 ### Đánh dấu địa điểm
 

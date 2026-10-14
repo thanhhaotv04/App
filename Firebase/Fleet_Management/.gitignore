@@ -1,0 +1,7 @@
+node_modules/
+.firebase/
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+*-service-account*.json
+*adminsdk*.json

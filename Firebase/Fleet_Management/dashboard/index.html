@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#16191f">
+    <title>NavRide Fleet · Route history</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/navride-favicon-32.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/assets/navride-192.png">
+    <link rel="apple-touch-icon" href="/assets/navride-192.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+    <link rel="stylesheet" href="/styles.css?v=20261010-admin">
+    <script src="/theme.js?v=20261010-theme"></script>
+    <script src="/login-ui.js?v=20261010-admin" defer></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous" defer></script>
+    <script type="module" src="/app.js?v=20261014-short-trips"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-mark" src="/assets/navride-192.png" width="40" height="40" alt="">
+          <span>NavRide <strong>Fleet</strong></span>
+        </div>
+        <div class="account">
+          <span id="account-email" class="account-email" hidden></span>
+          <span id="account-role" class="account-role" hidden></span>
+          <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="true"><span>Dark mode</span><span class="theme-switch" aria-hidden="true"></span></button>
+          <button id="sign-out" class="text-button" type="button" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <main id="main-content">
+        <section id="login-view" class="login-wrap" aria-labelledby="login-title">
+          <div class="login-card">
+            <div class="login-heading">
+              <img class="login-logo" src="/assets/navride-192.png" width="64" height="64" alt="">
+              <h1 id="login-title" tabindex="-1">Sign in to NavRide Fleet</h1>
+              <p class="subtle">Your vehicles and trip history, in one place.</p>
+            </div>
+            <form id="login-form" class="form-stack" method="post" aria-describedby="login-help">
+              <div class="field">
+                <label for="email">Email address</label>
+                <input id="email" name="email" type="email" autocomplete="username" placeholder="you@example.com" required>
+              </div>
+              <div class="field">
+                <label for="password">Password</label>
+                <div class="password-field">
+                  <input id="password" name="password" type="password" autocomplete="current-password" required>
+                  <button id="password-toggle" class="password-toggle" type="button" aria-label="Show password" aria-controls="password">Show</button>
+                </div>
+              </div>
+              <p id="login-error" class="error-message" role="alert" hidden></p>
+              <p id="auth-startup" class="login-help" role="status">Connecting to sign-in service…</p>
+              <button id="login-button" class="primary-button" type="submit">Sign in</button>
+              <button id="reset-password" class="text-button" type="button">Forgot password?</button>
+              <button id="retry-auth" class="secondary-button" type="button" hidden>Reload sign-in</button>
+              <p id="login-help" class="login-help">Use the same account as your NavRide app.</p>
+            </form>
+            <p class="login-access">Need access? Contact your fleet administrator.</p>
+            <p class="login-privacy"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Private access for your fleet.</p>
+          </div>
+          <noscript>JavaScript is required to sign in. Enable JavaScript and reload this page.</noscript>
+        </section>
+
+        <section id="dashboard-view" class="dashboard" aria-labelledby="dashboard-title" hidden>
+          <div class="page-intro">
+            <div>
+              <p class="page-path">Fleet workspace <span aria-hidden="true">/</span> Routes</p>
+              <h1 id="dashboard-title" tabindex="-1">Route history</h1>
+              <p class="subtle">Review your trips, one route at a time.</p>
+            </div>
+            <span id="connection-state" class="connection-pill" aria-live="polite">Choose a vehicle</span>
+          </div>
+
+          <p id="verify-notice" class="notice" hidden>Verify your admin email to manage vehicles. <button id="verify-email" class="text-button" type="button">Send verification email</button><button id="check-verification" class="text-button" type="button">I have verified my email</button></p>
+          <details id="admin-panel" class="admin-panel" hidden>
+            <summary>Fleet administration</summary>
+            <p class="subtle">Manage vehicles and driver access. Archiving keeps history. Ended trips with fewer than two GPS points are cleaned when an admin signs in; markers and photos remain.</p>
+            <p id="admin-message" class="notice" role="status" hidden></p>
+            <p id="admin-error" class="error-message" role="alert" hidden></p>
+            <div class="admin-forms">
+              <form id="vehicle-form" class="admin-form">
+                <h2 id="vehicle-form-title">Add vehicle</h2>
+                <div class="field"><label for="edit-fleet">Fleet ID</label><input id="edit-fleet" value="demo" required maxlength="64" pattern="[A-Za-z0-9_-]+"></div>
+                <div class="field"><label for="edit-vehicle">Vehicle ID</label><input id="edit-vehicle" required maxlength="64" pattern="[A-Za-z0-9_-]+" placeholder="bike-02"></div>
+                <div class="field"><label for="edit-label">Vehicle name</label><input id="edit-label" required maxlength="80" placeholder="Bike 02"></div>
+                <div class="field"><label for="edit-driver">Driver UID (optional)</label><input id="edit-driver" maxlength="128" pattern="[A-Za-z0-9_-]+" aria-describedby="driver-help"></div>
+                <p id="driver-help" class="section-description">Add the driver below first. Leave blank to keep this vehicle unassigned.</p>
+                <div class="button-row"><button class="primary-button" type="submit">Save vehicle</button><button id="new-vehicle" class="text-button" type="button">New vehicle</button></div>
+              </form>
+              <form id="driver-form" class="admin-form">
+                <h2>Add or update driver</h2>
+                <div class="field"><label for="driver-fleet">Fleet ID</label><input id="driver-fleet" value="demo" required maxlength="64" pattern="[A-Za-z0-9_-]+"></div>
+                <div class="field"><label for="driver-uid">Firebase user UID</label><input id="driver-uid" required maxlength="128" pattern="[A-Za-z0-9_-]+" aria-describedby="uid-help"></div>
+                <div class="field"><label for="driver-name">Driver name</label><input id="driver-name" required maxlength="80"></div>
+                <p id="uid-help" class="section-description">Create the account in Firebase Authentication first, then copy its UID. Drivers cannot grant admin access.</p>
+                <button class="primary-button" type="submit">Save driver</button>
+              </form>
+            </div>
+            <div class="admin-heading"><h2>All vehicles</h2><button id="refresh-admin" class="secondary-button" type="button">Refresh vehicles</button></div>
+            <div id="admin-vehicles" class="admin-list" role="list" aria-label="All vehicles"></div>
+            <button id="more-vehicles" class="secondary-button" type="button" hidden>Load more vehicles</button>
+            <form id="member-filter" class="button-row"><div class="field"><label for="member-fleet">Drivers in fleet</label><input id="member-fleet" value="demo" required maxlength="64" pattern="[A-Za-z0-9_-]+"></div><button class="secondary-button" type="submit">Show drivers</button></form>
+            <div id="admin-drivers" class="admin-list" role="list" aria-label="Fleet drivers"></div>
+          </details>
+
+          <form id="filters" class="filters" aria-label="Route filters">
+            <div class="field"><label for="fleet-id">Fleet ID</label><input id="fleet-id" name="fleetId" value="demo" required maxlength="64" pattern="[A-Za-z0-9_-]+"></div>
+            <div class="field"><label for="vehicle-id">Vehicle</label><select id="vehicle-id" name="vehicleId" required><option value="">Loading vehicles…</option></select></div>
+            <div class="field"><label for="route-date">Date</label><input id="route-date" name="date" type="date" required></div>
+            <button id="load-button" class="primary-button" type="submit">Show route</button>
+          </form>
+          <p id="dashboard-error" class="error-message" role="alert" hidden></p>
+          <button id="retry-route" class="text-button" type="button" hidden>Retry connection</button>
+          <p id="vehicle-limit" class="limit-message" hidden>Showing up to 200 vehicles in this fleet. Admins can browse all vehicles in Fleet administration.</p>
+
+          <div class="summary" aria-live="polite">
+            <div class="summary-item"><span>Vehicle</span><strong id="vehicle-label">—</strong></div>
+            <div class="summary-item"><span>Current trip</span><strong id="trip-state">—</strong></div>
+            <div class="summary-item summary-count summary-extra"><span>Trips on this day</span><strong id="trip-count">0</strong></div>
+            <div class="summary-item summary-count summary-extra"><span>Visible points</span><strong id="point-count">0</strong></div>
+            <div class="summary-item summary-extra"><span>Last GPS / sync</span><strong id="last-update">—</strong></div>
+          </div>
+
+          <div class="content-grid">
+            <section class="trips-card" aria-labelledby="trips-title">
+              <div class="card-heading"><div><h2 id="trips-title" tabindex="-1">Trips</h2><p class="section-description">Trips need at least two GPS points. Each visible trip has its own color.</p></div></div>
+              <div id="trip-list" class="trip-list" role="group" aria-label="Choose a trip"></div>
+              <p id="trips-empty" class="empty-message">No trips recorded for this date.</p>
+              <p id="trips-limit" class="limit-message" hidden>Only the latest 100 trips started on this date are shown.</p>
+              <p id="metadata-limit" class="limit-message" hidden>Some trip details are unavailable. Times marked “First point” are not trip start times.</p>
+            </section>
+            <section class="map-card" aria-labelledby="map-title">
+              <div class="card-heading"><div><h2 id="map-title">Route map</h2><p class="section-description">Recorded GPS points</p></div><button id="fit-route" class="secondary-button" type="button" disabled>Fit route</button></div>
+              <div class="map-wrap"><div id="map" role="region" aria-label="Map of recorded route points"></div><p id="map-empty" class="map-empty">Choose a vehicle to see its route.</p></div>
+              <p class="map-note">Lines connect recorded points, not the exact road traveled. Offline points appear after sync.</p>
+              <details class="sampling-note"><summary>How route points are saved</summary><p>After the first GPS fix, new points require over 100 m of movement and at least 1 minute, online or offline. Map © OpenStreetMap contributors.</p></details>
+              <section class="markers-section" aria-labelledby="markers-title">
+                <div class="marker-heading"><h3 id="markers-title" tabindex="-1">Markers <span id="marker-count">0</span></h3><span>Save Point · Food · Danger</span></div>
+                <p id="markers-empty" class="empty-message">No markers for this date. Save one from NavRide or the ESP32 menu during a Fleet trip.</p>
+                <ul id="markers-list" class="markers-list" aria-label="Saved markers"></ul>
+                <p id="markers-limit" class="limit-message" hidden>Only the first 200 markers for this date are shown.</p>
+              </section>
+            </section>
+            <section class="points-card" aria-labelledby="points-title">
+              <div class="card-heading"><div><h2 id="points-title" tabindex="-1">Timeline</h2><p class="section-description">Latest points first</p></div></div>
+              <p id="points-empty" class="empty-message">No points loaded yet.</p>
+              <ol id="points-list" class="points-list" aria-label="Recorded points"></ol>
+              <p id="points-limit" class="limit-message" hidden>Only the first 1,000 points for this date are shown.</p>
+            </section>
+          </div>
+        </section>
+      </main>
+      <footer>Only the assigned driver and administrator can view a vehicle’s history. Map tiles are provided by OpenStreetMap. No navigation instructions or personal notifications are uploaded.</footer>
+    </div>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message"><form method="dialog"><h2 id="confirm-title">Confirm action</h2><p id="confirm-message"></p><div class="button-row"><button class="secondary-button" value="cancel" autofocus>Cancel</button><button id="confirm-ok" class="primary-button" value="confirm">Confirm</button></div></form></dialog>
+    <dialog id="marker-photo-dialog" aria-labelledby="marker-photo-title">
+      <div class="card-heading"><h2 id="marker-photo-title">Marker photo</h2><form method="dialog"><button class="secondary-button" autofocus>Close</button></form></div>
+      <p id="marker-photo-status" role="status">Loading photo…</p>
+      <img id="marker-photo" alt="Photo attached to this marker" hidden />
+    </dialog>
+  </body>
+</html>
